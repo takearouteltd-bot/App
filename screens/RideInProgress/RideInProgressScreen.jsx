@@ -6,244 +6,583 @@ import {
   SafeAreaView,
   TouchableOpacity,
   Image,
+  ActivityIndicator,
+  Alert,
+  Animated,
 } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 import MapViewDirections from 'react-native-maps-directions';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../../config/firebase';
+
+const PRIMARY = '#79B431';
+const SECONDARY = '#235594';
+const DARK = '#1a1a1a';
+const BG = '#F8F9FA';
 
 export default function RideInProgressScreen() {
   const route = useRoute();
   const navigation = useNavigation();
-  const { origin, destination, fare = 0, distance = 0, duration = 0 } = route.params || {};
+  const { rideId } = route.params;
 
   const mapRef = useRef(null);
-  const intervalRef = useRef(null);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
   const GOOGLE_MAPS_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ';
 
-  const driver = {
-    name: 'James Wilson',
-    rating: 4.8,
-    car: 'Toyota Prius • White',
-    plate: 'AB12 CDE',
-    photo: 'https://i.pravatar.cc/100',
-  };
+  const [ride, setRide] = useState(null);
+  const [driverData, setDriverData] = useState(null);
+  const [driverLocation, setDriverLocation] = useState(null);
 
-  const [driverLocation, setDriverLocation] = useState({
-    latitude: origin.latitude,
-    longitude: origin.longitude,
-  });
-  const [status, setStatus] = useState('Ride in progress');
-  const [eta, setEta] = useState(duration);              // real trip duration in minutes
-  const [remainingDistance, setRemainingDistance] = useState(distance); // real trip distance in km
-
-  // Helper: Calculate distance between two coordinates (km)
-  const getDistanceFromLatLonInKm = (lat1, lon1, lat2, lon2) => {
-    const R = 6371; // Radius of the earth in km
-    const dLat = ((lat2 - lat1) * Math.PI) / 180;
-    const dLon = ((lon2 - lon1) * Math.PI) / 180;
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLon / 2) *
-      Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
-  };
-
-  /** 🚗 Simulate driver movement */
+  /* ================= RIDE LISTENER ================= */
   useEffect(() => {
-    intervalRef.current = setInterval(() => {
-      setDriverLocation(prev => {
-        const latDiff = destination.latitude - prev.latitude;
-        const lngDiff = destination.longitude - prev.longitude;
+    if (!rideId) return;
 
-        const newLat = prev.latitude + latDiff * 0.05;
-        const newLng = prev.longitude + lngDiff * 0.05;
+    const rideRef = doc(db, 'rides', rideId);
 
-        // Calculate remaining distance
-        const dist = getDistanceFromLatLonInKm(newLat, newLng, destination.latitude, destination.longitude);
-        setRemainingDistance(dist);
+    const unsubscribe = onSnapshot(rideRef, (snap) => {
+      if (!snap.exists()) return;
 
-        // Calculate ETA based on speed (distance/duration)
-        const speed = distance / (duration || 1); // km per minute
-        setEta(dist / speed);
+      const data = snap.data();
+      setRide(data);
 
-        // Check if arrived (within 50 meters)
-        if (dist < 0.05) {
-          setStatus('Arrived at destination');
-          setRemainingDistance(0);
-          setEta(0);
-          clearInterval(intervalRef.current);
-        }
+      /* 🚀 NAVIGATE WHEN COMPLETED */
+      if (data.status === 'completed') {
+        setTimeout(() => {
+          navigation.reset({
+            index: 0,
+            routes: [
+              {
+                name: 'RiderRideCompleted',
+                params: { rideId },
+              },
+            ],
+          });
+        }, 600); // small delay = smoother UX
+      }
+    });
 
-        return { latitude: newLat, longitude: newLng };
-      });
-    }, 2000);
+    return () => unsubscribe();
+  }, [rideId]);
 
-    return () => clearInterval(intervalRef.current);
-  }, [destination]);
-
-  /** 📍 Auto-follow driver */
+  /* ================= DRIVER LISTENER ================= */
   useEffect(() => {
-    if (mapRef.current) {
-      mapRef.current.animateCamera({
-        center: driverLocation,
-        pitch: 45,
-        heading: 0,
-        altitude: 1000,
-        zoom: 15,
-      });
-    }
-  }, [driverLocation]);
+    if (!ride?.driverId) return;
 
+    const driverRef = doc(db, 'drivers', ride.driverId);
+
+    const unsubscribe = onSnapshot(driverRef, (snap) => {
+      if (!snap.exists()) return;
+
+      const driver = snap.data();
+      setDriverData(driver);
+
+      if (driver.location) {
+        setDriverLocation({
+          latitude: driver.location.latitude,
+          longitude: driver.location.longitude,
+        });
+      }
+    });
+
+    return () => unsubscribe();
+  }, [ride?.driverId]);
+
+  /* ================= PULSE ANIMATION ================= */
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.4, duration: 1000, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, []);
+
+  /* ================= MAP RECENTER ================= */
   const recenterMap = () => {
-    mapRef.current?.fitToCoordinates([origin, destination, driverLocation], {
-      edgePadding: { top: 120, right: 60, bottom: 350, left: 60 },
-      animated: true,
+    if (!ride || !driverLocation) return;
+
+    mapRef.current?.fitToCoordinates(
+      [ride.pickupLocation, ride.dropoffLocation, driverLocation],
+      {
+        edgePadding: { top: 120, right: 60, bottom: 420, left: 60 },
+        animated: true,
+      }
+    );
+  };
+
+  /* ================= ACTIONS ================= */
+  const handleChat = () => {
+    navigation.navigate('ChatScreen', {
+      rideId,
+      currentUser: { uid: ride.riderId },
+      userType: 'rider',
+      otherUserName: driverData?.fullName || 'Driver',
+      otherUserPhoto: driverData?.photoURL,
     });
   };
 
+  const handleCall = () => {
+    if (!driverData?.phoneNumber) return;
+    Alert.alert('Call', driverData.phoneNumber);
+  };
+
+  /* ================= LOADING ================= */
+  if (!ride) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color={PRIMARY} />
+          <Text style={styles.loadingText}>Loading your ride…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const { pickupLocation, dropoffLocation, status } = ride;
+
   return (
     <SafeAreaView style={styles.container}>
-      <MapView ref={mapRef} style={styles.map}>
-        <Marker coordinate={origin} title="Pickup" pinColor="#1e3a5f" />
-        <Marker coordinate={destination} title="Drop-off" pinColor="#1e3a5f" />
-        <Marker coordinate={driverLocation} title="Driver" pinColor="#7FD957" />
+      {/* MAP */}
+      <MapView ref={mapRef} style={styles.map} onMapReady={recenterMap}>
+        {pickupLocation && (
+          <Marker coordinate={pickupLocation}>
+            <View style={styles.originMarker}>
+              <View style={styles.originDot} />
+              <View style={styles.originRing} />
+            </View>
+          </Marker>
+        )}
 
-        <MapViewDirections
-          origin={origin}
-          destination={destination}
-          apikey={GOOGLE_MAPS_API_KEY}
-          strokeWidth={6}
-          strokeColor="#7FD957"
-        />
+        {dropoffLocation && (
+          <Marker coordinate={dropoffLocation}>
+            <View style={styles.destMarker}>
+              <Ionicons name="location" size={28} color={SECONDARY} />
+            </View>
+          </Marker>
+        )}
+
+        {driverLocation && (
+          <Marker coordinate={driverLocation}>
+            <View style={styles.driverMarkerWrap}>
+              <Animated.View style={[styles.driverPulse, { transform: [{ scale: pulseAnim }] }]} />
+              <View style={styles.driverMarker}>
+                <Ionicons name="car" size={16} color="#fff" />
+              </View>
+            </View>
+          </Marker>
+        )}
+
+        {pickupLocation && dropoffLocation && (
+          <MapViewDirections
+            origin={pickupLocation}
+            destination={dropoffLocation}
+            apikey={GOOGLE_MAPS_API_KEY}
+            strokeWidth={5}
+            strokeColor={PRIMARY}
+          />
+        )}
       </MapView>
 
-      <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-        <Ionicons name="arrow-back" size={24} color="#fff" />
-      </TouchableOpacity>
+      {/* TOP BAR */}
+      <View style={styles.topBar}>
+        <TouchableOpacity style={styles.iconButton} onPress={() => navigation.goBack()}>
+          <Ionicons name="arrow-back" size={22} color={DARK} />
+        </TouchableOpacity>
 
-      <TouchableOpacity style={styles.gpsButton} onPress={recenterMap}>
-        <Ionicons name="locate" size={24} color="#fff" />
-      </TouchableOpacity>
-
-      {/* INFO CARD */}
-      <View style={styles.infoCard}>
-        <Text style={styles.statusText}>{status}</Text>
-
-        <View style={styles.tripInfoRow}>
-          <Text style={styles.tripText}>ETA: {Math.ceil(eta)} min</Text>
-          <Text style={styles.tripText}>Distance: {remainingDistance.toFixed(1)} km</Text>
-          <Text style={styles.tripText}>Fare: £{Number(fare).toFixed(2)}</Text>
+        <View style={styles.statusPill}>
+          <View style={[styles.statusDot, { backgroundColor: PRIMARY }]} />
+          <Text style={styles.statusText}>Ride in progress</Text>
         </View>
 
-        <View style={styles.driverRow}>
-          <Image source={{ uri: driver.photo }} style={styles.driverImage} />
-          <View style={{ flex: 1, marginLeft: 10 }}>
-            <Text style={styles.driverName}>{driver.name}</Text>
-            <Text style={styles.driverRating}>⭐ {driver.rating}</Text>
-            <Text style={styles.carText}>{driver.car}</Text>
-            <Text style={styles.plateText}>{driver.plate}</Text>
+        <TouchableOpacity style={styles.iconButton} onPress={recenterMap}>
+          <Ionicons name="locate" size={22} color={DARK} />
+        </TouchableOpacity>
+      </View>
+
+      {/* ================= BOTTOM SHEET ================= */}
+      <View style={styles.bottomSheet}>
+        <View style={styles.sheetHandle} />
+
+        {/* Progress Header */}
+        <View style={styles.progressHeader}>
+          <View style={styles.progressIconBox}>
+            <Ionicons name="navigate-circle" size={24} color={PRIMARY} />
+          </View>
+          <View style={styles.progressTextBox}>
+            <Text style={styles.progressTitle}>Heading to destination</Text>
+            <Text style={styles.progressSub}>Your driver is taking you to the dropoff</Text>
+          </View>
+        </View>
+
+        {/* Route Card */}
+        <View style={styles.routeCard}>
+          <View style={styles.routeRow}>
+            <View style={styles.routeDotContainer}>
+              <View style={[styles.routeDot, { backgroundColor: PRIMARY }]} />
+              <View style={styles.routeLine} />
+            </View>
+            <View style={styles.routeTextBox}>
+              <Text style={styles.routeLabel}>Pickup</Text>
+              <Text style={styles.routeText} numberOfLines={1}>
+                {pickupLocation?.address || 'Pickup location'}
+              </Text>
+            </View>
           </View>
 
-          <TouchableOpacity style={styles.callBtn}>
-            <Ionicons name="call" size={18} color="#000" />
-          </TouchableOpacity>
+          <View style={styles.routeRow}>
+            <View style={styles.routeDotContainer}>
+              <View style={[styles.routeDot, { backgroundColor: SECONDARY }]} />
+            </View>
+            <View style={styles.routeTextBox}>
+              <Text style={styles.routeLabel}>Dropoff</Text>
+              <Text style={styles.routeText} numberOfLines={1}>
+                {dropoffLocation?.address || 'Dropoff location'}
+              </Text>
+            </View>
+          </View>
+        </View>
 
-          <TouchableOpacity style={styles.msgBtn}>
-            <MaterialIcons name="message" size={18} color="#000" />
-          </TouchableOpacity>
+        {/* Driver Card */}
+        {driverData && (
+          <View style={styles.driverCard}>
+            <Image
+              source={{ uri: driverData.selfieUrl }}
+              style={styles.driverImage}
+            />
+
+            <View style={styles.driverInfo}>
+              <Text style={styles.driverName}>{driverData.fullName}</Text>
+              <Text style={styles.driverSub}>{driverData.makeModel}</Text>
+              <View style={styles.plateBox}>
+                <Text style={styles.plate}>{driverData.registrationNumber}</Text>
+              </View>
+            </View>
+
+            <View style={styles.actionButtons}>
+              <TouchableOpacity style={styles.actionBtn} onPress={handleChat}>
+                <Ionicons name="chatbubble-ellipses" size={18} color={SECONDARY} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.actionBtn} onPress={handleCall}>
+                <Ionicons name="call" size={18} color={SECONDARY} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+
+        {/* Safety Note */}
+        <View style={styles.safetyNote}>
+          <Ionicons name="shield-checkmark-outline" size={16} color={SECONDARY} />
+          <Text style={styles.safetyText}>Your ride is insured and tracked in real-time</Text>
         </View>
       </View>
     </SafeAreaView>
   );
 }
 
-
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#1a1a1a' },
-  map: { flex: 1 },
+  container: { flex: 1, backgroundColor: '#fff' },
+  map: { ...StyleSheet.absoluteFillObject },
 
-  infoCard: {
+  /* Loading */
+  loadingOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 15,
+    color: '#888',
+    fontWeight: '500',
+  },
+
+  /* Top Bar */
+  topBar: {
+    position: 'absolute',
+    top: 50,
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  iconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+    gap: 8,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  statusText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: DARK,
+  },
+
+  /* Markers */
+  originMarker: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  originDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: PRIMARY,
+    borderWidth: 3,
+    borderColor: '#fff',
+  },
+  originRing: {
+    position: 'absolute',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: PRIMARY,
+    opacity: 0.3,
+  },
+  destMarker: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  driverMarkerWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  driverPulse: {
+    position: 'absolute',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(121,180,49,0.3)',
+  },
+  driverMarker: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: PRIMARY,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+
+  /* Bottom Sheet */
+  bottomSheet: {
     position: 'absolute',
     bottom: 0,
-    width: '100%',
-    backgroundColor: '#1e3a5f',
-    padding: 20,
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
+    left: 0,
+    right: 0,
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingTop: 12,
+    paddingHorizontal: 20,
+    paddingBottom: 30,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    elevation: 20,
+  },
+  sheetHandle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#ddd',
+    marginBottom: 16,
   },
 
-  statusText: {
-    color: '#7FD957',
-    fontSize: 18,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 15,
-  },
-
-  tripInfoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    marginBottom: 15,
-  },
-  tripText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
-
-  driverRow: {
+  /* Progress Header */
+  progressHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 15,
+    gap: 14,
+    marginBottom: 16,
+  },
+  progressIconBox: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: 'rgba(121,180,49,0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  progressTextBox: {
+    flex: 1,
+  },
+  progressTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: DARK,
+  },
+  progressSub: {
+    fontSize: 13,
+    color: '#888',
+    marginTop: 2,
   },
 
+  /* Route Card */
+  routeCard: {
+    backgroundColor: BG,
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 14,
+  },
+  routeRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  routeDotContainer: {
+    width: 20,
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  routeDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  routeLine: {
+    width: 2,
+    height: 20,
+    backgroundColor: '#ddd',
+    marginVertical: 2,
+  },
+  routeTextBox: {
+    flex: 1,
+    paddingBottom: 8,
+  },
+  routeLabel: {
+    fontSize: 11,
+    color: '#999',
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  routeText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: DARK,
+  },
+
+  /* Driver Card */
+  driverCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: BG,
+    padding: 14,
+    borderRadius: 16,
+    marginBottom: 14,
+  },
   driverImage: {
-    width: 55,
-    height: 55,
-    borderRadius: 30,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    marginRight: 14,
+    borderWidth: 2,
+    borderColor: '#fff',
   },
-  driverName: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  driverRating: { color: '#FFD700', fontSize: 14 },
-  carText: { color: '#ccc', fontSize: 13 },
-  plateText: { color: '#7FD957', fontSize: 13, fontWeight: 'bold' },
+  driverInfo: {
+    flex: 1,
+  },
+  driverName: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: DARK,
+  },
+  driverSub: {
+    fontSize: 13,
+    color: '#888',
+    marginTop: 2,
+  },
+  plateBox: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#fff',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  plate: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: DARK,
+    letterSpacing: 1,
+  },
+  actionButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  actionBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#eee',
+  },
 
-  callBtn: {
+  /* Safety Note */
+  safetyNote: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#7FD957',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 20,
-    marginLeft: 10,
-  },
-
-  msgBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FFD700',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 20,
-    marginLeft: 8,
-  },
-
-  backButton: {
-    position: 'absolute',
-    top: 75,
-    left: 15,
-    backgroundColor: 'rgba(30,58,95,0.8)',
-    padding: 10,
-    borderRadius: 30,
-    elevation: 5,
-  },
-
-  gpsButton: {
-    position: 'absolute',
-    bottom: 240,
-    right: 15,
-    backgroundColor: 'rgba(30,58,95,0.8)',
+    justifyContent: 'center',
     padding: 12,
-    borderRadius: 30,
-    elevation: 5,
+    backgroundColor: '#EBF2FA',
+    borderRadius: 12,
+    gap: 8,
+  },
+  safetyText: {
+    fontSize: 12,
+    color: SECONDARY,
+    fontWeight: '500',
   },
 });

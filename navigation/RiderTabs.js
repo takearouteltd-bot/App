@@ -8,6 +8,7 @@ import RiderProfileScreen from "../screens/Rider/RiderProfile/RiderProfileScreen
 import PaymentsMethodScreen from "../screens/Rider/PaymentMethods/PaymentMethodsScreen";
 import RiderPaymentStack from "./Rider/RiderPaymentStack";
 import RiderTripsStack from "./Rider/RiderTripsStack";
+import RiderProfileStack from "./Rider/RiderProfileStack";
 
 const Tab = createBottomTabNavigator();
 const PRIMARY = "#79B531";
@@ -55,7 +56,7 @@ export default function RiderTabs() {
 
       <Tab.Screen
         name="Profile"
-        component={RiderProfileScreen}
+        component={RiderProfileStack}
         options={{
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="person-outline" size={size} color={color} />

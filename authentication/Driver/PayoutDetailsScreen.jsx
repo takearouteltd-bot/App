@@ -46,15 +46,45 @@ export default function PayoutDetailsScreen({ navigation }) {
     fetchStep();
   }, [driverId]);
 
-  const handleContinue = async () => {
-    try {
- 
-      navigation.navigate("FinalReview"); // Next step or main dashboard
-    } catch (error) {
-      console.log("Error saving payout details:", error);
-      alert("Failed to save payout details. Please try again.");
+const handleContinue = async () => {
+  try {
+    if (!driverId) {
+      alert("User not authenticated");
+      return;
     }
-  };
+
+    // Basic validation
+    if (!accountHolder || !sortCode || !accountNumber) {
+      alert("Please fill all fields");
+      return;
+    }
+
+    if (!acceptedTerms) {
+      alert("You must accept the terms and conditions");
+      return;
+    }
+    
+
+    const driverRef = doc(db, "drivers", driverId);
+
+    await updateDoc(driverRef, {
+      accountDetails: {
+        accountHolder,
+        sortCode,
+        accountNumber,
+        acceptedTerms,
+        updatedAt: new Date(),
+      },
+      onboardingStep: 5, // move to next step
+      onboardingComplete: false
+    });
+
+    navigation.navigate("FinalReview");
+  } catch (error) {
+    console.log("Error saving payout details:", error);
+    alert("Failed to save payout details. Please try again.");
+  }
+};
 
   return (
     <SafeAreaView style={styles.safe}>

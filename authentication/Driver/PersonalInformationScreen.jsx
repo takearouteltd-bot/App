@@ -9,15 +9,19 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db, auth } from "../../config/firebase";
 
 const TOTAL_STEPS = 5;
 const PRIMARY = "#79B531";
 
-export default function PersonalInformationScreen({ navigation }) {
+export default function PersonalInformationScreen({
+  navigation,
+  setOnboardingStatus,
+}) {
   const [currentStep, setCurrentStep] = useState(1);
 
   const [firstName, setFirstName] = useState("");
@@ -28,30 +32,76 @@ export default function PersonalInformationScreen({ navigation }) {
 
   const driverId = auth.currentUser?.uid;
 
+  // ✅ Fetch existing data (if user returns)
   useEffect(() => {
-    const fetchStep = async () => {
+    const fetchData = async () => {
       if (!driverId) return;
-      const snap = await getDoc(doc(db, "drivers", driverId));
-      if (snap.exists()) {
-        setCurrentStep(snap.data().onboardingStep || 1);
+
+      try {
+        const snap = await getDoc(doc(db, "drivers", driverId));
+
+        if (snap.exists()) {
+          const data = snap.data();
+
+          setCurrentStep(data.onboardingStep || 1);
+          setFirstName(data.firstName || "");
+          setLastName(data.lastName || "");
+          setDob(data.dob || "");
+          setNin(data.nin || "");
+          setAddress(data.address || "");
+        }
+      } catch (error) {
+        console.log("Error fetching driver data:", error);
       }
     };
-    fetchStep();
+
+    fetchData();
   }, [driverId]);
 
+  // ✅ Save data + move forward
   const handleContinue = async () => {
-  
+    if (!driverId) return;
+
+    if (!firstName || !lastName || !dob || !nin || !address) {
+      Alert.alert("Missing Fields", "Please fill all fields.");
+      return;
+    }
+
     try {
-   
-  
-      console.log("Personal info saved successfully!");
-      navigation.navigate("IdentityVerification"); // check exact route name
+      await setDoc(
+        doc(db, "drivers", driverId),
+        {
+          firstName,
+          lastName,
+          fullName: `${firstName} ${lastName}`,
+          dob,
+          nin,
+          address,
+
+          onboardingStep: 2,
+          onboardingComplete: false,
+
+          role: "driver",
+          approved: false,
+          status: "offline",
+
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        { merge: true } // 🔥 important
+      );
+
+      // update global onboarding flow
+      setOnboardingStatus("onboarding");
+
+      console.log("Personal info saved!");
+
+      navigation.navigate("IdentityVerification");
     } catch (error) {
       console.log("Error saving personal info:", error);
-      alert("Failed to save info. Please try again.");
+      Alert.alert("Error", "Failed to save info. Please try again.");
     }
   };
-  
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -116,23 +166,23 @@ export default function PersonalInformationScreen({ navigation }) {
           />
 
           {/* NIN */}
-          <Text style={styles.label}>National Insurance Number</Text>
+          <Text style={styles.label}>National ID Number</Text>
           <TextInput
-            placeholder="Enter NIN"
+            placeholder="Enter ID number"
             value={nin}
             onChangeText={setNin}
             style={styles.input}
           />
 
           <Text style={styles.infoText}>
-            Required for background verification checks, your data is encrypted
+            Required for verification. Your data is securely stored.
           </Text>
 
           {/* Address */}
           <Text style={styles.label}>Home Address</Text>
           <View style={styles.addressContainer}>
             <TextInput
-              placeholder="Search for your address"
+              placeholder="Enter your address"
               value={address}
               onChangeText={setAddress}
               style={styles.addressInput}

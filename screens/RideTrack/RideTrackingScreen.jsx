@@ -7,102 +7,114 @@ import {
   TouchableOpacity,
   Image,
   ActivityIndicator,
+  Animated,
 } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 import MapViewDirections from 'react-native-maps-directions';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../../config/firebase';
 
 const PRIMARY = '#79B431';
 const SECONDARY = '#235594';
-const DANGER = '#E53935';
+const DARK = '#1a1a1a';
+const BG = '#F8F9FA';
 
 export default function RideTrackingScreen() {
   const route = useRoute();
   const navigation = useNavigation();
-  const { origin, destination, fare, distance, duration } = route.params;
+  const { rideId } = route.params;
 
   const mapRef = useRef(null);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  const [rideData, setRideData] = useState(null);
+  const [driverData, setDriverData] = useState(null);
+  const [driverLocation, setDriverLocation] = useState(null);
+
   const GOOGLE_MAPS_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ';
 
-  const [pickupAddress, setPickupAddress] = useState('');
-  const [loadingAddress, setLoadingAddress] = useState(true);
-
-  const driver = {
-    name: 'James Wilson',
-    rating: 4.8,
-    car: 'Toyota Prius • White',
-    plate: 'AB12 CDE',
-    photo: 'https://i.pravatar.cc/100',
+  const handleChat = () => {
+    navigation.navigate('ChatScreen', {
+      rideId,
+      currentUser: { uid: rideData.riderId },
+      userType: 'rider',
+      otherUserName: driverData?.fullName || 'Driver',
+      otherUserPhoto: driverData?.photoURL,
+    });
   };
 
-  const [driverLocation, setDriverLocation] = useState({
-    latitude: origin.latitude + 0.01,
-    longitude: origin.longitude + 0.01,
+  /* ================= RIDE LISTENER ================= */
+ const hasNavigatedToProgress = useRef(false);
+
+useEffect(() => {
+  const rideRef = doc(db, 'rides', rideId);
+
+  const unsubscribe = onSnapshot(rideRef, (snap) => {
+    if (!snap.exists()) return;
+
+    const data = snap.data();
+    setRideData(data);
+
+    // ✅ Auto-navigate when trip starts
+    if (data.status === 'ongoing' && !hasNavigatedToProgress.current) {
+      hasNavigatedToProgress.current = true;
+      navigation.replace('RideInProgress', { rideId });
+      return; // stop processing, unmounting anyway
+    }
+
+    if (data.driverId) {
+      listenToDriver(data.driverId);
+    }
   });
 
-  const [status, setStatus] = useState('Driver is on the way');
+  return () => unsubscribe();
+}, []);
 
-  /* ---------------------------
-     REVERSE GEOCODING FUNCTION
-  ---------------------------- */
-  const getAddressFromCoords = async (lat, lng) => {
-    try {
-      const response = await fetch(
-        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_API_KEY}`
-      );
+  /* ================= DRIVER LISTENER ================= */
+  const listenToDriver = (driverId) => {
+    const driverRef = doc(db, 'drivers', driverId);
 
-      const data = await response.json();
+    return onSnapshot(driverRef, (snap) => {
+      if (!snap.exists()) return;
 
-      if (data.results && data.results.length > 0) {
-        // Use first formatted address
-        const fullAddress = data.results[0].formatted_address;
+      const driver = snap.data();
+      setDriverData(driver);
 
-        // Optional: shorten address (cleaner UI)
-        const shortAddress = fullAddress.split(',').slice(0, 3).join(',');
-
-        setPickupAddress(shortAddress);
-      } else {
-        setPickupAddress('Pickup location');
+      if (driver.location) {
+        setDriverLocation({
+          latitude: driver.location.latitude,
+          longitude: driver.location.longitude,
+        });
       }
-    } catch (error) {
-      console.log('Geocoding error:', error);
-      setPickupAddress('Pickup location');
-    } finally {
-      setLoadingAddress(false);
-    }
+    });
   };
 
-  /* Fetch pickup address */
+  /* ================= PULSE ANIMATION ================= */
   useEffect(() => {
-    getAddressFromCoords(origin.latitude, origin.longitude);
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.4, duration: 1000, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
   }, []);
 
-  /* Simulate driver movement */
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setDriverLocation(prev => {
-        const latDiff = origin.latitude - prev.latitude;
-        const lngDiff = origin.longitude - prev.longitude;
-
-        const newLat = prev.latitude + latDiff * 0.1;
-        const newLng = prev.longitude + lngDiff * 0.1;
-
-        if (Math.abs(latDiff) < 0.0005 && Math.abs(lngDiff) < 0.0005) {
-          setStatus('Driver has arrived');
-          clearInterval(interval);
-        }
-
-        return { latitude: newLat, longitude: newLng };
-      });
-    }, 2000);
-
-    return () => clearInterval(interval);
-  }, []);
-
+  /* ================= MAP FIT ================= */
   const recenterMap = () => {
+    if (!rideData || !driverLocation) return;
+
+    const { pickupLocation, dropoffLocation } = rideData;
+
     mapRef.current?.fitToCoordinates(
-      [origin, destination, driverLocation],
+      [
+        pickupLocation,
+        dropoffLocation,
+        driverLocation,
+      ],
       {
         edgePadding: { top: 120, right: 60, bottom: 420, left: 60 },
         animated: true,
@@ -110,80 +122,159 @@ export default function RideTrackingScreen() {
     );
   };
 
+  if (!rideData) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color={PRIMARY} />
+          <Text style={styles.loadingText}>Loading your ride…</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  const { pickupLocation, dropoffLocation, status } = rideData;
+
+  const getStatusConfig = () => {
+    switch (status) {
+      case 'accepted':
+        return { label: 'Driver is on the way', color: SECONDARY, icon: 'navigate' };
+      case 'arrived':
+        return { label: 'Driver has arrived', color: PRIMARY, icon: 'location' };
+      case 'ongoing':
+        return { label: 'Ride in progress', color: PRIMARY, icon: 'car-sport' };
+      default:
+        return { label: 'Tracking ride', color: SECONDARY, icon: 'navigate' };
+    }
+  };
+
+  const statusConfig = getStatusConfig();
+
   return (
     <SafeAreaView style={styles.container}>
+      {/* MAP */}
       <MapView ref={mapRef} style={styles.map} onMapReady={recenterMap}>
-        <Marker coordinate={origin} pinColor={PRIMARY} />
-        <Marker coordinate={destination} pinColor={SECONDARY} />
-        <Marker coordinate={driverLocation} pinColor={PRIMARY} />
+        <Marker coordinate={pickupLocation}>
+          <View style={styles.originMarker}>
+            <View style={styles.originDot} />
+            <View style={styles.originRing} />
+          </View>
+        </Marker>
+
+        <Marker coordinate={dropoffLocation}>
+          <View style={styles.destMarker}>
+            <Ionicons name="location" size={28} color={SECONDARY} />
+          </View>
+        </Marker>
+
+        {driverLocation && (
+          <Marker coordinate={driverLocation}>
+            <View style={styles.driverMarkerWrap}>
+              <Animated.View style={[styles.driverPulse, { transform: [{ scale: pulseAnim }] }]} />
+              <View style={styles.driverMarker}>
+                <Ionicons name="car" size={16} color="#fff" />
+              </View>
+            </View>
+          </Marker>
+        )}
 
         <MapViewDirections
-          origin={origin}
-          destination={destination}
+          origin={pickupLocation}
+          destination={dropoffLocation}
           apikey={GOOGLE_MAPS_API_KEY}
-          strokeWidth={6}
+          strokeWidth={5}
           strokeColor={PRIMARY}
         />
       </MapView>
 
-      <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-        <Ionicons name="arrow-back" size={22} color="#fff" />
-      </TouchableOpacity>
+      {/* TOP BAR */}
+      <View style={styles.topBar}>
+        <TouchableOpacity style={styles.iconButton} onPress={() => navigation.goBack()}>
+          <Ionicons name="arrow-back" size={22} color={DARK} />
+        </TouchableOpacity>
 
-      <TouchableOpacity style={styles.gpsButton} onPress={recenterMap}>
-        <Ionicons name="locate" size={22} color="#fff" />
-      </TouchableOpacity>
+        <View style={styles.statusPill}>
+          <View style={[styles.statusDot, { backgroundColor: statusConfig.color }]} />
+          <Text style={styles.statusText}>{statusConfig.label}</Text>
+        </View>
 
+        <TouchableOpacity style={styles.iconButton} onPress={recenterMap}>
+          <Ionicons name="locate" size={22} color={DARK} />
+        </TouchableOpacity>
+      </View>
+
+      {/* BOTTOM SHEET */}
       <View style={styles.bottomSheet}>
         <View style={styles.sheetHandle} />
 
-        <Text style={styles.status}>{status}</Text>
+        {/* Status Header */}
+        <View style={styles.statusHeader}>
+          <View style={[styles.statusIconBox, { backgroundColor: `${statusConfig.color}15` }]}>
+            <Ionicons name={statusConfig.icon} size={22} color={statusConfig.color} />
+          </View>
+          <View>
+            <Text style={styles.statusTitle}>{statusConfig.label}</Text>
+            <Text style={styles.statusSub}>
+              {status === 'accepted' && 'Approaching pickup location'}
+              {status === 'arrived' && 'Meet your driver at the pickup spot'}
+              {status === 'ongoing' && 'Heading to your destination'}
+            </Text>
+          </View>
+        </View>
 
-        {/* PICKUP LOCATION */}
+        {/* Pickup Location */}
         <View style={styles.locationCard}>
           <View style={styles.locationRow}>
-            <View style={styles.pickupDot} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.locationLabel}>Pickup Point</Text>
-
-              {loadingAddress ? (
-                <ActivityIndicator size="small" color={PRIMARY} />
-              ) : (
-                <Text style={styles.locationText} numberOfLines={2}>
-                  {pickupAddress}
-                </Text>
-              )}
+            <View style={styles.locationDotContainer}>
+              <View style={[styles.routeDot, { backgroundColor: PRIMARY }]} />
+            </View>
+            <View style={styles.locationTextBox}>
+              <Text style={styles.locationLabel}>Pickup</Text>
+              <Text style={styles.locationText} numberOfLines={1}>
+                {pickupLocation.address}
+              </Text>
             </View>
           </View>
         </View>
 
-        {/* DRIVER CARD */}
-        <View style={styles.driverCard}>
-          <Image source={{ uri: driver.photo }} style={styles.driverImage} />
+        {/* Driver Card */}
+        {driverData && (
+          <View style={styles.driverCard}>
+            <Image
+              source={{ uri: driverData.selfieUrl }}
+              style={styles.driverImage}
+            />
 
-          <View style={{ flex: 1 }}>
-            <Text style={styles.driverName}>{driver.name}</Text>
-            <Text style={styles.driverSub}>{driver.car}</Text>
-            <Text style={styles.plate}>{driver.plate}</Text>
+            <View style={styles.driverInfo}>
+              <Text style={styles.driverName}>{driverData.fullName}</Text>
+              <Text style={styles.driverSub}>{driverData.makeModel}</Text>
+              <View style={styles.plateBox}>
+                <Text style={styles.plate}>{driverData.registrationNumber}</Text>
+              </View>
+            </View>
+
+            <View style={styles.actionButtons}>
+              <TouchableOpacity style={styles.actionBtn} onPress={handleChat}>
+                <Ionicons name="chatbubble-ellipses" size={18} color={SECONDARY} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.actionBtn}
+                onPress={() => handleCall(driverData.phoneNumber)}
+              >
+                <Ionicons name="call" size={18} color={SECONDARY} />
+              </TouchableOpacity>
+            </View>
           </View>
+        )}
 
-          <View style={styles.actionButtons}>
-            <TouchableOpacity style={styles.iconBtn}>
-              <Ionicons name="chatbubble-ellipses" size={18} color="#fff" />
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.iconBtn}>
-              <Ionicons name="call" size={18} color="#fff" />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <TouchableOpacity style={styles.primaryButton}>
+        {/* Track Progress Button */}
+        <TouchableOpacity
+          style={styles.primaryButton}
+          onPress={() => navigation.navigate('RideInProgress', { rideId })}
+        >
           <Text style={styles.primaryText}>Track Ride Progress</Text>
+          <Ionicons name="arrow-forward" size={18} color="#fff" />
         </TouchableOpacity>
-        
-
-
       </View>
     </SafeAreaView>
   );
@@ -191,155 +282,293 @@ export default function RideTrackingScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
-  map: { flex: 1 },
+  map: { ...StyleSheet.absoluteFillObject },
 
-  backButton: {
+  /* Loading */
+  loadingOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 15,
+    color: '#888',
+    fontWeight: '500',
+  },
+
+  /* Top Bar */
+  topBar: {
     position: 'absolute',
     top: 50,
-    left: 20,
-    backgroundColor: SECONDARY,
-    padding: 10,
-    borderRadius: 30,
-    elevation: 5,
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  iconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 4,
+    gap: 8,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  statusText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: DARK,
   },
 
-  gpsButton: {
+  /* Markers */
+  originMarker: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  originDot: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: PRIMARY,
+    borderWidth: 3,
+    borderColor: '#fff',
+  },
+  originRing: {
     position: 'absolute',
-    bottom: 300,
-    right: 20,
-    backgroundColor: SECONDARY,
-    padding: 12,
-    borderRadius: 30,
-    elevation: 5,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: PRIMARY,
+    opacity: 0.3,
+  },
+  destMarker: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  driverMarkerWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  driverPulse: {
+    position: 'absolute',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(121,180,49,0.3)',
+  },
+  driverMarker: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: PRIMARY,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
   },
 
+  /* Bottom Sheet */
   bottomSheet: {
     position: 'absolute',
     bottom: 0,
-    width: '100%',
+    left: 0,
+    right: 0,
     backgroundColor: '#fff',
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    padding: 22,
-    elevation: 25,
+    paddingTop: 12,
+    paddingHorizontal: 20,
+    paddingBottom: 30,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    elevation: 20,
   },
-
   sheetHandle: {
+    alignSelf: 'center',
     width: 40,
     height: 4,
     borderRadius: 2,
     backgroundColor: '#ddd',
-    alignSelf: 'center',
-    marginBottom: 15,
+    marginBottom: 16,
   },
 
-  status: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: SECONDARY,
-    textAlign: 'center',
-    marginBottom: 15,
+  /* Status Header */
+  statusHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    marginBottom: 16,
+  },
+  statusIconBox: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  statusTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: DARK,
+  },
+  statusSub: {
+    fontSize: 13,
+    color: '#888',
+    marginTop: 2,
   },
 
+  /* Location Card */
   locationCard: {
-    backgroundColor: '#F7F9FC',
+    backgroundColor: BG,
     padding: 14,
     borderRadius: 16,
-    marginBottom: 15,
+    marginBottom: 14,
   },
-
   locationRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-
-  pickupDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: PRIMARY,
+  locationDotContainer: {
+    width: 20,
+    alignItems: 'center',
     marginRight: 10,
   },
-
-  locationLabel: {
-    fontSize: 12,
-    color: '#888',
+  routeDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
   },
-
+  locationTextBox: {
+    flex: 1,
+  },
+  locationLabel: {
+    fontSize: 11,
+    color: '#999',
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
   locationText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#333',
+    color: DARK,
   },
 
+  /* Driver Card */
   driverCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F7F9FC',
-    padding: 15,
+    backgroundColor: BG,
+    padding: 14,
     borderRadius: 16,
-    marginBottom: 18,
+    marginBottom: 16,
   },
-
   driverImage: {
-    width: 55,
-    height: 55,
-    borderRadius: 30,
-    marginRight: 12,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    marginRight: 14,
+    borderWidth: 2,
+    borderColor: '#fff',
   },
-
+  driverInfo: {
+    flex: 1,
+  },
   driverName: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#333',
+    fontWeight: '800',
+    color: DARK,
   },
-
   driverSub: {
     fontSize: 13,
-    color: '#666',
+    color: '#888',
+    marginTop: 2,
   },
-
+  plateBox: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#fff',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
   plate: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: PRIMARY,
+    fontSize: 12,
+    fontWeight: '800',
+    color: DARK,
+    letterSpacing: 1,
   },
-
   actionButtons: {
     flexDirection: 'row',
     gap: 10,
   },
-
-  iconBtn: {
-    backgroundColor: SECONDARY,
-    padding: 10,
-    borderRadius: 25,
+  actionBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#eee',
   },
 
+  /* Primary Button */
   primaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: PRIMARY,
     paddingVertical: 16,
     borderRadius: 16,
-    alignItems: 'center',
-    marginBottom: 10,
+    gap: 8,
   },
-
   primaryText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: '600',
-  },
-
-  sosButton: {
-    backgroundColor: DANGER,
-    paddingVertical: 14,
-    borderRadius: 16,
-    alignItems: 'center',
-  },
-
-  sosText: {
-    color: '#fff',
     fontWeight: '700',
-    fontSize: 16,
   },
 });

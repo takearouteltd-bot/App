@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,75 +6,114 @@ import {
   SafeAreaView,
   TouchableOpacity,
   FlatList,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { getFirestore, doc, onSnapshot, collection, query, orderBy } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 
 export default function EarningsScreen() {
   const navigation = useNavigation();
-  const totalBalance = 1245.75;
-
+  const db = getFirestore();
+  const auth = getAuth();
+  
+  const [wallet, setWallet] = useState(null);
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [selectedFilter, setSelectedFilter] = useState('All');
+  const [subscription, setSubscription] = useState(null);
 
-  const transactions = [
-    {
-      id: '1',
-      type: 'Trip',
-      title: 'Trip to Downtown',
-      date: 'Oct 12',
-      amount: 18.5,
-    },
-    {
-      id: '2',
-      type: 'Trip',
-      title: 'Trip to Airport',
-      date: 'Oct 10',
-      amount: 32.0,
-    },
-    {
-      id: '3',
-      type: 'Subscription',
-      title: 'Monthly Subscription',
-      date: 'Oct 01',
-      amount: -29.99,
-    },
-    {
-      id: '4',
-      type: 'Payout',
-      title: 'Bank Withdrawal',
-      date: 'Sep 30',
-      amount: -150,
-    },
-  ];
+  const driverId = auth.currentUser ? auth.currentUser.uid : null;
+
+  useEffect(() => {
+    if (!driverId) return;
+
+    // Listen to wallet document
+    const walletRef = doc(db, 'driverWallets', driverId);
+    const unsubscribeWallet = onSnapshot(walletRef, (snapshot) => {
+      if (snapshot.exists()) {
+        setWallet(snapshot.data());
+      } else {
+        setWallet({
+          availableBalance: 0,
+          totalEarned: 0,
+          pendingBalance: 0,
+        });
+      }
+    });
+
+    // Listen to transactions subcollection
+    const txQuery = query(
+      collection(db, 'driverWallets', driverId, 'transactions'),
+      orderBy('createdAt', 'desc')
+    );
+    
+    const unsubscribeTx = onSnapshot(txQuery, (snapshot) => {
+      const txList = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      setTransactions(txList);
+      setLoading(false);
+    });
+
+    const driverRef = doc(db, 'drivers', driverId);
+const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
+  if (snapshot.exists()) {
+    setSubscription(snapshot.data().subscription || null);
+  }
+});
+
+    return () => {
+      unsubscribeWallet();
+      unsubscribeTx();
+      unsubscribeSub();
+    };
+  }, [driverId]);
+
+  const totalBalance = wallet ? wallet.availableBalance : 0;
 
   const filteredTransactions =
     selectedFilter === 'All'
       ? transactions
-      : transactions.filter(t => t.type === selectedFilter);
+      : transactions.filter(t => {
+          if (selectedFilter === 'Trip') return t.type === 'ride_earning';
+          if (selectedFilter === 'Payout') return t.type === 'payout_request';
+          if (selectedFilter === 'Subscription') return t.type === 'subscription';
+          return true;
+        });
+
+  const formatDate = (timestamp) => {
+    if (!timestamp) return '';
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  };
 
   const renderTransaction = ({ item }) => {
     const isPositive = item.amount > 0;
+
+    let iconName = 'car-outline';
+    if (item.type === 'payout_request') iconName = 'arrow-down-outline';
+    else if (item.type === 'subscription') iconName = 'calendar-outline';
+
+    let title = item.description || item.type;
+    if (item.type === 'ride_earning') title = 'Ride Earning';
 
     return (
       <View style={styles.transactionCard}>
         <View style={styles.transactionLeft}>
           <View style={styles.iconContainer}>
-            <Ionicons
-              name={
-                item.type === 'Trip'
-                  ? 'car-outline'
-                  : item.type === 'Subscription'
-                  ? 'calendar-outline'
-                  : 'arrow-down-outline'
-              }
-              size={20}
-              color="#235594"
-            />
+            <TouchableOpacity
+            onPress={() => navigation.navigate('AdminPayout')}
+            >
+              <Ionicons name={iconName} size={20} color="#235594" />
+            </TouchableOpacity>
           </View>
 
           <View>
-            <Text style={styles.transactionTitle}>{item.title}</Text>
-            <Text style={styles.transactionDate}>{item.date}</Text>
+            <Text style={styles.transactionTitle}>{title}</Text>
+            <Text style={styles.transactionDate}>{formatDate(item.createdAt)}</Text>
           </View>
         </View>
 
@@ -89,6 +128,14 @@ export default function EarningsScreen() {
       </View>
     );
   };
+
+  if (loading) {
+    return (
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color="#235594" />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -110,8 +157,13 @@ export default function EarningsScreen() {
           </Text>
 
           <TouchableOpacity 
-          onPress={() => navigation.navigate('WithdrawScreen')}
-          style={styles.withdrawBtn}>
+            onPress={() => navigation.navigate('WithdrawScreen')}
+            style={[
+              styles.withdrawBtn,
+              totalBalance <= 0 && { opacity: 0.5 }
+            ]}
+            disabled={totalBalance <= 0}
+          >
             <Ionicons
               name="wallet-outline"
               size={20}
@@ -125,31 +177,47 @@ export default function EarningsScreen() {
 
       {/* Bottom Half */}
       <View style={styles.bottomContainer}>
-        {/* Next Payout */}
-        <TouchableOpacity style={styles.nextPayoutCard}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.nextPayoutLabel}>Next Payout</Text>
-            <Text style={styles.nextPayoutDate}>Wed Oct 18</Text>
-            <Text style={styles.nextPayoutSubtext}>
-              Scheduled automated payout to ****
+        {/* Stats Row */}
+        <View style={styles.statsRow}>
+          <View style={styles.statBox}>
+            <Text style={styles.statLabel}>Total Earned</Text>
+            <Text style={styles.statValue}>
+              £{(wallet ? wallet.totalEarned : 0).toFixed(2)}
             </Text>
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Text style={{ fontWeight: '600', color: '#235594' }}>
-              Schedule
+          <View style={styles.statBox}>
+            <Text style={styles.statLabel}>Pending</Text>
+            <Text style={styles.statValue}>
+              £{(wallet ? (wallet.pendingBalance || 0) : 0).toFixed(2)}
             </Text>
-            <View style={styles.scheduleBtn}>
-              <Ionicons name="arrow-forward" size={20} color="#235594" />
-            </View>
           </View>
-        </TouchableOpacity>
+        </View>
+
+        {subscription && subscription.status === 'active' && (
+  <View style={styles.subBanner}>
+    <Ionicons name="calendar-outline" size={18} color="#235594" />
+    <Text style={styles.subBannerText}>
+      Next subscription due: {subscription.nextBillingDate ? subscription.nextBillingDate.toDate().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
+    </Text>
+    <Text style={styles.subBannerAmount}>£{subscription.amount || 99.99}</Text>
+  </View>
+)}
+
+{subscription && subscription.status === 'suspended' && (
+  <View style={[styles.subBanner, { backgroundColor: '#FEF2F2', borderColor: '#EF4444' }]}>
+    <Ionicons name="alert-circle-outline" size={18} color="#EF4444" />
+    <Text style={[styles.subBannerText, { color: '#EF4444' }]}>
+      Subscription suspended. Top up wallet to reactivate.
+    </Text>
+  </View>
+)}
 
         {/* Transaction History Title */}
         <Text style={styles.sectionTitle}>Transaction History</Text>
 
         {/* Filters */}
         <View style={styles.filterContainer}>
-          {['All', 'Trip', 'Subscription', 'Payout'].map(filter => (
+          {['All', 'Trip', 'Payout'].map(filter => (
             <TouchableOpacity
               key={filter}
               style={[
@@ -177,11 +245,17 @@ export default function EarningsScreen() {
           renderItem={renderTransaction}
           contentContainerStyle={{ paddingBottom: 120 }}
           showsVerticalScrollIndicator={false}
+          ListEmptyComponent={
+            <Text style={{ textAlign: 'center', color: '#6B7280', marginTop: 40 }}>
+              No transactions yet
+            </Text>
+          }
         />
       </View>
     </View>
   );
 }
+
 
 const styles = StyleSheet.create({
   container: {
@@ -222,6 +296,29 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#111827',
   },
+  subBanner: {
+  flexDirection: 'row',
+  alignItems: 'center',
+  backgroundColor: '#EFF6FF',
+  borderWidth: 1,
+  borderColor: '#235594',
+  borderRadius: 12,
+  marginTop: 15,
+  padding: 14,
+  marginBottom: 10,
+  gap: 10,
+},
+subBannerText: {
+  flex: 1,
+  fontSize: 13,
+  fontWeight: '600',
+  color: '#235594',
+},
+subBannerAmount: {
+  fontSize: 14,
+  fontWeight: '700',
+  color: '#235594',
+},
   balanceSubtext: {
     fontSize: 12,
     color: '#374151',
@@ -330,5 +427,28 @@ const styles = StyleSheet.create({
   transactionAmount: {
     fontSize: 14,
     fontWeight: '700',
+  },
+    statsRow: {
+    flexDirection: 'row',
+    marginTop: 16,
+    gap: 12,
+  },
+  statBox: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 14,
+    alignItems: 'center',
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  statValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
   },
 });

@@ -7,6 +7,7 @@ import {
   SafeAreaView,
   ScrollView,
   Switch,
+  Alert,
 } from "react-native";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { auth, db } from "../../config/firebase";
@@ -17,7 +18,7 @@ const PRIMARY = "#79B531";
 
 export default function ApplicationSummaryScreen({
   navigation,
-  setOnboardingStatus, // 🔥 IMPORTANT
+  setOnboardingStatus,
 }) {
   const [currentStep, setCurrentStep] = useState(TOTAL_STEPS);
 
@@ -31,19 +32,50 @@ export default function ApplicationSummaryScreen({
 
   const driverId = auth.currentUser?.uid;
 
+  // ✅ Fetch driver data to determine completion
   useEffect(() => {
     const fetchData = async () => {
       if (!driverId) return;
 
-      const snap = await getDoc(doc(db, "drivers", driverId));
+      try {
+        const snap = await getDoc(doc(db, "drivers", driverId));
 
-      if (snap.exists()) {
-        const data = snap.data();
-        setCurrentStep(data.onboardingStep || TOTAL_STEPS);
-        setPersonalInfoCompleted(!!data.personalInfo);
-        setIdentityDocsVerified(!!data.identityVerification);
-        setVehicleDocsUploaded(!!data.vehicleDetails);
-        setBankDetailsConnected(!!data.payoutDetails);
+        if (snap.exists()) {
+          const data = snap.data();
+          setCurrentStep(data.onboardingStep || TOTAL_STEPS);
+
+          setPersonalInfoCompleted(
+            !!(
+              data.firstName &&
+              data.lastName &&
+              data.dob &&
+              data.nin &&
+              data.address
+            )
+          );
+          setIdentityDocsVerified(
+            !!(data.driverLicenseUrl && data.pcoLicenseUrl && data.selfieUrl)
+          );
+          setVehicleDocsUploaded(
+            !!(
+              data.makeModel &&
+              data.registrationNumber &&
+              data.v5Url &&
+              data.motUrl &&
+              data.insuranceUrl &&
+              data.vehiclePcoUrl
+            )
+          );
+          setBankDetailsConnected(
+            !!(
+              data.accountDetails?.accountHolder &&
+              data.accountDetails?.sortCode &&
+              data.accountDetails?.accountNumber
+            )
+          );
+        }
+      } catch (error) {
+        console.log("Error fetching application summary:", error);
       }
     };
 
@@ -54,53 +86,57 @@ export default function ApplicationSummaryScreen({
     <View style={styles.card}>
       <View style={styles.cardContent}>
         <View style={styles.iconContainer}>{icon}</View>
-        <View style={{ flex: 1, marginLeft: 10 }}>
+        <View style={{ flex: 1, marginLeft: 12 }}>
           <Text style={styles.cardTitle}>{title}</Text>
           <Text style={styles.cardStatus}>{status}</Text>
         </View>
-        <Ionicons name="checkmark-circle" size={24} color={PRIMARY} />
+        {status !== "Incomplete" && (
+          <Ionicons name="checkmark-circle" size={24} color={PRIMARY} />
+        )}
       </View>
     </View>
   );
 
   const handleSubmit = async () => {
     if (!termsAccepted || !gdprAccepted) {
-      alert("Please accept Terms and GDPR consent before submitting.");
+      Alert.alert(
+        "Consent Required",
+        "Please accept Terms and GDPR consent before submitting."
+      );
       return;
     }
 
     try {
-      // 🔥 Optional: update Firestore status
       if (driverId) {
         await updateDoc(doc(db, "drivers", driverId), {
-          onboardingCompleted: true,
-          onboardingStatus: "pending", // or "approved" depending on your flow
+          onboardingComplete: true,
+          onboardingStatus: "pending", // Can change to "approved" after admin review
+          approved: true,
+          updatedAt: new Date(),
         });
       }
 
-      // 🔥 This switches to DriverTabs automatically
-      setOnboardingStatus("approved");
+      // Update global onboarding status to move driver to main app
+      setOnboardingStatus('complete')
 
     } catch (error) {
       console.log("Error submitting application:", error);
-      alert("Something went wrong. Please try again.");
+      Alert.alert("Error", "Something went wrong. Please try again.");
     }
   };
 
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.container}>
-        
+
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()}>
             <Ionicons name="arrow-back" size={24} color="black" />
           </TouchableOpacity>
-
           <Text style={styles.stepText}>
             Step {currentStep} of {TOTAL_STEPS}
           </Text>
-
           <View style={{ width: 24 }} />
         </View>
 
@@ -116,7 +152,7 @@ export default function ApplicationSummaryScreen({
 
         <Text style={styles.title}>Application Summary</Text>
         <Text style={styles.subtitle}>
-          Please review your details before submitting your application
+          Review all details before submitting your application
         </Text>
 
         {/* Summary Cards */}
@@ -146,12 +182,14 @@ export default function ApplicationSummaryScreen({
 
         {/* Terms & GDPR */}
         <View style={{ marginTop: 30 }}>
-          <Text style={styles.sectionTitle}>Terms and GDPR</Text>
+          <Text style={styles.sectionTitle}>Terms & GDPR Consent</Text>
 
           <View style={styles.switchContainer}>
             <Text style={styles.switchText}>
               I agree to the{" "}
-              <Text style={{ fontWeight: "700", textDecorationLine: "underline" }}>
+              <Text
+                style={{ fontWeight: "700", textDecorationLine: "underline" }}
+              >
                 Terms and Privacy Policy
               </Text>
             </Text>
@@ -165,7 +203,9 @@ export default function ApplicationSummaryScreen({
 
           <View style={styles.switchContainer}>
             <Text style={styles.switchText}>
-              <Text style={{ fontWeight: "700", textDecorationLine: "underline" }}>
+              <Text
+                style={{ fontWeight: "700", textDecorationLine: "underline" }}
+              >
                 GDPR Data Consent
               </Text>
             </Text>
@@ -182,7 +222,6 @@ export default function ApplicationSummaryScreen({
         <TouchableOpacity style={styles.button} onPress={handleSubmit}>
           <Text style={styles.buttonText}>Submit Application</Text>
         </TouchableOpacity>
-
       </ScrollView>
     </SafeAreaView>
   );
@@ -190,112 +229,56 @@ export default function ApplicationSummaryScreen({
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: "#fff" },
-  container: { padding: 20, paddingBottom: 40 },
-
+  container: {
+    flexGrow: 1,
+    paddingHorizontal: 25,
+    paddingVertical: 30,
+  },
   header: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 20,
   },
-
-  stepText: {
-    fontSize: 16,
-    fontWeight: "600",
-  },
-
+  stepText: { fontSize: 14, color: "#6b7280" },
   progressBarBg: {
     height: 6,
-    backgroundColor: "#E5E5E5",
-    borderRadius: 10,
-    marginTop: 10,
-    marginBottom: 25,
+    backgroundColor: "#e5e7eb",
+    borderRadius: 3,
+    marginBottom: 20,
   },
-
   progressBarFill: {
     height: 6,
     backgroundColor: PRIMARY,
-    borderRadius: 10,
+    borderRadius: 3,
   },
-
-  title: {
-    fontSize: 22,
-    fontWeight: "bold",
-    marginBottom: 6,
-  },
-
-  subtitle: {
-    fontSize: 14,
-    color: "gray",
-    marginBottom: 20,
-  },
-
+  title: { fontSize: 28, fontWeight: "bold", color: "#111827", marginBottom: 6 },
+  subtitle: { fontSize: 16, color: "#6b7280", marginBottom: 20 },
   card: {
-    backgroundColor: "#F9F9F9",
-    borderRadius: 15,
+    backgroundColor: "#f3f4f6",
+    borderRadius: 12,
     padding: 15,
     marginBottom: 15,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
   },
-
-  cardContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-  },
-
-  iconContainer: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: "#E6F4D9",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-  },
-
-  cardStatus: {
-    fontSize: 12,
-    color: "gray",
-  },
-
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: "bold",
-    marginBottom: 12,
-  },
-
+  cardContent: { flexDirection: "row", alignItems: "center" },
+  iconContainer: { width: 50, alignItems: "center" },
+  cardTitle: { fontSize: 18, fontWeight: "bold", color: "#111827" },
+  cardStatus: { fontSize: 14, color: "#6b7280", marginTop: 4 },
+  sectionTitle: { fontSize: 16, fontWeight: "700", marginBottom: 12 },
   switchContainer: {
     flexDirection: "row",
     alignItems: "center",
-    marginBottom: 15,
     justifyContent: "space-between",
+    marginBottom: 15,
   },
-
-  switchText: {
-    fontSize: 14,
-    color: "#333",
-    flexShrink: 1,
-  },
-
+  switchText: { fontSize: 14, color: "#111827", flex: 1, marginRight: 10 },
   button: {
     backgroundColor: PRIMARY,
     paddingVertical: 16,
-    borderRadius: 30,
+    borderRadius: 12,
     alignItems: "center",
     marginTop: 20,
+    marginBottom: 30,
   },
-
-  buttonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "bold",
-  },
+  buttonText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
 });

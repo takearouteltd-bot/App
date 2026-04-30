@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,10 +7,13 @@ import {
   TouchableOpacity,
   ScrollView,
   Image,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../../config/firebase';
 
 const PRIMARY = '#79B531';
 const SECONDARY = '#235594';
@@ -21,22 +24,80 @@ export default function RiderTripDetailsScreen() {
   const route = useRoute();
   const { trip } = route.params;
 
-  const isCompleted = trip.status === 'COMPLETED';
-  const isCancelled = trip.status === 'CANCELLED';
+  const [driver, setDriver] = useState(null);
+  const [loadingDriver, setLoadingDriver] = useState(true);
 
-  // Dummy DRIVER info (correct for rider view)
-  const driver = {
-    name: trip.driverName || 'Michael Brown',
-    image:
-      trip.driverImage ||
-      'https://randomuser.me/api/portraits/men/45.jpg',
-    rating: trip.driverRating || 4.9,
-    vehicle: trip.vehicle || 'Toyota Prius • AB12 XYZ',
+  // Fetch real driver data from Firestore
+  useEffect(() => {
+    const fetchDriver = async () => {
+      if (!trip.driverId) {
+        setLoadingDriver(false);
+        return;
+      }
+
+      try {
+        const driverDoc = await getDoc(doc(db, 'drivers', trip.driverId));
+        if (driverDoc.exists()) {
+          const driverData = driverDoc.data();
+          setDriver({
+            name: driverData.name || driverData.fullName || 'Driver',
+            image: driverData.profileImage || driverData.selfieUrl || 'https://randomuser.me/api/portraits/men/45.jpg',
+            rating: driverData.rating || driverData.averageRating || 4.9,
+            vehicle: driverData
+              ? `${driverData.makeModel || ''} ${driverData.registrationNumber || ''} `.trim()
+              : 'Vehicle',
+            phone: driverData.phone || '',
+          });
+        }
+      } catch (error) {
+        console.error('Error fetching driver:', error);
+      } finally {
+        setLoadingDriver(false);
+      }
+    };
+
+    fetchDriver();
+  }, [trip.driverId]);
+
+  // ✅ Use route.status (same as the card), not trip.status
+  const status = trip.route?.status?.toUpperCase() || 'PENDING';
+  const isCompleted = status === 'COMPLETED';
+  const isCancelled = status === 'CANCELLED';
+
+  // ✅ Fare is an object — extract the total
+  const fareTotal = trip.fare?.total ?? 0;
+  const currency = trip.fare?.currency === 'GBP' ? '£' : trip.fare?.currency || '£';
+
+  // ✅ Pickup & dropoff from nested location objects
+  const pickup = trip.pickupLocation || {};
+  const dropoff = trip.dropoffLocation || {};
+
+  // ✅ Route stats from nested route object
+  const routeInfo = trip.route || {};
+  const distanceMiles = routeInfo.distanceMiles ?? (routeInfo.distanceKm ? routeInfo.distanceKm * 0.621371 : 0);
+  const durationMinutes = routeInfo.durationMinutes ?? 0;
+
+  // ✅ Payment info from nested payment object
+  const payment = trip.payment || {};
+  const paymentMethod = payment.method || 'card';
+  const lastFour = '•••• 4242'; // You don't store last4 in your structure, use placeholder
+
+  // ✅ Format timestamps
+  const formatDateTime = (timestamp) => {
+    if (!timestamp) return 'N/A';
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    return date.toLocaleString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -49,32 +110,31 @@ export default function RiderTripDetailsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        
         {/* Map */}
         <View style={styles.mapContainer}>
           <MapView
             style={styles.map}
             initialRegion={{
-              latitude: trip.pickupLat || 51.515,
-              longitude: trip.pickupLng || -0.142,
-              latitudeDelta: 0.05,
-              longitudeDelta: 0.05,
+              latitude: pickup.latitude || 33.993657,
+              longitude: pickup.longitude || 71.505161,
+              latitudeDelta: 0.02,
+              longitudeDelta: 0.02,
             }}
             scrollEnabled={false}
             zoomEnabled={false}
           >
             <Marker
               coordinate={{
-                latitude: trip.pickupLat || 51.515,
-                longitude: trip.pickupLng || -0.142,
+                latitude: pickup.latitude || 33.993657,
+                longitude: pickup.longitude || 71.505161,
               }}
               pinColor={PRIMARY}
             />
 
             <Marker
               coordinate={{
-                latitude: trip.destinationLat || 51.520,
-                longitude: trip.destinationLng || -0.155,
+                latitude: dropoff.latitude || 33.993927,
+                longitude: dropoff.longitude || 71.503440,
               }}
               pinColor={DANGER}
             />
@@ -82,12 +142,12 @@ export default function RiderTripDetailsScreen() {
             <Polyline
               coordinates={[
                 {
-                  latitude: trip.pickupLat || 51.515,
-                  longitude: trip.pickupLng || -0.142,
+                  latitude: pickup.latitude || 33.993657,
+                  longitude: pickup.longitude || 71.505161,
                 },
                 {
-                  latitude: trip.destinationLat || 51.520,
-                  longitude: trip.destinationLng || -0.155,
+                  latitude: dropoff.latitude || 33.993927,
+                  longitude: dropoff.longitude || 71.503440,
                 },
               ]}
               strokeColor={SECONDARY}
@@ -96,12 +156,34 @@ export default function RiderTripDetailsScreen() {
           </MapView>
         </View>
 
+        {/* Status Badge */}
+        <View style={styles.statusRow}>
+          <View style={[
+            styles.statusBadge,
+            {
+              backgroundColor: isCompleted ? '#E9F5DD' : isCancelled ? '#FDECEC' : '#E6F0FA',
+            }
+          ]}>
+            <Text style={[
+              styles.statusText,
+              {
+                color: isCompleted ? PRIMARY : isCancelled ? DANGER : SECONDARY,
+              }
+            ]}>
+              {status}
+            </Text>
+          </View>
+          <Text style={styles.dateText}>
+            {formatDateTime(trip.timestamps?.createdAt)}
+          </Text>
+        </View>
+
         {/* Pickup */}
         <View style={styles.locationRow}>
           <Ionicons name="location-sharp" size={22} color={PRIMARY} />
           <View style={styles.locationText}>
             <Text style={styles.locationLabel}>Pickup</Text>
-            <Text style={styles.locationValue}>{trip.pickup}</Text>
+            <Text style={styles.locationValue}>{pickup.address || 'Unknown pickup'}</Text>
           </View>
         </View>
 
@@ -110,25 +192,34 @@ export default function RiderTripDetailsScreen() {
           <Ionicons name="flag" size={22} color={DANGER} />
           <View style={styles.locationText}>
             <Text style={styles.locationLabel}>Destination</Text>
-            <Text style={styles.locationValue}>{trip.destination}</Text>
+            <Text style={styles.locationValue}>{dropoff.address || 'Unknown destination'}</Text>
           </View>
         </View>
 
         <View style={styles.divider} />
 
-        {/* Driver Card */}
+        {/* Driver Card — with real data */}
         <View style={styles.driverCard}>
-          <Image source={{ uri: driver.image }} style={styles.driverImage} />
+          {loadingDriver ? (
+            <ActivityIndicator size="small" color={PRIMARY} />
+          ) : (
+            <>
+              <Image 
+                source={{ uri: driver?.image || 'https://randomuser.me/api/portraits/men/45.jpg' }} 
+                style={styles.driverImage} 
+              />
 
-          <View style={{ marginLeft: 12, flex: 1 }}>
-            <Text style={styles.driverName}>{driver.name}</Text>
-            <Text style={styles.driverSubtext}>{driver.vehicle}</Text>
-          </View>
+              <View style={{ marginLeft: 12, flex: 1 }}>
+                <Text style={styles.driverName}>{driver?.name || 'Driver'}</Text>
+                <Text style={styles.driverSubtext}>{driver?.vehicle || 'Vehicle'}</Text>
+              </View>
 
-          <View style={styles.driverRating}>
-            <Ionicons name="star" size={16} color="#FACC15" />
-            <Text style={styles.ratingText}>{driver.rating}</Text>
-          </View>
+              <View style={styles.driverRating}>
+                <Ionicons name="star" size={16} color="#FACC15" />
+                <Text style={styles.ratingText}>{driver?.rating || '4.9'}</Text>
+              </View>
+            </>
+          )}
         </View>
 
         {/* Duration & Distance */}
@@ -136,18 +227,14 @@ export default function RiderTripDetailsScreen() {
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>DURATION</Text>
             <Text style={styles.statValue}>
-              {trip.duration
-                ? `${Math.ceil(trip.duration / 60)} min`
-                : '18 min'}
+              {durationMinutes ? `${Math.ceil(durationMinutes)} min` : 'N/A'}
             </Text>
           </View>
 
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>DISTANCE</Text>
             <Text style={styles.statValue}>
-              {trip.distance
-                ? `${trip.distance} mi`
-                : '4.5 mi'}
+              {distanceMiles ? `${distanceMiles.toFixed(1)} mi` : 'N/A'}
             </Text>
           </View>
         </View>
@@ -157,41 +244,71 @@ export default function RiderTripDetailsScreen() {
           <Text style={styles.paymentTitle}>Payment Summary</Text>
 
           <View style={styles.paymentRow}>
-            <Text style={styles.paymentLabel}>Trip Fare</Text>
+            <Text style={styles.paymentLabel}>Base Fare</Text>
             <Text style={styles.paymentValue}>
-              £{trip.fare.toFixed(2)}
+              {currency}{trip.fare?.baseFare?.toFixed(2) || '0.00'}
             </Text>
           </View>
 
           <View style={styles.paymentRow}>
-            <Text style={styles.paymentLabel}>Payment Method</Text>
+            <Text style={styles.paymentLabel}>Distance Fare</Text>
             <Text style={styles.paymentValue}>
-              Visa •••• {trip.lastFour || '1234'}
+              {currency}{trip.fare?.distanceFare?.toFixed(2) || '0.00'}
             </Text>
           </View>
+
+          <View style={styles.paymentRow}>
+            <Text style={styles.paymentLabel}>Time Fare</Text>
+            <Text style={styles.paymentValue}>
+              {currency}{trip.fare?.timeFare?.toFixed(2) || '0.00'}
+            </Text>
+          </View>
+
+          {trip.fare?.vat > 0 && (
+            <View style={styles.paymentRow}>
+              <Text style={styles.paymentLabel}>VAT</Text>
+              <Text style={styles.paymentValue}>
+                {currency}{trip.fare?.vat?.toFixed(2)}
+              </Text>
+            </View>
+          )}
 
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>Total Paid</Text>
             <Text style={styles.totalValue}>
-              £{trip.fare.toFixed(2)}
+              {currency}{fareTotal.toFixed(2)}
             </Text>
           </View>
         </View>
 
+        {/* Payment Method */}
+        {/* <View style={styles.paymentMethodCard}>
+          <Ionicons 
+            name={paymentMethod === 'card' ? 'card-outline' : 'cash-outline'} 
+            size={24} 
+            color={SECONDARY} 
+          />
+          <View style={{ marginLeft: 12, flex: 1 }}>
+            <Text style={styles.paymentMethodLabel}>Payment Method</Text>
+            <Text style={styles.paymentMethodValue}>
+              {paymentMethod === 'card' ? `Card ${lastFour}` : 'Cash'}
+            </Text>
+          </View>
+          <Text style={[
+            styles.paymentStatus,
+            { color: payment.status === 'paid' ? PRIMARY : DANGER }
+          ]}>
+            {payment.status?.toUpperCase() || 'PENDING'}
+          </Text>
+        </View> */}
+
         {/* Buttons */}
-        <TouchableOpacity style={styles.primaryBtn}>
-          <Ionicons name="download-outline" size={20} color="#fff" />
-          <Text style={styles.primaryBtnText}>Download Receipt</Text>
-        </TouchableOpacity>
-
-        {isCompleted && (
-          <TouchableOpacity style={styles.secondaryBtn}>
-            <MaterialIcons name="star-rate" size={20} color="#fff" />
-            <Text style={styles.primaryBtnText}>Rate Driver</Text>
-          </TouchableOpacity>
-        )}
-
-        <TouchableOpacity style={styles.dangerBtn}>
+        <TouchableOpacity 
+        onPress={() => navigation.navigate('ReportIssueScreen', { 
+            trip: trip,
+            reporterType: 'rider'
+          })}
+        style={styles.dangerBtn}>
           <MaterialIcons name="report-problem" size={20} color="#fff" />
           <Text style={styles.primaryBtnText}>Report an Issue</Text>
         </TouchableOpacity>
@@ -200,6 +317,7 @@ export default function RiderTripDetailsScreen() {
     </SafeAreaView>
   );
 }
+
 
 const styles = StyleSheet.create({
 
@@ -236,6 +354,30 @@ const styles = StyleSheet.create({
 
   map: {
     flex: 1,
+  },
+
+  statusRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+
+  statusBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+
+  statusText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+
+  dateText: {
+    fontSize: 14,
+    color: '#6B7280',
+    fontWeight: '500',
   },
 
   locationRow: {
@@ -275,6 +417,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     alignItems: 'center',
     elevation: 3,
+    minHeight: 87,
   },
 
   driverImage: {
@@ -369,6 +512,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginTop: 14,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
   },
 
   totalLabel: {
@@ -381,6 +527,33 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '800',
     color: PRIMARY,
+  },
+
+  paymentMethodCard: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    borderRadius: 18,
+    padding: 18,
+    marginBottom: 20,
+    alignItems: 'center',
+    elevation: 3,
+  },
+
+  paymentMethodLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+
+  paymentMethodValue: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+    marginTop: 2,
+  },
+
+  paymentStatus: {
+    fontSize: 14,
+    fontWeight: '700',
   },
 
   primaryBtn: {

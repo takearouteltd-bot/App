@@ -8,75 +8,120 @@ import {
   ScrollView,
   Platform,
   KeyboardAvoidingView,
+  Alert,
 } from "react-native";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db, auth, storage } from "../../config/firebase";
 import * as ImagePicker from "expo-image-picker";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { onAuthStateChanged } from "firebase/auth";
 
 const TOTAL_STEPS = 5;
 const PRIMARY = "#79B531";
 
-export default function IdentityVerificationScreen({ navigation }) {
+export default function IdentityVerificationScreen({
+  navigation,
+  setOnboardingStatus,
+}) {
   const [currentStep, setCurrentStep] = useState(2);
-  const [driverId, setDriverId] = useState(null);
+  const driverId = auth.currentUser?.uid;
 
   const [driverLicenseUrl, setDriverLicenseUrl] = useState(null);
   const [pcoLicenseUrl, setPcoLicenseUrl] = useState(null);
   const [selfieUrl, setSelfieUrl] = useState(null);
 
-  // Listen for auth state
+  // ✅ Fetch existing data (important!)
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) setDriverId(user.uid);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    const fetchStep = async () => {
+    const fetchData = async () => {
       if (!driverId) return;
-      const snap = await getDoc(doc(db, "drivers", driverId));
-      if (snap.exists()) {
-        setCurrentStep(snap.data().onboardingStep || 2);
+
+      try {
+        const snap = await getDoc(doc(db, "drivers", driverId));
+
+        if (snap.exists()) {
+          const data = snap.data();
+
+          setCurrentStep(data.onboardingStep || 2);
+          setDriverLicenseUrl(data.driverLicenseUrl || null);
+          setPcoLicenseUrl(data.pcoLicenseUrl || null);
+          setSelfieUrl(data.selfieUrl || null);
+        }
+      } catch (error) {
+        console.log("Error fetching identity data:", error);
       }
     };
-    fetchStep();
+
+    fetchData();
   }, [driverId]);
 
+  // ✅ Upload + Save to Firestore
   const pickDocument = async (type) => {
+    if (!driverId) return;
+
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) return;
+    if (!permission.granted) {
+      Alert.alert("Permission required", "Allow access to upload documents.");
+      return;
+    }
 
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       quality: 0.7,
     });
 
-    if (!result.canceled) {
+    if (result.canceled) return;
+
+    try {
       const imageUri = result.assets[0].uri;
       const response = await fetch(imageUri);
       const blob = await response.blob();
 
-      const storageRef = ref(storage, `drivers/${driverId}/${type}`);
-      await uploadBytes(storageRef, blob);
+      const storageRef = ref(storage, `drivers/${driverId}/${type}.jpg`);
 
+      await uploadBytes(storageRef, blob);
       const downloadUrl = await getDownloadURL(storageRef);
 
+      // 🔥 Save in Firestore immediately
+      const updateData = {};
+      updateData[`${type}Url`] = downloadUrl;
+
+      await setDoc(doc(db, "drivers", driverId), updateData, { merge: true });
+
+      // Update local state
       if (type === "driverLicense") setDriverLicenseUrl(downloadUrl);
-      else if (type === "pcoLicense") setPcoLicenseUrl(downloadUrl);
-      else if (type === "selfie") setSelfieUrl(downloadUrl);
+      if (type === "pcoLicense") setPcoLicenseUrl(downloadUrl);
+      if (type === "selfie") setSelfieUrl(downloadUrl);
+
+      console.log(`${type} uploaded!`);
+    } catch (error) {
+      console.log("Upload error:", error);
+      Alert.alert("Error", "Failed to upload document.");
     }
   };
 
   const handleContinue = async () => {
+    if (!driverLicenseUrl || !pcoLicenseUrl || !selfieUrl) {
+      Alert.alert("Missing Documents", "Please upload all documents.");
+      return;
+    }
+
     try {
+      await setDoc(
+        doc(db, "drivers", driverId),
+        {
+          onboardingStep: 3,
+          onboardingComplete: false,
+          updatedAt: new Date(),
+        },
+        { merge: true }
+      );
+
+      setOnboardingStatus("onboarding");
+
       navigation.navigate("VehicleDetails");
     } catch (error) {
       console.log("Error saving identity info:", error);
-      alert("Failed to save documents. Please try again.");
+      Alert.alert("Error", "Failed to continue.");
     }
   };
 
@@ -122,7 +167,7 @@ export default function IdentityVerificationScreen({ navigation }) {
             <View style={{ width: 24 }} />
           </View>
 
-          {/* Progress Bar */}
+          {/* Progress */}
           <View style={styles.progressBarBg}>
             <View
               style={[
@@ -134,10 +179,9 @@ export default function IdentityVerificationScreen({ navigation }) {
 
           <Text style={styles.title}>Identity Verification</Text>
           <Text style={styles.subtitle}>
-            Please upload valid documents to verify your identity. These are required by UK Regulations.
+            Upload required documents to verify your identity.
           </Text>
 
-          {/* Cards */}
           {renderCard(
             "Driver's License",
             "Valid driving license required",
@@ -147,8 +191,8 @@ export default function IdentityVerificationScreen({ navigation }) {
           )}
 
           {renderCard(
-            "PCO Paper License",
-            "PCO license for ride-hailing",
+            "PCO License",
+            "Required for ride-hailing",
             <MaterialIcons name="description" size={40} color={PRIMARY} />,
             pcoLicenseUrl,
             "pcoLicense"
@@ -156,13 +200,12 @@ export default function IdentityVerificationScreen({ navigation }) {
 
           {renderCard(
             "Selfie Verification",
-            "Take a selfie to verify identity",
+            "Match with your ID",
             <Ionicons name="camera" size={40} color={PRIMARY} />,
             selfieUrl,
             "selfie"
           )}
 
-          {/* Continue Button */}
           <TouchableOpacity style={styles.button} onPress={handleContinue}>
             <Text style={styles.buttonText}>Continue</Text>
           </TouchableOpacity>

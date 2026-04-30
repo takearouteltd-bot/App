@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,24 +7,89 @@ import {
   TouchableOpacity,
   ScrollView,
   Image,
+  ActivityIndicator,
 } from 'react-native';
-import { Ionicons, MaterialIcons, Feather } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../../config/firebase';
+
+const PRIMARY = '#79B531';
+const SECONDARY = '#235594';
+const DANGER = '#DC2626';
 
 export default function DriverTripDetailsScreen() {
   const navigation = useNavigation();
   const route = useRoute();
   const { trip } = route.params;
 
-  const isCompleted = trip.status === 'COMPLETED';
-  const isCancelled = trip.status === 'CANCELLED';
+  const [rider, setRider] = useState(null);
+  const [loadingRider, setLoadingRider] = useState(true);
 
-  // Dummy rider info
-  const rider = {
-    name: 'John Doe',
-    image: 'https://randomuser.me/api/portraits/men/32.jpg',
-    rating: 4.8,
+  // Fetch real RIDER data from Firestore (the person the driver picked up)
+  useEffect(() => {
+    const fetchRider = async () => {
+      if (!trip.riderId) {
+        setLoadingRider(false);
+        return;
+      }
+
+      try {
+        const riderDoc = await getDoc(doc(db, 'riders', trip.riderId));
+        if (riderDoc.exists()) {
+          const riderData = riderDoc.data();
+          setRider({
+            name: riderData.name || riderData.fullName || 'Rider',
+            image: riderData.profileImage || riderData.selfieUrl || 'https://randomuser.me/api/portraits/men/45.jpg',
+            rating: riderData.rating || riderData.averageRating || 4.9,
+            phone: riderData.phone || '',
+          });
+        }
+      } catch (error) {
+        console.error('Error fetching rider:', error);
+      } finally {
+        setLoadingRider(false);
+      }
+    };
+
+    fetchRider();
+  }, [trip.riderId]);
+
+  // Use route.status (same as the card), not trip.status
+  const status = trip.route?.status?.toUpperCase() || 'PENDING';
+  const isCompleted = status === 'COMPLETED';
+  const isCancelled = status === 'CANCELLED';
+
+  // Fare is an object — extract the total
+  const fareTotal = trip.fare?.total ?? 0;
+  const currency = trip.fare?.currency === 'GBP' ? '£' : trip.fare?.currency || '£';
+
+  // Pickup & dropoff from nested location objects
+  const pickup = trip.pickupLocation || {};
+  const dropoff = trip.dropoffLocation || {};
+
+  // Route stats from nested route object
+  const routeInfo = trip.route || {};
+  const distanceMiles = routeInfo.distanceMiles ?? (routeInfo.distanceKm ? routeInfo.distanceKm * 0.621371 : 0);
+  const durationMinutes = routeInfo.durationMinutes ?? 0;
+
+  // Payment info from nested payment object
+  const payment = trip.payment || {};
+  const paymentMethod = payment.method || 'card';
+
+  // Format timestamps
+  const formatDateTime = (timestamp) => {
+    if (!timestamp) return 'N/A';
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    return date.toLocaleString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
   };
 
   return (
@@ -32,10 +97,12 @@ export default function DriverTripDetailsScreen() {
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={28} color="#235594" />
+          <Ionicons name="arrow-back" size={26} color={SECONDARY} />
         </TouchableOpacity>
+
         <Text style={styles.headerTitle}>Trip Details</Text>
-        <View style={{ width: 28 }} /> {/* Placeholder */}
+
+        <View style={{ width: 26 }} />
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
@@ -44,77 +111,114 @@ export default function DriverTripDetailsScreen() {
           <MapView
             style={styles.map}
             initialRegion={{
-              latitude: trip.pickupLat || 51.515,
-              longitude: trip.pickupLng || -0.142,
-              latitudeDelta: 0.05,
-              longitudeDelta: 0.05,
+              latitude: pickup.latitude || 33.993657,
+              longitude: pickup.longitude || 71.505161,
+              latitudeDelta: 0.02,
+              longitudeDelta: 0.02,
             }}
             scrollEnabled={false}
             zoomEnabled={false}
           >
             <Marker
               coordinate={{
-                latitude: trip.pickupLat || 51.515,
-                longitude: trip.pickupLng || -0.142,
+                latitude: pickup.latitude || 33.993657,
+                longitude: pickup.longitude || 71.505161,
               }}
-              pinColor="#79B531"
+              pinColor={PRIMARY}
             />
+
             <Marker
               coordinate={{
-                latitude: trip.destinationLat || 51.520,
-                longitude: trip.destinationLng || -0.155,
+                latitude: dropoff.latitude || 33.993927,
+                longitude: dropoff.longitude || 71.503440,
               }}
-              pinColor="#DC2626"
+              pinColor={DANGER}
             />
+
             <Polyline
               coordinates={[
                 {
-                  latitude: trip.pickupLat || 51.515,
-                  longitude: trip.pickupLng || -0.142,
+                  latitude: pickup.latitude || 33.993657,
+                  longitude: pickup.longitude || 71.505161,
                 },
                 {
-                  latitude: trip.destinationLat || 51.520,
-                  longitude: trip.destinationLng || -0.155,
+                  latitude: dropoff.latitude || 33.993927,
+                  longitude: dropoff.longitude || 71.503440,
                 },
               ]}
-              strokeColor="#235594"
+              strokeColor={SECONDARY}
               strokeWidth={3}
             />
           </MapView>
         </View>
 
+        {/* Status Badge */}
+        <View style={styles.statusRow}>
+          <View style={[
+            styles.statusBadge,
+            {
+              backgroundColor: isCompleted ? '#E9F5DD' : isCancelled ? '#FDECEC' : '#E6F0FA',
+            }
+          ]}>
+            <Text style={[
+              styles.statusText,
+              {
+                color: isCompleted ? PRIMARY : isCancelled ? DANGER : SECONDARY,
+              }
+            ]}>
+              {status}
+            </Text>
+          </View>
+          <Text style={styles.dateText}>
+            {formatDateTime(trip.timestamps?.createdAt)}
+          </Text>
+        </View>
+
         {/* Pickup */}
         <View style={styles.locationRow}>
-          <Ionicons name="location-sharp" size={22} color="#79B531" />
+          <Ionicons name="location-sharp" size={22} color={PRIMARY} />
           <View style={styles.locationText}>
             <Text style={styles.locationLabel}>Pickup</Text>
-            <Text style={styles.locationValue}>{trip.pickup}</Text>
+            <Text style={styles.locationValue}>{pickup.address || 'Unknown pickup'}</Text>
           </View>
         </View>
 
         {/* Destination */}
         <View style={styles.locationRow}>
-          <Ionicons name="flag" size={22} color="#DC2626" />
+          <Ionicons name="flag" size={22} color={DANGER} />
           <View style={styles.locationText}>
             <Text style={styles.locationLabel}>Destination</Text>
-            <Text style={styles.locationValue}>{trip.destination}</Text>
+            <Text style={styles.locationValue}>{dropoff.address || 'Unknown destination'}</Text>
           </View>
         </View>
 
-        {/* Divider */}
         <View style={styles.divider} />
 
-        {/* Rider Info */}
+        {/* Rider Card — with real data */}
         <View style={styles.riderCard}>
-          <Image source={{ uri: rider.image }} style={styles.riderImage} />
-          <View style={{ marginLeft: 12, flex: 1 }}>
-            <Text style={styles.riderName}>{rider.name}</Text>
-            <Text style={styles.riderSubtext}>Rider</Text>
-          </View>
-          <View style={styles.riderRating}>
-            <Ionicons name="star" size={16} color="#FACC15" />
-            <Text style={styles.ratingText}>{rider.rating}</Text>
-          </View>
+          {loadingRider ? (
+            <View style={styles.loadingRow}>
+              <ActivityIndicator size="small" color={PRIMARY} />
+              <Text style={styles.loadingText}>Loading rider info...</Text>
+            </View>
+          ) : (
+            <>
+              <Image 
+                source={{ uri: rider?.image || 'https://randomuser.me/api/portraits/men/45.jpg' }} 
+                style={styles.riderImage} 
+              />
+
+              <View style={{ marginLeft: 12, flex: 1 }}>
+                <Text style={styles.riderName}>{rider?.name || 'Rider'}</Text>
+                <Text style={styles.riderSubtext}>Passenger</Text>
+              </View>
+
+              <View style={styles.riderRating}>
+                <Ionicons name="star" size={16} color="#FACC15" />
+                <Text style={styles.ratingText}>{rider?.rating || '4.9'}</Text>
+              </View>
+            </>
+          )}
         </View>
 
         {/* Duration & Distance */}
@@ -122,120 +226,290 @@ export default function DriverTripDetailsScreen() {
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>DURATION</Text>
             <Text style={styles.statValue}>
-              {trip.duration ? `${Math.ceil(trip.duration / 60)} min` : '18 mins'}
+              {durationMinutes ? `${Math.ceil(durationMinutes)} min` : 'N/A'}
             </Text>
           </View>
+
           <View style={styles.statCard}>
             <Text style={styles.statLabel}>DISTANCE</Text>
             <Text style={styles.statValue}>
-              {trip.distance ? `${trip.distance} mi` : '4.5 miles'}
+              {distanceMiles ? `${distanceMiles.toFixed(1)} mi` : 'N/A'}
             </Text>
           </View>
         </View>
 
-        {/* Earnings */}
-        <View style={styles.fareCard}>
-          <Text style={styles.fareTitle}>Earnings Breakdown</Text>
-          <View style={styles.fareRow}>
-            <Text style={styles.fareLabel}>Fare Earned</Text>
-            <Text style={styles.fareValue}>£{trip.fare.toFixed(2)}</Text>
+        {/* Payment Summary */}
+        <View style={styles.paymentCard}>
+          <Text style={styles.paymentTitle}>Payment Summary</Text>
+
+          <View style={styles.paymentRow}>
+            <Text style={styles.paymentLabel}>Base Fare</Text>
+            <Text style={styles.paymentValue}>
+              {currency}{trip.fare?.baseFare?.toFixed(2) || '0.00'}
+            </Text>
           </View>
-          <View style={styles.fareRow}>
-            <Text style={styles.fareLabel}>Platform Fee</Text>
-            <Text style={styles.fareValue}>£0.00</Text>
+
+          <View style={styles.paymentRow}>
+            <Text style={styles.paymentLabel}>Distance Fare</Text>
+            <Text style={styles.paymentValue}>
+              {currency}{trip.fare?.distanceFare?.toFixed(2) || '0.00'}
+            </Text>
           </View>
-          <View style={[styles.fareRow, { marginTop: 12 }]}>
-            <Text style={styles.totalFareLabel}>Net Earnings</Text>
-            <Text style={styles.totalFareValue}>£{trip.fare.toFixed(2)}</Text>
+
+          <View style={styles.paymentRow}>
+            <Text style={styles.paymentLabel}>Time Fare</Text>
+            <Text style={styles.paymentValue}>
+              {currency}{trip.fare?.timeFare?.toFixed(2) || '0.00'}
+            </Text>
+          </View>
+
+          {trip.fare?.vat > 0 && (
+            <View style={styles.paymentRow}>
+              <Text style={styles.paymentLabel}>VAT</Text>
+              <Text style={styles.paymentValue}>
+                {currency}{trip.fare?.vat?.toFixed(2)}
+              </Text>
+            </View>
+          )}
+
+          <View style={styles.totalRow}>
+            <Text style={styles.totalLabel}>Total Paid</Text>
+            <Text style={styles.totalValue}>
+              {currency}{fareTotal.toFixed(2)}
+            </Text>
           </View>
         </View>
 
-        {/* Action Buttons */}
-        <TouchableOpacity style={styles.actionBtn}>
-          <Ionicons name="download-outline" size={20} color="#fff" />
-          <Text style={styles.actionBtnText}>Download Receipt</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.actionBtn, { backgroundColor: '#79B531' }]}>
+        {/* Buttons */}
+        <TouchableOpacity 
+        onPress={() => navigation.navigate('ReportIssueScreen', { 
+            trip: trip,
+            reporterType: 'driver'
+          })}
+        style={styles.dangerBtn}>
           <MaterialIcons name="report-problem" size={20} color="#fff" />
-          <Text style={styles.actionBtnText}>Report an Issue</Text>
+          <Text style={styles.primaryBtnText}>Report an Issue</Text>
         </TouchableOpacity>
+
       </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F5F7FA' },
+  container: {
+    flex: 1,
+    backgroundColor: '#fff',
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-
-    elevation: 2,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F2F2F7',
   },
-  headerTitle: { fontSize: 20, fontWeight: '600', color: '#235594' },
-  content: { padding: 16 },
-
-  mapContainer: { height: 180, borderRadius: 16, overflow: 'hidden', marginBottom: 16 },
-  map: { flex: 1 },
-
-  locationRow: { flexDirection: 'row', marginBottom: 16, alignItems: 'center' },
-  locationText: { marginLeft: 10, flex: 1 },
-  locationLabel: { fontSize: 12, color: '#6B7280' },
-  locationValue: { fontSize: 16, fontWeight: '600', color: '#111827', marginTop: 2 },
-  divider: { height: 1, backgroundColor: '#E5E7EB', marginVertical: 16 },
-
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: SECONDARY,
+  },
+  content: {
+    padding: 16,
+    paddingBottom: 40,
+  },
+  mapContainer: {
+    height: 200,
+    borderRadius: 16,
+    overflow: 'hidden',
+    marginBottom: 16,
+  },
+  map: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  statusBadge: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  dateText: {
+    fontSize: 13,
+    color: '#888',
+    fontWeight: '500',
+  },
+  locationRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 14,
+    gap: 12,
+  },
+  locationText: {
+    flex: 1,
+  },
+  locationLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#888',
+    marginBottom: 2,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  locationValue: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1A1A1A',
+    lineHeight: 20,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#F2F2F7',
+    marginVertical: 8,
+  },
   riderCard: {
     flexDirection: 'row',
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
     alignItems: 'center',
-    elevation: 2,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
   },
-  riderImage: { width: 50, height: 50, borderRadius: 25 },
-  riderName: { fontSize: 16, fontWeight: '600', color: '#111827' },
-  riderSubtext: { fontSize: 12, color: '#6B7280', marginTop: 2 },
-  riderRating: { flexDirection: 'row', alignItems: 'center' },
-  ratingText: { fontSize: 14, fontWeight: '600', marginLeft: 4, color: '#111827' },
-
-  statsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 8,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: '#888',
+    fontWeight: '500',
+  },
+  riderImage: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  riderName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1A1A1A',
+  },
+  riderSubtext: {
+    fontSize: 13,
+    color: '#888',
+    marginTop: 2,
+    fontWeight: '500',
+  },
+  riderRating: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    gap: 4,
+  },
+  ratingText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1A1A1A',
+  },
+  statsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 16,
+  },
   statCard: {
-    flex: 0.48,
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 16,
+    flex: 1,
+    backgroundColor: '#F8F9FA',
+    borderRadius: 14,
+    padding: 14,
     alignItems: 'center',
-    elevation: 2,
   },
-  statLabel: { fontSize: 12, color: '#6B7280' },
-  statValue: { fontSize: 22, fontWeight: '800', color: '#111827', marginTop: 4 },
-
-  fareCard: {
-    backgroundColor: '#fff',
+  statLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#888',
+    marginBottom: 6,
+    letterSpacing: 0.5,
+  },
+  statValue: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#1A1A1A',
+  },
+  paymentCard: {
+    backgroundColor: '#F8F9FA',
     borderRadius: 16,
-    padding: 16,
+    padding: 18,
     marginBottom: 16,
-    elevation: 2,
   },
-  fareTitle: { fontSize: 16, fontWeight: '600', color: '#235594', marginBottom: 12 },
-  fareRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 2 },
-  fareLabel: { fontSize: 14, color: '#6B7280' },
-  fareValue: { fontSize: 14, fontWeight: '600', color: '#111827' },
-  totalFareLabel: { fontSize: 16, fontWeight: '700', color: '#111827' },
-  totalFareValue: { fontSize: 22, fontWeight: '800', color: '#79B531' },
-
-  actionBtn: {
+  paymentTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#1A1A1A',
+    marginBottom: 14,
+  },
+  paymentRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  paymentLabel: {
+    fontSize: 14,
+    color: '#666',
+    fontWeight: '500',
+  },
+  paymentValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1A1A1A',
+  },
+  totalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E5EA',
+  },
+  totalLabel: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#1A1A1A',
+  },
+  totalValue: {
+    fontSize: 18,
+    fontWeight: '900',
+    color: PRIMARY,
+  },
+  dangerBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#79B531',
-    paddingVertical: 14,
-    borderRadius: 25,
-    marginBottom: 12,
+    backgroundColor: DANGER,
+    paddingVertical: 16,
+    borderRadius: 16,
+    gap: 8,
+    marginTop: 8,
   },
-  actionBtnText: { color: '#fff', fontWeight: '700', fontSize: 16, marginLeft: 8 },
+  primaryBtnText: {
+    color: '#fff',
+    fontWeight: '800',
+    fontSize: 16,
+  },
 });

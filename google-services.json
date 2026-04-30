@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "196931860484",
+    "project_id": "takearoute-719df",
+    "storage_bucket": "takearoute-719df.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:196931860484:android:cffaff6a0c92d147905d51",
+        "android_client_info": {
+          "package_name": "com.hassanjamil.takearoute"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCyt4kH_KKMNkkboxOGBoCQM_mIyD--66U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

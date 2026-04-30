@@ -8,16 +8,47 @@ const SECONDARY = '#235594';
 
 export default function RiderTripCard({ item }) {
   const navigation = useNavigation();
-  const isCompleted = item.status === 'COMPLETED';
-  const isCancelled = item.status === 'CANCELLED';
+
+  // ✅ Use route.status for the ride status, NOT driverResponse
+  const status = item.status?.toUpperCase() || 'PENDING';
+  
+  const isCompleted = status === 'COMPLETED';
+  const isCancelled = status === 'CANCELLED';
+
+  // Format date from timestamps.createdAt
+  const formatDateLabel = (timestamp) => {
+    if (!timestamp) return '';
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    const now = new Date();
+    const isToday = date.toDateString() === now.toDateString();
+    return isToday ? 'TODAY' : date.toLocaleDateString('en-US', { weekday: 'long' }).toUpperCase();
+  };
+
+  // Format time from timestamps.createdAt
+  const formatTime = (timestamp) => {
+    if (!timestamp) return '';
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+  };
+
+  // ✅ Get fare from nested structure
+  const fareTotal = item.fare?.total ?? 0;
+  const currency = item.fare?.currency === 'GBP' ? '£' : item.fare?.currency || '£';
+
+  // ✅ Pickup & dropoff from correct nested fields
+  const pickupAddress = item.pickupLocation?.address || 'Unknown pickup';
+  const dropoffAddress = item.dropoffLocation?.address || 'Unknown destination';
 
   return (
     <View style={styles.tripCard}>
-      
       {/* Top Row */}
       <View style={styles.topRow}>
         <Text style={styles.dateText}>
-          {item.dateLabel}, {item.time}
+          {formatDateLabel(item.timestamps?.createdAt)}, {formatTime(item.timestamps?.createdAt)}
         </Text>
 
         <View
@@ -44,7 +75,7 @@ export default function RiderTripCard({ item }) {
               },
             ]}
           >
-            {item.status}
+            {status}
           </Text>
         </View>
       </View>
@@ -54,7 +85,9 @@ export default function RiderTripCard({ item }) {
         <Ionicons name="location-sharp" size={18} color={PRIMARY} />
         <View style={styles.locationText}>
           <Text style={styles.locationLabel}>Pickup</Text>
-          <Text style={styles.locationValue}>{item.pickup}</Text>
+          <Text style={styles.locationValue} numberOfLines={2}>
+            {pickupAddress}
+          </Text>
         </View>
       </View>
 
@@ -63,7 +96,9 @@ export default function RiderTripCard({ item }) {
         <Ionicons name="flag" size={18} color="#DC2626" />
         <View style={styles.locationText}>
           <Text style={styles.locationLabel}>Destination</Text>
-          <Text style={styles.locationValue}>{item.destination}</Text>
+          <Text style={styles.locationValue} numberOfLines={2}>
+            {dropoffAddress}
+          </Text>
         </View>
       </View>
 
@@ -84,7 +119,7 @@ export default function RiderTripCard({ item }) {
               },
             ]}
           >
-            £{item.fare.toFixed(2)}
+            {currency}{fareTotal.toFixed(2)}
           </Text>
         </View>
 
@@ -123,6 +158,10 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 16,
     elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
   },
 
   topRow: {
@@ -136,6 +175,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#374151',
+    flex: 1,
+    marginRight: 8,
   },
 
   statusBadge: {
@@ -152,6 +193,7 @@ const styles = StyleSheet.create({
   locationRow: {
     flexDirection: 'row',
     marginTop: 10,
+    alignItems: 'flex-start',
   },
 
   locationText: {
@@ -169,6 +211,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#111827',
     marginTop: 2,
+    lineHeight: 20,
   },
 
   divider: {

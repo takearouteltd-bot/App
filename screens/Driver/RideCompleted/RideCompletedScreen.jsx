@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -6,20 +6,100 @@ import {
   SafeAreaView,
   TouchableOpacity,
   ScrollView,
+  ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
+import { doc, onSnapshot, updateDoc, increment, setDoc } from 'firebase/firestore';
+import { db } from '../../../config/firebase';
 
 export default function RideCompletedScreen() {
   const route = useRoute();
   const navigation = useNavigation();
-  const { fare = 0, distance = 0 } = route.params || {};
+  const { rideId } = route.params || {};
 
+  const [ride, setRide] = useState(null);
   const [rating, setRating] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
 
-  const baseFare = fare * 0.6;
-  const distancePremium = fare * 0.4;
+  /* ================= FETCH RIDE ================= */
+  useEffect(() => {
+    if (!rideId) return;
 
+    const rideRef = doc(db, 'rides', rideId);
+
+    const unsubscribe = onSnapshot(rideRef, (snap) => {
+      if (snap.exists()) {
+        setRide(snap.data());
+      }
+    });
+
+    return () => unsubscribe();
+  }, [rideId]);
+
+  /* ================= SUBMIT RATING ================= */
+  const handleSubmitRating = async () => {
+    if (!rating) {
+      Alert.alert("Please select a rating");
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+
+      const rideRef = doc(db, 'rides', rideId);
+
+      // ✅ Update nested rating fields safely
+      await updateDoc(rideRef, {
+        "rating.driverToRider.rating": rating,
+        "rating.driverToRider.createdAt": new Date(),
+      });
+
+      // ✅ Update rider aggregate rating
+      if (ride?.riderId) {
+        const riderRef = doc(db, 'riders', ride.riderId);
+
+        await setDoc(
+          riderRef,
+          {
+            rating: {
+              count: increment(1),
+            },
+          },
+          { merge: true }
+        );
+      }
+
+      Alert.alert("Success", "Rating submitted");
+    } catch (err) {
+      console.log("Rating Error:", err);
+      Alert.alert("Error", "Failed to submit rating");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  /* ================= LOADING ================= */
+  if (!ride) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <ActivityIndicator size="large" color="#79B531" />
+      </SafeAreaView>
+    );
+  }
+
+  /* ================= SAFE DATA ================= */
+  const fare = ride.fare || {};
+  const routeData = ride.route || {};
+
+  const baseFare = fare.baseFare || 0;
+  const distancePremium = fare.distanceFare || 0;
+
+  const distanceKm = routeData.distanceKm || 0;
+  const durationMinutes = routeData.durationMinutes || 0;
+
+  /* ================= STARS ================= */
   const renderStars = () => {
     return [1, 2, 3, 4, 5].map((i) => (
       <TouchableOpacity key={i} onPress={() => setRating(i)}>
@@ -55,8 +135,9 @@ export default function RideCompletedScreen() {
 
         {/* Fare Card */}
         <View style={styles.card}>
-        <Text style={styles.fareAmount}>£{fare.toFixed(2)}</Text>
-
+          <Text style={styles.fareAmount}>
+            £{ride.fareEstimate?.toFixed(2) || '0.00'}
+          </Text>
 
           <View style={styles.badge}>
             <Text style={styles.badgeText}>100% – NO COMMISSION</Text>
@@ -67,33 +148,53 @@ export default function RideCompletedScreen() {
           <View style={styles.fareRow}>
             <Text style={styles.fareLabel}>Base Fare</Text>
             <Text style={styles.fareValue}>£{baseFare.toFixed(2)}</Text>
-
           </View>
 
           <View style={styles.fareRow}>
             <Text style={styles.fareLabel}>Distance Premium</Text>
             <Text style={styles.fareValue}>£{distancePremium.toFixed(2)}</Text>
+          </View>
 
+          <View style={styles.fareRow}>
+            <Text style={styles.fareLabel}>Distance</Text>
+            <Text style={styles.fareValue}>{distanceKm} km</Text>
+          </View>
+
+          <View style={styles.fareRow}>
+            <Text style={styles.fareLabel}>Duration</Text>
+            <Text style={styles.fareValue}>
+              {Math.ceil(durationMinutes)} min
+            </Text>
           </View>
         </View>
 
+        {/* Wallet */}
         <View style={styles.walletRow}>
-  <Ionicons
-    name="wallet-outline"
-    size={18}
-    color="#6B7280"
-    style={{ marginRight: 6 }}
-  />
-  <Text style={styles.walletText}>
-    £{fare.toFixed(2)} is added to your wallet balance
-  </Text>
-</View>
-
+          <Ionicons
+            name="wallet-outline"
+            size={18}
+            color="#6B7280"
+            style={{ marginRight: 6 }}
+          />
+          <Text style={styles.walletText}>
+            £{ride.fareEstimate?.toFixed(2) || '0.00'} added to wallet
+          </Text>
+        </View>
 
         {/* Rating */}
         <View style={styles.ratingSection}>
           <Text style={styles.ratingTitle}>Rate Rider</Text>
           <View style={styles.stars}>{renderStars()}</View>
+
+          <TouchableOpacity
+            style={[styles.submitBtn, submitting && { opacity: 0.6 }]}
+            onPress={handleSubmitRating}
+            disabled={submitting}
+          >
+            <Text style={styles.submitText}>
+              {submitting ? "Submitting..." : "Submit Rating"}
+            </Text>
+          </TouchableOpacity>
         </View>
 
       </ScrollView>
@@ -113,6 +214,8 @@ export default function RideCompletedScreen() {
     </SafeAreaView>
   );
 }
+
+
 
 const styles = StyleSheet.create({
   container: {

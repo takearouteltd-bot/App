@@ -1,208 +1,425 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
-  StyleSheet,
   TouchableOpacity,
+  StyleSheet,
+  SafeAreaView,
+  Alert,
+  ActivityIndicator,
   ScrollView,
-  Modal,
-} from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+} from "react-native";
+import { auth, db } from "../../../config/firebase";
+import { doc, getDoc, updateDoc, Timestamp } from "firebase/firestore";
+import { useNavigation } from "@react-navigation/native";
+import { Ionicons } from "@expo/vector-icons";
 
-export default function SubscriptionScreen({ navigation }) {
-  const nextBillingDate = 'Nov 18, 2026';
-  const upgradePrice = '£74.99/month';
-  const [showModal, setShowModal] = useState(false);
+const PRIMARY = "#79B531";
+const MONTHLY_PRICE = 99.99;
 
-  const ConfirmPay = () => {
-    setShowModal(false);
-    navigation.navigate("SubscriptionSuccess")
+export default function SubscriptionScreen({ setOnboardingStatus }) {
+  const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(true);
+  const [subscription, setSubscription] = useState(null);
+  const navigation = useNavigation();
+  const driverId = auth.currentUser?.uid;
+
+  useEffect(() => {
+    const fetchSubscription = async () => {
+      if (!driverId) {
+        setChecking(false);
+        return;
+      }
+
+      try {
+        const driverRef = doc(db, "drivers", driverId);
+        const driverSnap = await getDoc(driverRef);
+
+        if (driverSnap.exists()) {
+          const data = driverSnap.data();
+          setSubscription(data.subscription || null);
+        }
+      } catch (err) {
+        console.log("Error fetching subscription:", err);
+      } finally {
+        setChecking(false);
+      }
+    };
+
+    fetchSubscription();
+  }, [driverId]);
+
+  const handleActivate = async () => {
+    if (!driverId) {
+      Alert.alert("Error", "Not authenticated");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const driverRef = doc(db, "drivers", driverId);
+      const driverSnap = await getDoc(driverRef);
+
+      if (!driverSnap.exists()) {
+        throw new Error("Driver profile not found");
+      }
+
+      const walletRef = doc(db, "driverWallets", driverId);
+      const walletSnap = await getDoc(walletRef);
+
+      if (!walletSnap.exists()) {
+        throw new Error("Wallet not found");
+      }
+
+      const walletData = walletSnap.data();
+      const available = walletData.availableBalance || 0;
+
+      const now = new Date();
+      const nextBilling = new Date(now.getFullYear(), now.getMonth() + 1, now.getDate());
+
+      if (available >= MONTHLY_PRICE) {
+        await updateDoc(walletRef, {
+          availableBalance: available - MONTHLY_PRICE,
+          totalWithdrawn: (walletData.totalWithdrawn || 0) + MONTHLY_PRICE,
+          updatedAt: Timestamp.now(),
+        });
+
+        await updateDoc(driverRef, {
+          subscription: {
+            status: "active",
+            tier: "monthly",
+            amount: MONTHLY_PRICE,
+            nextBillingDate: Timestamp.fromDate(nextBilling),
+            lastPaidAt: Timestamp.now(),
+            paymentMethod: "wallet_deduction",
+            debtAmount: 0,
+          },
+          onboardingCompleted: true,
+        });
+
+        Alert.alert("Success", "Subscription activated! Welcome aboard.");
+      } else {
+        await updateDoc(driverRef, {
+          subscription: {
+            status: "active",
+            tier: "monthly",
+            amount: MONTHLY_PRICE,
+            nextBillingDate: Timestamp.fromDate(nextBilling),
+            lastPaidAt: null,
+            paymentMethod: "wallet_deduction",
+            debtAmount: MONTHLY_PRICE,
+          },
+          onboardingCompleted: true,
+        });
+
+        Alert.alert(
+          "Activated",
+          `You're active! £${MONTHLY_PRICE} will be deducted from your earnings as soon as your wallet reaches that amount.`
+        );
+      }
+
+      setOnboardingStatus?.("completed");
+      navigation.replace("DriverHome");
+    } catch (err) {
+      console.log("Activation error:", err);
+      Alert.alert("Error", err.message || "Could not activate subscription");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatDate = (timestamp) => {
+    if (!timestamp) return "—";
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    return date.toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+  };
+
+  const formatCurrency = (amount) => {
+    if (amount === undefined || amount === null) return "£0.00";
+    return `£${amount.toFixed(2)}`;
+  };
+
+  if (checking) {
+    return (
+      <SafeAreaView style={[styles.container, styles.centered]}>
+        <ActivityIndicator size="large" color={PRIMARY} />
+        <Text style={styles.checkingText}>Checking subscription status...</Text>
+      </SafeAreaView>
+    );
   }
 
-  return (
-    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Ionicons name="arrow-back" size={22} color="#235594" />
-        </TouchableOpacity>
+  // Already subscribed — show management view
+  if (subscription && subscription.status === "active") {
+    const hasDebt = subscription.debtAmount && subscription.debtAmount > 0;
+    const nextBillingDate = subscription.nextBillingDate ? formatDate(subscription.nextBillingDate) : "—";
+    const monthlyAmount = subscription.amount || MONTHLY_PRICE;
 
-        <Text style={styles.headerTitle}>Subscription Management</Text>
-
-        <View style={{ width: 22 }} /> 
-      </View>
-
-      {/* Current Plan Section */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Current Plan</Text>
-        <View style={styles.planCard}>
-          <View style={styles.planHeaderRow}>
-            <Text style={styles.planTitle}>Pro Driver</Text>
-            <View style={styles.activeBadge}>
-              <Text style={styles.activeBadgeText}>Active</Text>
-            </View>
-          </View>
-          <Text style={styles.planSubtitle}>Refined Professional Tier</Text>
-          <View style={styles.divider} />
-          <View style={styles.billingRow}>
-            <Ionicons name="calendar-outline" size={16} color="#235594" style={{ marginRight: 6 }} />
-            <Text style={styles.billingText}>Next billing date: {nextBillingDate}</Text>
-          </View>
-        </View>
-      </View>
-
-      {/* Upgrade Plan Section */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Upgrade Your Plan</Text>
-        <View style={styles.upgradeCard}>
-          <View style={styles.upgradeHeaderRow}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <Ionicons name="diamond-outline" size={20} color="#79B531" style={{ marginRight: 6 }} />
-              <Text style={styles.upgradeTitle}>Elite Driver</Text>
-            </View>
-            <View style={styles.recommendedBadge}>
-              <Text style={styles.recommendedText}>Recommended</Text>
-            </View>
-          </View>
-          <Text style={styles.upgradeSubtitle}>
-            Unlock the full potential of your route with exclusive perks
-          </Text>
-
-          {/* Perks */}
-          <View style={styles.perksRow}>
-            <Ionicons name="flash-outline" size={20} color="#79B531" style={{ marginRight: 6 }} />
-            <Text style={styles.perkText}>Top Priority Dispatch</Text>
-          </View>
-          <View style={styles.perksRow}>
-            <Ionicons name="cash-outline" size={20} color="#79B531" style={{ marginRight: 6 }} />
-            <Text style={styles.perkText}>Unlimited 100% Earnings</Text>
-          </View>
-          <View style={styles.perksRow}>
-            <Ionicons name="headset-outline" size={20} color="#79B531" style={{ marginRight: 6 }} />
-            <Text style={styles.perkText}>Premium Support</Text>
-          </View>
-          <View style={styles.perksRow}>
-            <Ionicons name="heart-outline" size={20} color="#79B531" style={{ marginRight: 6 }} />
-            <Text style={styles.perkText}>Health & Wellness Perks</Text>
-          </View>
-
-          {/* Price Badge */}
-          <View style={styles.priceBadge}>
-            <Text style={styles.priceText}>{upgradePrice}</Text>
-          </View>
-
-          {/* Switch Button */}
-          <TouchableOpacity style={styles.switchBtn} onPress={() => setShowModal(true)}>
-            <Text style={styles.switchBtnText}>Switch to Elite</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Manage Payment Method */}
-        <TouchableOpacity style={styles.paymentRow}>
-          <Ionicons name="wallet-outline" size={20} color="#235594" style={{ marginRight: 10 }} />
-          <Text style={styles.paymentText}>Manage Payment Method</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Modal */}
-      <Modal visible={showModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContainer}>
-            {/* Same card inside modal */}
-            <View style={styles.upgradeCard}>
-              <View style={styles.upgradeHeaderRow}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Ionicons name="diamond-outline" size={20} color="#79B531" style={{ marginRight: 6 }} />
-                  <Text style={styles.upgradeTitle}>Elite Driver</Text>
-                </View>
-                <View style={styles.recommendedBadge}>
-                  <Text style={styles.recommendedText}>Recommended</Text>
-                </View>
-              </View>
-              <Text style={styles.upgradeSubtitle}>
-                Unlock the full potential of your route with exclusive perks
-              </Text>
-              <View style={styles.perksRow}>
-                <Ionicons name="flash-outline" size={20} color="#79B531" style={{ marginRight: 6 }} />
-                <Text style={styles.perkText}>Top Priority Dispatch</Text>
-              </View>
-              <View style={styles.perksRow}>
-                <Ionicons name="cash-outline" size={20} color="#79B531" style={{ marginRight: 6 }} />
-                <Text style={styles.perkText}>Unlimited 100% Earnings</Text>
-              </View>
-              <View style={styles.perksRow}>
-                <Ionicons name="headset-outline" size={20} color="#79B531" style={{ marginRight: 6 }} />
-                <Text style={styles.perkText}>Premium Support</Text>
-              </View>
-              <View style={styles.perksRow}>
-                <Ionicons name="heart-outline" size={20} color="#79B531" style={{ marginRight: 6 }} />
-                <Text style={styles.perkText}>Health & Wellness Perks</Text>
-              </View>
-              <View style={styles.priceBadge}>
-                <Text style={styles.priceText}>{upgradePrice}</Text>
-              </View>
-
-              {/* Confirm & Pay Button */}
-              <TouchableOpacity style={styles.confirmPayBtn} onPress={ConfirmPay}>
-                <Text style={styles.switchBtnText}>Confirm & Pay</Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Close modal */}
-            <TouchableOpacity
-              style={{ marginTop: 12, alignSelf: 'center' }}
-              onPress={() => setShowModal(false)}
-            >
-              <Text style={{ color: '#235594', fontWeight: '700' }}>Cancel</Text>
+    return (
+      <SafeAreaView style={styles.container}>
+        <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+          {/* Header */}
+          <View style={styles.headerRow}>
+            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+              <Ionicons name="arrow-back" size={22} color="#235594" />
             </TouchableOpacity>
+            <Text style={styles.headerTitle}>Subscription</Text>
+            <View style={{ width: 22 }} />
+          </View>
+
+          {/* Status Card */}
+          <View style={styles.statusCard}>
+            <View style={styles.statusBadge}>
+              <Ionicons name="checkmark-circle" size={16} color="#fff" style={{ marginRight: 4 }} />
+              <Text style={styles.statusBadgeText}>Active</Text>
+            </View>
+            <Text style={styles.statusPlan}>Monthly Driver Plan</Text>
+            <Text style={styles.statusPrice}>
+              £{MONTHLY_PRICE}
+              <Text style={styles.perMonth}>/month</Text>
+            </Text>
+          </View>
+
+          {/* Details */}
+          <View style={styles.detailsCard}>
+            <View style={styles.detailRow}>
+              <Ionicons name="calendar-outline" size={18} color="#6B7280" />
+              <View style={styles.detailTextBlock}>
+                <Text style={styles.detailLabel}>Next billing date</Text>
+                <Text style={styles.detailValue}>{nextBillingDate}</Text>
+              </View>
+            </View>
+
+            <View style={styles.divider} />
+
+            <View style={styles.detailRow}>
+              <Ionicons name="card-outline" size={18} color="#6B7280" />
+              <View style={styles.detailTextBlock}>
+                <Text style={styles.detailLabel}>Payment method</Text>
+                <Text style={styles.detailValue}>Wallet deduction</Text>
+              </View>
+            </View>
+
+            <View style={styles.divider} />
+
+            <View style={styles.detailRow}>
+              <Ionicons name="cash-outline" size={18} color="#6B7280" />
+              <View style={styles.detailTextBlock}>
+                <Text style={styles.detailLabel}>Monthly amount</Text>
+                <Text style={styles.detailValue}>{formatCurrency(monthlyAmount)}</Text>
+              </View>
+            </View>
+
+            {hasDebt && (
+              <>
+                <View style={styles.divider} />
+                <View style={[styles.detailRow, { backgroundColor: "#FEF2F2", borderRadius: 8, padding: 10, marginHorizontal: -4 }]}>
+                  <Ionicons name="alert-circle-outline" size={18} color="#EF4444" />
+                  <View style={styles.detailTextBlock}>
+                    <Text style={[styles.detailLabel, { color: "#EF4444" }]}>Outstanding balance</Text>
+                    <Text style={[styles.detailValue, { color: "#EF4444" }]}>
+                      {formatCurrency(subscription.debtAmount)} — will auto-deduct when wallet reaches this amount
+                    </Text>
+                  </View>
+                </View>
+              </>
+            )}
+          </View>
+
+          {/* Info */}
+          <View style={styles.infoCard}>
+            <Ionicons name="information-circle-outline" size={20} color="#235594" style={{ marginRight: 10, marginTop: 2 }} />
+            <Text style={styles.infoText}>
+              Your subscription is automatically renewed each month. The fee is deducted from your wallet balance. If your balance is insufficient, your account will be temporarily suspended until you earn enough.
+            </Text>
+          </View>
+
+          {/* CTA */}
+          <TouchableOpacity
+            style={styles.doneBtn}
+            onPress={() => navigation.goBack()}
+          >
+            <Text style={styles.doneBtnText}>Done</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  // Not subscribed — show activation view
+  return (
+    <SafeAreaView style={styles.container}>
+      <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
+        {/* Header */}
+        <View style={styles.headerRow}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+            <Ionicons name="arrow-back" size={22} color="#235594" />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Activate Your Account</Text>
+          <View style={{ width: 22 }} />
+        </View>
+
+        <Text style={styles.subtitle}>
+          Monthly subscription of £{MONTHLY_PRICE} — deducted from your wallet
+        </Text>
+
+        <View style={styles.card}>
+          <Text style={styles.planTitle}>Monthly Driver Plan</Text>
+          <Text style={styles.planPrice}>
+            £{MONTHLY_PRICE}
+            <Text style={styles.perMonth}>/month</Text>
+          </Text>
+          <View style={styles.perkRow}>
+            <Text style={styles.bullet}>•</Text>
+            <Text style={styles.perkText}>Zero commission on all rides</Text>
+          </View>
+          <View style={styles.perkRow}>
+            <Text style={styles.bullet}>•</Text>
+            <Text style={styles.perkText}>Unlimited ride requests</Text>
+          </View>
+          <View style={styles.perkRow}>
+            <Text style={styles.bullet}>•</Text>
+            <Text style={styles.perkText}>Auto-deducted from wallet</Text>
           </View>
         </View>
-      </Modal>
-    </ScrollView>
+
+        <View style={styles.infoBox}>
+          <Ionicons name="information-circle-outline" size={18} color="#235594" style={{ marginRight: 8, marginTop: 1 }} />
+          <Text style={styles.infoText}>
+            If your wallet has £{MONTHLY_PRICE} or more, we'll deduct it now. Otherwise, it will be deducted automatically once you earn enough.
+          </Text>
+        </View>
+
+        <TouchableOpacity
+          style={[styles.button, loading && { opacity: 0.6 }]}
+          onPress={handleActivate}
+          disabled={loading}
+        >
+          {loading ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>Activate & Start Driving</Text>
+          )}
+        </TouchableOpacity>
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5', paddingHorizontal: 20, paddingTop: 60 },
+  container: { flex: 1, backgroundColor: "#fff" },
+  centered: { justifyContent: "center", alignItems: "center" },
+  checkingText: { marginTop: 12, color: "#666", fontWeight: "600" },
 
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 30 },
-  backButton: { padding: 6 },
-  headerTitle: { fontSize: 18, fontWeight: '700', color: '#235594' },
+  // Header
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    marginBottom: 20,
+  },
+  backBtn: { padding: 6 },
+  headerTitle: { fontSize: 18, fontWeight: "700", color: "#235594" },
 
-  section: { marginTop: 10, marginBottom: 20 },
-  sectionTitle: { fontSize: 15, fontWeight: '600', color: '#6B7280', marginBottom: 14 },
+  // Activation view
+  subtitle: { fontSize: 14, color: "#666", marginTop: 8, marginBottom: 20, paddingHorizontal: 20 },
+  card: {
+    marginHorizontal: 20,
+    padding: 20,
+    borderWidth: 2,
+    borderColor: PRIMARY,
+    borderRadius: 16,
+    backgroundColor: "#F3FBEA",
+    marginBottom: 16,
+  },
+  planTitle: { fontSize: 16, fontWeight: "600", color: "#235594" },
+  planPrice: { fontSize: 32, fontWeight: "700", color: PRIMARY, marginTop: 8 },
+  perMonth: { fontSize: 16, color: "#666", fontWeight: "400" },
+  perkRow: { flexDirection: "row", marginTop: 10, alignItems: "flex-start" },
+  bullet: { color: PRIMARY, fontWeight: "700", marginRight: 8, fontSize: 14 },
+  perkText: { fontSize: 14, color: "#444", flex: 1 },
+  infoBox: {
+    flexDirection: "row",
+    marginHorizontal: 20,
+    backgroundColor: "#f0f0f0",
+    padding: 14,
+    borderRadius: 12,
+    marginBottom: 20,
+  },
+  infoText: { fontSize: 13, color: "#666", lineHeight: 18, flex: 1 },
+  button: {
+    backgroundColor: PRIMARY,
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
+    marginHorizontal: 20,
+  },
+  buttonText: { color: "#fff", fontWeight: "700", fontSize: 16 },
 
-  planCard: { backgroundColor: '#fff', borderRadius: 18, padding: 20, borderWidth: 2, borderColor: '#79B531', elevation: 4 },
-  planHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  planTitle: { fontSize: 21, fontWeight: '700', color: '#235594' },
-  activeBadge: { backgroundColor: '#79B531', paddingVertical: 4, paddingHorizontal: 10, borderRadius: 20 },
-  activeBadgeText: { color: '#fff', fontSize: 12, fontWeight: '600' },
-  planSubtitle: { fontSize: 14, color: '#4B5563', marginTop: 8, marginBottom: 16 },
-  divider: { height: 1, backgroundColor: '#E5E7EB', marginBottom: 16 },
-  billingRow: { flexDirection: 'row', alignItems: 'center' },
-  billingText: { fontSize: 13, color: '#235594', fontWeight: '500' },
+  // Subscribed view
+  statusCard: {
+    marginHorizontal: 20,
+    padding: 24,
+    borderRadius: 16,
+    backgroundColor: "#F3FBEA",
+    borderWidth: 2,
+    borderColor: PRIMARY,
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  statusBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: PRIMARY,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: 20,
+    marginBottom: 14,
+  },
+  statusBadgeText: { color: "#fff", fontWeight: "700", fontSize: 13 },
+  statusPlan: { fontSize: 16, fontWeight: "600", color: "#235594", marginBottom: 6 },
+  statusPrice: { fontSize: 28, fontWeight: "700", color: PRIMARY },
 
-  upgradeCard: { backgroundColor: '#fff', borderRadius: 18, padding: 20, borderWidth: 2, borderColor: '#235594', elevation: 4 },
-  upgradeHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
-  upgradeTitle: { fontSize: 21, fontWeight: '700', color: '#235594' },
-  recommendedBadge: { backgroundColor: '#79B531', paddingVertical: 4, paddingHorizontal: 10, borderRadius: 20 },
-  recommendedText: { color: '#fff', fontSize: 12, fontWeight: '600' },
-  upgradeSubtitle: { fontSize: 14, color: '#4B5563', marginBottom: 14 },
-  perksRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  perkText: { fontSize: 13, color: '#111827', fontWeight: '500' },
-  priceBadge: { backgroundColor: '#79B531', alignSelf: 'flex-start', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 16, marginTop: 12, marginBottom: 14 },
-  priceText: { color: '#fff', fontWeight: '700', fontSize: 14 },
-  switchBtn: { backgroundColor: '#79B531', paddingVertical: 14, borderRadius: 25, alignItems: 'center' },
-  switchBtnText: { color: '#fff', fontWeight: '700', fontSize: 16 },
+  detailsCard: {
+    marginHorizontal: 20,
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    marginBottom: 16,
+  },
+  detailRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    paddingVertical: 4,
+  },
+  detailTextBlock: { marginLeft: 12, flex: 1 },
+  detailLabel: { fontSize: 12, color: "#9CA3AF", fontWeight: "500", marginBottom: 2 },
+  detailValue: { fontSize: 15, fontWeight: "600", color: "#111827" },
+  divider: { height: 1, backgroundColor: "#E5E7EB", marginVertical: 14 },
 
-  paymentRow: { flexDirection: 'row', alignItems: 'center', marginTop: 18 },
-  paymentText: { fontSize: 14, color: '#235594', fontWeight: '600' },
+  infoCard: {
+    flexDirection: "row",
+    marginHorizontal: 20,
+    backgroundColor: "#EFF6FF",
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 20,
+  },
 
-  /* Modal Styles */
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', paddingHorizontal: 20 },
-  modalContainer: { backgroundColor: '#f5f5f5', borderRadius: 20, padding: 20 },
-  confirmPayBtn: { backgroundColor: '#79B531', paddingVertical: 14, borderRadius: 25, alignItems: 'center', marginTop: 12 },
+  doneBtn: {
+    backgroundColor: "#235594",
+    padding: 16,
+    borderRadius: 12,
+    alignItems: "center",
+    marginHorizontal: 20,
+  },
+  doneBtnText: { color: "#fff", fontWeight: "700", fontSize: 16 },
 });

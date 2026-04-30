@@ -5,6 +5,7 @@ import AddPaymentMethodScreen from "../../screens/Rider/PaymentMethods/AddPaymen
 import SuccessfulCardScreen from "../../screens/Rider/PaymentMethods/PaymentMethodSuccessful";
 import RiderTripsScreen from "../../screens/Rider/RiderTripDetails/RiderTripsScreen";
 import RiderTripDetailsScreen from "../../screens/Rider/RiderTripDetails/RiderTripDetailsScreen";
+import ReportIssueScreen from "../../screens/Report/ReportIssueScreen";
 
 const Stack = createNativeStackNavigator();
 
@@ -13,6 +14,7 @@ export default function RiderTripsStack() {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="RiderTripsScreen" component={RiderTripsScreen} />
       <Stack.Screen name="RiderTripDetails" component={RiderTripDetailsScreen} />
+      <Stack.Screen name="ReportIssueScreen" component={ReportIssueScreen} />
     </Stack.Navigator>
   );
 }
