@@ -1,2 +1,8 @@
 node_modules/
 *.local
+# secrets - never commit
+.env
+.runtimeconfig.json
+
+# emulator debug logs
+*-debug.log
