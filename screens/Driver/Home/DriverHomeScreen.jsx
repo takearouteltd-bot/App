@@ -499,13 +499,13 @@ useEffect(() => {
       </MapView>
 
       {/* HEADER */}
-      <SafeAreaView style={styles.header}>
+      <View style={styles.header}>
         <View style={styles.headerLeft}>
           <View style={styles.onlineDotWrap}>
             <Animated.View style={[styles.onlinePulse, { transform: [{ scale: pulseAnim }] }]} />
             <View style={[styles.onlineDot, { backgroundColor: isOnline ? PRIMARY : '#ccc' }]} />
           </View>
-          <View>
+          <View style={styles.statusContent}>
             <Text style={styles.statusText}>
               {isOnline ? 'You are online' : 'You are offline'}
             </Text>
@@ -515,15 +515,17 @@ useEffect(() => {
           </View>
         </View>
 
-        <TouchableOpacity
-          style={[styles.goButton, { backgroundColor: isOnline ? '#DC2626' : PRIMARY }]}
-          onPress={toggleOnlineStatus}
-        >
-          <Text style={styles.goButtonText}>
-            {isOnline ? 'GO OFFLINE' : 'GO ONLINE'}
-          </Text>
-        </TouchableOpacity>
-      </SafeAreaView>
+        <View style={styles.goButtonWrap}>
+          <TouchableOpacity
+            style={[styles.goButton, { backgroundColor: isOnline ? '#DC2626' : PRIMARY }]}
+            onPress={toggleOnlineStatus}
+          >
+            <Text style={styles.goButtonText}>
+              {isOnline ? 'GO OFFLINE' : 'GO ONLINE'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
 
       {/* EARNINGS CARD - Professional Design */}
       <View style={styles.earningsCard}>
@@ -711,8 +713,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: '#fff',
-    paddingHorizontal: 16,
+    paddingLeft: 16,
+    paddingRight: 16,
     paddingVertical: 12,
+    minHeight: 78,
     borderRadius: 16,
     marginTop: 50,
     shadowColor: '#000',
@@ -725,12 +729,31 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    flex: 1,
+    marginRight: 12,
+    backgroundColor: '#F8FAFC',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 14,
   },
-  onlineDotWrap: {
-    width: 16,
-    height: 16,
+  statusContent: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  goButtonWrap: {
     justifyContent: 'center',
     alignItems: 'center',
+    alignSelf: 'center',
+    marginRight: 2,
+    marginLeft: 4,
+  },
+  onlineDotWrap: {
+    width: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 12,
+    backgroundColor: 'rgba(121, 181, 49, 0.12)',
   },
   onlinePulse: {
     position: 'absolute',
@@ -759,6 +782,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   goButtonText: {
     color: '#fff',
@@ -770,7 +795,7 @@ const styles = StyleSheet.create({
   /* Earnings Card - Professional */
   earningsCard: {
     position: 'absolute',
-    top: 120,
+    top: 132,
     left: 16,
     right: 16,
     backgroundColor: '#fff',

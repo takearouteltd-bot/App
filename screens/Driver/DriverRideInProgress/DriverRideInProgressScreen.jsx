@@ -34,7 +34,11 @@ export default function DriverRideInProgressScreen() {
   const { rideId } = route.params;
 
   const mapRef = useRef(null);
-  const slideAnim = useRef(new Animated.Value(400)).current;
+// Replace this:
+const slideAnim = useRef(new Animated.Value(0)).current;
+
+// With this:
+const heightAnim = useRef(new Animated.Value(height * 0.7)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   const [ride, setRide] = useState(null);
@@ -43,17 +47,9 @@ export default function DriverRideInProgressScreen() {
   const [eta, setEta] = useState(null);
   const [distance, setDistance] = useState(null);
   const [loadingAction, setLoadingAction] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(false);
 
   /* ================= ANIMATIONS ================= */
-  useEffect(() => {
-    Animated.timing(slideAnim, {
-      toValue: 0,
-      duration: 600,
-      delay: 300,
-      useNativeDriver: true,
-    }).start();
-  }, []);
-
   useEffect(() => {
     const pulse = Animated.loop(
       Animated.sequence([
@@ -120,11 +116,28 @@ export default function DriverRideInProgressScreen() {
       coords.push(ride.dropoffLocation);
     }
 
+    // Adjust bottom padding based on minimized state
+    const bottomPadding = isMinimized ? 150 : 350;
+
     mapRef.current.fitToCoordinates(coords, {
-      edgePadding: { top: 120, right: 60, bottom: 350, left: 60 },
+      edgePadding: { top: 120, right: 60, bottom: bottomPadding, left: 60 },
       animated: true,
     });
-  }, [ride, driverLocation]);
+  }, [ride, driverLocation, isMinimized]);
+
+  /* ================= TOGGLE MINIMIZE ================= */
+const toggleMinimize = useCallback(() => {
+  const expandedHeight = height * 0.7;
+  const minimizedHeight = 120; // Show 120px when minimized
+  
+  const toValue = isMinimized ? expandedHeight : minimizedHeight;
+  setIsMinimized(!isMinimized);
+  Animated.timing(heightAnim, {
+    toValue: toValue,
+    duration: 300,
+    useNativeDriver: false, // Height animation can't use native driver
+  }).start();
+}, [isMinimized]);
 
   /* ================= ACTIONS ================= */
   const handleArrived = useCallback(async () => {
@@ -296,154 +309,182 @@ export default function DriverRideInProgressScreen() {
       </View>
 
       {/* ================= BOTTOM SHEET ================= */}
-      <Animated.View 
-        style={[
-          styles.bottomSheet,
-          { transform: [{ translateY: slideAnim }] }
-        ]}
-      >
-        {/* Handle */}
-        <View style={styles.handle} />
+     <Animated.View 
+  style={[
+    styles.bottomSheet,
+    { height: heightAnim }  // Animate height instead of transform
+  ]}
+>
+        {/* Handle - Click to toggle */}
+        <TouchableOpacity 
+          style={styles.handle} 
+          onPress={toggleMinimize}
+          activeOpacity={0.7}
+        >
+          <View style={styles.handleBar} />
+          <Ionicons 
+            name={isMinimized ? "chevron-up" : "chevron-down"} 
+            size={18} 
+            color="#999" 
+            style={styles.handleIcon}
+          />
+        </TouchableOpacity>
 
-        {/* Status Header */}
+        {/* Status Header - Always Visible */}
         <View style={styles.statusHeader}>
           <View style={[styles.statusDot, { backgroundColor: statusConfig.markerColor }]} />
           <View style={styles.statusTextContainer}>
             <Text style={styles.statusTitle}>{statusConfig.title}</Text>
-            <Text style={styles.statusSubtitle}>{statusConfig.subtitle}</Text>
+            {!isMinimized && (
+              <Text style={styles.statusSubtitle}>{statusConfig.subtitle}</Text>
+            )}
           </View>
         </View>
 
-        {/* Progress Steps */}
-        <View style={styles.progressContainer}>
-          <View style={styles.progressStep}>
-            <View style={[styles.stepCircle, styles.stepActive]}>
-              <Ionicons name="checkmark" size={12} color="#fff" />
-            </View>
-            <Text style={styles.stepLabel}>Accepted</Text>
-          </View>
-          <View style={[styles.progressLine, status !== 'accepted' && styles.progressLineActive]} />
-          <View style={styles.progressStep}>
-            <View style={[styles.stepCircle, status !== 'accepted' ? styles.stepActive : styles.stepInactive]}>
-              {status !== 'accepted' ? (
-                <Ionicons name="checkmark" size={12} color="#fff" />
-              ) : (
-                <View style={styles.stepDot} />
-              )}
-            </View>
-            <Text style={[styles.stepLabel, status === 'accepted' && styles.stepLabelInactive]}>Arrived</Text>
-          </View>
-          <View style={[styles.progressLine, status === 'ongoing' && styles.progressLineActive]} />
-          <View style={styles.progressStep}>
-            <View style={[styles.stepCircle, status === 'ongoing' ? styles.stepActive : styles.stepInactive]}>
-              {status === 'ongoing' ? (
-                <Ionicons name="checkmark" size={12} color="#fff" />
-              ) : (
-                <View style={styles.stepDot} />
-              )}
-            </View>
-            <Text style={[styles.stepLabel, status !== 'ongoing' && styles.stepLabelInactive]}>Started</Text>
-          </View>
-        </View>
-
-        {/* Location Card */}
-        <View style={styles.locationCard}>
-          <View style={styles.locationIconContainer}>
-            <View style={[styles.locationIcon, { backgroundColor: PRIMARY + '15' }]}>
-              <Ionicons name="location" size={18} color={PRIMARY} />
-            </View>
-            <View style={styles.locationLine} />
-          </View>
-          <View style={styles.locationDetails}>
-            <View style={styles.locationRow}>
-              <Text style={styles.locationLabel}>Pickup</Text>
-              <Text style={styles.locationValue} numberOfLines={2}>
-                {pickupLocation?.address || 'Loading address...'}
-              </Text>
-            </View>
-            <View style={styles.locationDivider} />
-            <View style={styles.locationRow}>
-              <Text style={styles.locationLabel}>Dropoff</Text>
-              <Text style={styles.locationValue} numberOfLines={2}>
-                {dropoffLocation?.address || 'Loading address...'}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Rider Card */}
-        {riderData && (
-          <View style={styles.riderCard}>
-            <Image
-              source={{ 
-                uri: riderData.profileImage || riderData.selfieUrl || riderData.photoURL || 'https://i.pravatar.cc/150?img=3'
-              }}
-              style={styles.riderAvatar}
-            />
-            <View style={styles.riderInfo}>
-              <Text style={styles.riderName}>
-                {riderData.fullName || riderData.name || 'Rider'}
-              </Text>
-              <View style={styles.riderMeta}>
-                <Ionicons name="star" size={12} color="#F5B300" />
-                <Text style={styles.riderRating}>{riderData.rating || '4.5'}</Text>
-                <View style={styles.riderDivider} />
-                <Text style={styles.riderLabel}>Passenger</Text>
-              </View>
-            </View>
-            <View style={styles.riderActions}>
-              <TouchableOpacity 
-                style={[styles.actionBtn, styles.actionBtnPrimary]}
-                onPress={() => navigation.navigate('ChatScreen', {
-                  rideId,
-                  currentUser: { uid: ride.driverId },
-                  userType: 'driver',
-                  otherUserName: riderData?.fullName || 'Rider',
-                  otherUserPhoto: riderData?.profileImage || riderData?.photoURL,
-                })}
-              >
-                <Ionicons name="chatbubble-ellipses" size={18} color="#fff" />
-              </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.actionBtn, styles.actionBtnSecondary]}
-                onPress={() => {
-                  if (riderData.phoneNumber || riderData.phone) {
-                    // Linking.openURL(`tel:${riderData.phoneNumber || riderData.phone}`);
-                    console.log('Call:', riderData.phoneNumber || riderData.phone);
-                  }
-                }}
-              >
-                <Ionicons name="call" size={18} color={SECONDARY} />
-              </TouchableOpacity>
-            </View>
+        {/* Minimized State - Show only essential info */}
+        {isMinimized && (
+          <View style={styles.minimizedInfo}>
+            <Text style={styles.minimizedDistance}>
+              {distance ? `${distance} km` : '...'} • {eta ? `${eta} min` : '...'}
+            </Text>
           </View>
         )}
 
-        {/* Action Button */}
-        <TouchableOpacity 
-          style={[
-            styles.primaryBtn,
-            loadingAction && styles.primaryBtnLoading
-          ]} 
-          onPress={statusConfig.buttonAction}
-          disabled={loadingAction}
-          activeOpacity={0.9}
-        >
-          {loadingAction ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <>
-              <Text style={styles.btnText}>{statusConfig.buttonText}</Text>
-              <Ionicons name="arrow-forward" size={18} color="#fff" />
-            </>
-          )}
-        </TouchableOpacity>
+        {/* Expanded Content - Hidden when minimized */}
+        {!isMinimized && (
+          <>
+            {/* Progress Steps */}
+            <View style={styles.progressContainer}>
+              <View style={styles.progressStep}>
+                <View style={[styles.stepCircle, styles.stepActive]}>
+                  <Ionicons name="checkmark" size={12} color="#fff" />
+                </View>
+                <Text style={styles.stepLabel}>Accepted</Text>
+              </View>
+              <View style={[styles.progressLine, status !== 'accepted' && styles.progressLineActive]} />
+              <View style={styles.progressStep}>
+                <View style={[styles.stepCircle, status !== 'accepted' ? styles.stepActive : styles.stepInactive]}>
+                  {status !== 'accepted' ? (
+                    <Ionicons name="checkmark" size={12} color="#fff" />
+                  ) : (
+                    <View style={styles.stepDot} />
+                  )}
+                </View>
+                <Text style={[styles.stepLabel, status === 'accepted' && styles.stepLabelInactive]}>Arrived</Text>
+              </View>
+              <View style={[styles.progressLine, status === 'ongoing' && styles.progressLineActive]} />
+              <View style={styles.progressStep}>
+                <View style={[styles.stepCircle, status === 'ongoing' ? styles.stepActive : styles.stepInactive]}>
+                  {status === 'ongoing' ? (
+                    <Ionicons name="checkmark" size={12} color="#fff" />
+                  ) : (
+                    <View style={styles.stepDot} />
+                  )}
+                </View>
+                <Text style={[styles.stepLabel, status !== 'ongoing' && styles.stepLabelInactive]}>Started</Text>
+              </View>
+            </View>
 
-        {/* Cancel Option */}
-        {status === 'accepted' && (
-          <TouchableOpacity style={styles.cancelBtn} onPress={handleCancel}>
-            <Text style={styles.cancelText}>Can't make it? Cancel ride</Text>
-          </TouchableOpacity>
+            {/* Location Card */}
+            <View style={styles.locationCard}>
+              <View style={styles.locationIconContainer}>
+                <View style={[styles.locationIcon, { backgroundColor: PRIMARY + '15' }]}>
+                  <Ionicons name="location" size={18} color={PRIMARY} />
+                </View>
+                <View style={styles.locationLine} />
+              </View>
+              <View style={styles.locationDetails}>
+                <View style={styles.locationRow}>
+                  <Text style={styles.locationLabel}>Pickup</Text>
+                  <Text style={styles.locationValue} numberOfLines={2}>
+                    {pickupLocation?.address || 'Loading address...'}
+                  </Text>
+                </View>
+                <View style={styles.locationDivider} />
+                <View style={styles.locationRow}>
+                  <Text style={styles.locationLabel}>Dropoff</Text>
+                  <Text style={styles.locationValue} numberOfLines={2}>
+                    {dropoffLocation?.address || 'Loading address...'}
+                  </Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Rider Card */}
+            {riderData && (
+              <View style={styles.riderCard}>
+                <Image
+                  source={{ 
+                    uri: riderData.profileImage || riderData.selfieUrl || riderData.photoURL || 'https://i.pravatar.cc/150?img=3'
+                  }}
+                  style={styles.riderAvatar}
+                />
+                <View style={styles.riderInfo}>
+                  <Text style={styles.riderName}>
+                    {riderData.fullName || riderData.name || 'Rider'}
+                  </Text>
+                  <View style={styles.riderMeta}>
+                    <Ionicons name="star" size={12} color="#F5B300" />
+                    <Text style={styles.riderRating}>{riderData.rating || '4.5'}</Text>
+                    <View style={styles.riderDivider} />
+                    <Text style={styles.riderLabel}>Passenger</Text>
+                  </View>
+                </View>
+                <View style={styles.riderActions}>
+                  <TouchableOpacity 
+                    style={[styles.actionBtn, styles.actionBtnPrimary]}
+                    onPress={() => navigation.navigate('ChatScreen', {
+                      rideId,
+                      currentUser: { uid: ride.driverId },
+                      userType: 'driver',
+                      otherUserName: riderData?.fullName || 'Rider',
+                      otherUserPhoto: riderData?.profileImage || riderData?.photoURL,
+                    })}
+                  >
+                    <Ionicons name="chatbubble-ellipses" size={18} color="#fff" />
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    style={[styles.actionBtn, styles.actionBtnSecondary]}
+                    onPress={() => {
+                      if (riderData.phoneNumber || riderData.phone) {
+                        // Linking.openURL(`tel:${riderData.phoneNumber || riderData.phone}`);
+                        console.log('Call:', riderData.phoneNumber || riderData.phone);
+                      }
+                    }}
+                  >
+                    <Ionicons name="call" size={18} color={SECONDARY} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {/* Action Button */}
+            <TouchableOpacity 
+              style={[
+                styles.primaryBtn,
+                loadingAction && styles.primaryBtnLoading
+              ]} 
+              onPress={statusConfig.buttonAction}
+              disabled={loadingAction}
+              activeOpacity={0.9}
+            >
+              {loadingAction ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <>
+                  <Text style={styles.btnText}>{statusConfig.buttonText}</Text>
+                  <Ionicons name="arrow-forward" size={18} color="#fff" />
+                </>
+              )}
+            </TouchableOpacity>
+
+            {/* Cancel Option */}
+            {status === 'accepted' && (
+              <TouchableOpacity style={styles.cancelBtn} onPress={handleCancel}>
+                <Text style={styles.cancelText}>Can't make it? Cancel ride</Text>
+              </TouchableOpacity>
+            )}
+          </>
         )}
       </Animated.View>
     </View>
@@ -637,30 +678,51 @@ const styles = StyleSheet.create({
   },
 
   /* Bottom Sheet */
-  bottomSheet: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
-    elevation: 20,
-  },
+ // Replace the bottomSheet style with this:
+bottomSheet: {
+  position: 'absolute',
+  bottom: 0,
+  left: 0,
+  right: 0,
+  // Remove: transform: [{ translateY: slideAnim }]
+  backgroundColor: '#fff',
+  borderTopLeftRadius: 28,
+  borderTopRightRadius: 28,
+  paddingHorizontal: 20,
+  paddingTop: 8,
+  paddingBottom: Platform.OS === 'ios' ? 34 : 24,
+  shadowColor: '#000',
+  shadowOffset: { width: 0, height: -4 },
+  shadowOpacity: 0.12,
+  shadowRadius: 16,
+  elevation: 20,
+},
   handle: {
+    alignSelf: 'center',
+    marginBottom: 12,
+    padding: 8,
+    alignItems: 'center',
+  },
+  handleBar: {
     width: 40,
     height: 4,
     backgroundColor: '#E5E5EA',
     borderRadius: 2,
-    alignSelf: 'center',
+    marginBottom: 4,
+  },
+  handleIcon: {
+    marginTop: 2,
+  },
+
+  /* Minimized Info */
+  minimizedInfo: {
     marginBottom: 16,
+    alignItems: 'center',
+  },
+  minimizedDistance: {
+    fontSize: 13,
+    color: '#888',
+    fontWeight: '500',
   },
 
   /* Status Header */
@@ -698,7 +760,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 20,
-    paddingHorizontal: 20,
   },
   progressStep: {
     alignItems: 'center',

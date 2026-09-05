@@ -18,6 +18,9 @@ import { onAuthStateChanged } from "firebase/auth";
 const TOTAL_STEPS = 5;
 const PRIMARY = "#79B531";
 
+// UK sort code: 6 digits shown as XX-XX-XX.
+const isValidSortCode = (value) => /^\d{2}-\d{2}-\d{2}$/.test(value);
+
 export default function PayoutDetailsScreen({ navigation }) {
   const [currentStep, setCurrentStep] = useState(4);
   const [driverId, setDriverId] = useState(null);
@@ -26,6 +29,13 @@ export default function PayoutDetailsScreen({ navigation }) {
   const [sortCode, setSortCode] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [acceptedTerms, setAcceptedTerms] = useState(false); // <-- checkbox state
+
+  // Auto-format sort code as XX-XX-XX (dash after every 2 digits).
+  const handleSortCodeChange = (text) => {
+    const digits = text.replace(/\D/g, "").slice(0, 6);
+    const parts = digits.match(/.{1,2}/g) || [];
+    setSortCode(parts.join("-"));
+  };
 
   // Listen for auth state
   useEffect(() => {
@@ -56,6 +66,11 @@ const handleContinue = async () => {
     // Basic validation
     if (!accountHolder || !sortCode || !accountNumber) {
       alert("Please fill all fields");
+      return;
+    }
+
+    if (!isValidSortCode(sortCode)) {
+      alert("Enter a valid 6-digit sort code in the format XX-XX-XX");
       return;
     }
 
@@ -135,9 +150,10 @@ const handleContinue = async () => {
           <TextInput
             placeholder="XX-XX-XX"
             value={sortCode}
-            onChangeText={setSortCode}
+            onChangeText={handleSortCodeChange}
             style={styles.input}
-            keyboardType="numeric"
+            keyboardType="number-pad"
+            maxLength={8}
           />
 
           <Text style={styles.label}>Account Number</Text>

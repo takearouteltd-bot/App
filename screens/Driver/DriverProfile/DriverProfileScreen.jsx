@@ -22,6 +22,7 @@ import {
   query,
   where,
   getDocs,
+  onSnapshot,
 } from "firebase/firestore";
 
 const PRIMARY = "#79B531";
@@ -42,17 +43,31 @@ export default function DriverProfileScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
+  useEffect(() => {
+    if (!user?.uid) return;
+
+    const driverRef = doc(db, "drivers", user.uid);
+    const unsubscribe = onSnapshot(
+      driverRef,
+      (snap) => {
+        if (snap.exists()) {
+          setDriver(snap.data());
+        } else {
+          setDriver(null);
+        }
+      },
+      (error) => {
+        console.error("Error listening to driver profile:", error);
+      }
+    );
+
+    return unsubscribe;
+  }, [db, user?.uid]);
+
   const fetchData = async () => {
     if (!user) return;
 
     try {
-      // Fetch driver profile
-      const driverRef = doc(db, "drivers", user.uid);
-      const driverSnap = await getDoc(driverRef);
-      if (driverSnap.exists()) {
-        setDriver(driverSnap.data());
-      }
-
       // Fetch wallet
       const walletRef = doc(db, "driverWallets", user.uid);
       const walletSnap = await getDoc(walletRef);
@@ -131,9 +146,15 @@ export default function DriverProfileScreen() {
 
   const documents = [
     {
-      title: "Driving License",
+      title: "Driving License (Front)",
       icon: "card-account-details",
-      url: driver?.driverLicenseUrl,
+      url: driver?.driverLicenseFrontUrl || driver?.driverLicenseUrl,
+      verified: isApproved,
+    },
+    {
+      title: "Driving License (Back)",
+      icon: "card-account-details-outline",
+      url: driver?.driverLicenseBackUrl || driver?.driverLicenseUrl,
       verified: isApproved,
     },
     {
@@ -224,7 +245,7 @@ export default function DriverProfileScreen() {
 
         {/* Stats Row */}
         <View style={styles.statsContainer}>
-          <View style={styles.statItem}>
+          <View style={[styles.statItem, styles.hiddenStat]}>
             <Text style={styles.statNumber}>4.9</Text>
             <View style={styles.ratingRow}>
               <Ionicons name="star" size={14} color="#F5B300" />
@@ -232,7 +253,7 @@ export default function DriverProfileScreen() {
             </View>
           </View>
 
-          <View style={styles.divider} />
+          <View style={[styles.divider, styles.hiddenStat]} />
 
           <View style={styles.statItem}>
             <Text style={styles.statNumber}>{tripCount}</Text>
@@ -272,7 +293,11 @@ export default function DriverProfileScreen() {
         </TouchableOpacity>
         {/* Vehicle Information */}
         <Text style={styles.sectionTitle}>Vehicle Information</Text>
-        <View style={styles.card}>
+        <TouchableOpacity
+          style={styles.card}
+          activeOpacity={0.85}
+          onPress={() => navigation.navigate("VehicleInformation")}
+        >
           <View style={styles.cardIconWrap}>
             <MaterialCommunityIcons name="car" size={24} color={SECONDARY} />
           </View>
@@ -285,7 +310,7 @@ export default function DriverProfileScreen() {
             </Text>
           </View>
           <Ionicons name="chevron-forward" size={20} color="#C5C5C7" />
-        </View>
+        </TouchableOpacity>
 
         {/* Compliance Section */}
         <Text style={styles.sectionTitle}>Compliance & Documents</Text>
@@ -330,19 +355,6 @@ export default function DriverProfileScreen() {
         <View style={styles.menuCard}>
           <TouchableOpacity
             style={styles.menuRow}
-            onPress={() => navigation.navigate("DriverHelpSupport")}
-          >
-            <View style={styles.menuLeft}>
-              <View style={styles.menuIconWrap}>
-                <Ionicons name="help-circle-outline" size={20} color={SECONDARY} />
-              </View>
-              <Text style={styles.menuText}>Help & Support</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#C5C5C7" />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.menuRow}
             onPress={() => navigation.navigate("SubscriptionDetails")}
 
           >
@@ -355,19 +367,6 @@ export default function DriverProfileScreen() {
                 />
               </View>
               <Text style={styles.menuText}>Subscription Details</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#C5C5C7" />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.menuRow}
-            onPress={() => navigation.navigate("DriverPayments")}
-          >
-            <View style={styles.menuLeft}>
-              <View style={styles.menuIconWrap}>
-                <Ionicons name="card-outline" size={20} color={SECONDARY} />
-              </View>
-              <Text style={styles.menuText}>Payout Methods</Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#C5C5C7" />
           </TouchableOpacity>
@@ -528,6 +527,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
+  },
+
+  hiddenStat: {
+    display: "none",
   },
 
   divider: {

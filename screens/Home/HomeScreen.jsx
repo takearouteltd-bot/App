@@ -244,7 +244,6 @@ export default function HomeScreen() {
       {region ? (
         <MapView
           ref={mapRef}
-          provider={PROVIDER_GOOGLE}
           style={styles.map}
           initialRegion={region}
           showsUserLocation={false}
@@ -361,12 +360,7 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {/* Recent Rides (placeholder) */}
-        <TouchableOpacity style={styles.recentRidesButton} onPress={() => navigation.navigate('RideHistory')}>
-          <Ionicons name="time-outline" size={18} color={SECONDARY} />
-          <Text style={styles.recentRidesText}>Recent Rides</Text>
-          <Ionicons name="chevron-forward" size={16} color="#999" />
-        </TouchableOpacity>
+       
       </Animated.View>
     </SafeAreaView>
   );

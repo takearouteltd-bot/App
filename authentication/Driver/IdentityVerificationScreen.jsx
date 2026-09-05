@@ -9,12 +9,16 @@ import {
   Platform,
   KeyboardAvoidingView,
   Alert,
+  TextInput,
 } from "react-native";
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db, auth, storage } from "../../config/firebase";
-import * as ImagePicker from "expo-image-picker";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import {
+  inferUploadExtension,
+  selectUploadAsset,
+} from "../../helpers/uploadPicker";
 
 const TOTAL_STEPS = 5;
 const PRIMARY = "#79B531";
@@ -26,9 +30,12 @@ export default function IdentityVerificationScreen({
   const [currentStep, setCurrentStep] = useState(2);
   const driverId = auth.currentUser?.uid;
 
-  const [driverLicenseUrl, setDriverLicenseUrl] = useState(null);
+  const [driverLicenseFrontUrl, setDriverLicenseFrontUrl] = useState(null);
+  const [driverLicenseBackUrl, setDriverLicenseBackUrl] = useState(null);
   const [pcoLicenseUrl, setPcoLicenseUrl] = useState(null);
+  const [dbsCertificateUrl, setDbsCertificateUrl] = useState(null);
   const [selfieUrl, setSelfieUrl] = useState(null);
+  const [shareCode, setShareCode] = useState("");
 
   // ✅ Fetch existing data (important!)
   useEffect(() => {
@@ -40,11 +47,19 @@ export default function IdentityVerificationScreen({
 
         if (snap.exists()) {
           const data = snap.data();
+          const legacyDriverLicenseUrl = data.driverLicenseUrl || null;
 
           setCurrentStep(data.onboardingStep || 2);
-          setDriverLicenseUrl(data.driverLicenseUrl || null);
+          setDriverLicenseFrontUrl(
+            data.driverLicenseFrontUrl || legacyDriverLicenseUrl
+          );
+          setDriverLicenseBackUrl(
+            data.driverLicenseBackUrl || legacyDriverLicenseUrl
+          );
           setPcoLicenseUrl(data.pcoLicenseUrl || null);
+          setDbsCertificateUrl(data.dbsCertificateUrl || null);
           setSelfieUrl(data.selfieUrl || null);
+          setShareCode(data.rightToWorkShareCode || "");
         }
       } catch (error) {
         console.log("Error fetching identity data:", error);
@@ -58,25 +73,20 @@ export default function IdentityVerificationScreen({
   const pickDocument = async (type) => {
     if (!driverId) return;
 
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert("Permission required", "Allow access to upload documents.");
+    const asset = await selectUploadAsset();
+    if (!asset) return;
+
+    if (asset.error) {
+      Alert.alert("Permission required", asset.error);
       return;
     }
 
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.7,
-    });
-
-    if (result.canceled) return;
-
     try {
-      const imageUri = result.assets[0].uri;
-      const response = await fetch(imageUri);
+      const response = await fetch(asset.uri);
       const blob = await response.blob();
+      const extension = inferUploadExtension(asset.name, asset.mimeType);
 
-      const storageRef = ref(storage, `drivers/${driverId}/${type}.jpg`);
+      const storageRef = ref(storage, `drivers/${driverId}/${type}.${extension}`);
 
       await uploadBytes(storageRef, blob);
       const downloadUrl = await getDownloadURL(storageRef);
@@ -88,8 +98,10 @@ export default function IdentityVerificationScreen({
       await setDoc(doc(db, "drivers", driverId), updateData, { merge: true });
 
       // Update local state
-      if (type === "driverLicense") setDriverLicenseUrl(downloadUrl);
+      if (type === "driverLicenseFront") setDriverLicenseFrontUrl(downloadUrl);
+      if (type === "driverLicenseBack") setDriverLicenseBackUrl(downloadUrl);
       if (type === "pcoLicense") setPcoLicenseUrl(downloadUrl);
+      if (type === "dbsCertificate") setDbsCertificateUrl(downloadUrl);
       if (type === "selfie") setSelfieUrl(downloadUrl);
 
       console.log(`${type} uploaded!`);
@@ -100,8 +112,13 @@ export default function IdentityVerificationScreen({
   };
 
   const handleContinue = async () => {
-    if (!driverLicenseUrl || !pcoLicenseUrl || !selfieUrl) {
-      Alert.alert("Missing Documents", "Please upload all documents.");
+    if (!driverLicenseFrontUrl || !driverLicenseBackUrl || !pcoLicenseUrl || !selfieUrl) {
+      Alert.alert("Missing Documents", "Please upload all required documents.");
+      return;
+    }
+
+    if (!shareCode.trim()) {
+      Alert.alert("Missing Share Code", "Please enter your Right to Work Share Code.");
       return;
     }
 
@@ -111,6 +128,7 @@ export default function IdentityVerificationScreen({
         {
           onboardingStep: 3,
           onboardingComplete: false,
+          rightToWorkShareCode: shareCode.trim(),
           updatedAt: new Date(),
         },
         { merge: true }
@@ -177,17 +195,25 @@ export default function IdentityVerificationScreen({
             />
           </View>
 
-          <Text style={styles.title}>Identity Verification</Text>
+          <Text style={styles.title}>Identity & Compliance</Text>
           <Text style={styles.subtitle}>
-            Upload required documents to verify your identity.
+            Please upload valid documents to verify your identity. These are required by the UK regulations.
           </Text>
 
           {renderCard(
-            "Driver's License",
-            "Valid driving license required",
+            "Driver's License (Front)",
+            "Upload the front side of your driving license",
             <MaterialIcons name="card-membership" size={40} color={PRIMARY} />,
-            driverLicenseUrl,
-            "driverLicense"
+            driverLicenseFrontUrl,
+            "driverLicenseFront"
+          )}
+
+          {renderCard(
+            "Driver's License (Back)",
+            "Upload the back side of your driving license",
+            <MaterialIcons name="flip-to-back" size={40} color={PRIMARY} />,
+            driverLicenseBackUrl,
+            "driverLicenseBack"
           )}
 
           {renderCard(
@@ -199,12 +225,45 @@ export default function IdentityVerificationScreen({
           )}
 
           {renderCard(
+            "Enhanced DBS Certificate",
+            "Ensure good lighting. Must be valid",
+            <MaterialIcons name="description" size={40} color={PRIMARY} />,
+            dbsCertificateUrl,
+            "dbsCertificate"
+          )}
+
+          {renderCard(
             "Selfie Verification",
             "Match with your ID",
             <Ionicons name="camera" size={40} color={PRIMARY} />,
             selfieUrl,
             "selfie"
           )}
+
+          {/* Right to Work Share Code */}
+          <View style={styles.card}>
+            <View style={styles.cardContent}>
+              <View style={styles.iconContainer}>
+                <MaterialIcons name="vpn-key" size={40} color={PRIMARY} />
+              </View>
+              <View style={{ flex: 1, marginLeft: 12 }}>
+                <Text style={styles.cardTitle}>Right to Work Share Code</Text>
+                <Text style={styles.cardSubtitle}>
+                  Must not be older than 28 days
+                </Text>
+              </View>
+            </View>
+
+            <TextInput
+              style={styles.shareCodeInput}
+              value={shareCode}
+              onChangeText={setShareCode}
+              placeholder="ABC 123 DEF"
+              placeholderTextColor="#aaa"
+              autoCapitalize="characters"
+              maxLength={11}
+            />
+          </View>
 
           <TouchableOpacity style={styles.button} onPress={handleContinue}>
             <Text style={styles.buttonText}>Continue</Text>
@@ -216,121 +275,119 @@ export default function IdentityVerificationScreen({
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
-  container: { padding: 20, paddingBottom: 40 },
-
+  safe: {
+    flex: 1,
+    backgroundColor: "#fff",
+  },
+  container: {
+    padding: 20,
+    paddingBottom: 40,
+  },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    marginBottom: 12,
   },
-
   stepText: {
-    fontSize: 16,
-    fontWeight: "600",
+    fontSize: 14,
+    color: "#666",
+    fontWeight: "500",
   },
-
   progressBarBg: {
     height: 6,
-    backgroundColor: "#E5E5E5",
-    borderRadius: 10,
-    marginTop: 10,
-    marginBottom: 25,
+    backgroundColor: "#e0e0e0",
+    borderRadius: 4,
+    marginBottom: 24,
   },
-
   progressBarFill: {
     height: 6,
-    backgroundColor: PRIMARY,
-    borderRadius: 10,
+    backgroundColor: "#79B531",
+    borderRadius: 4,
   },
-
   title: {
     fontSize: 22,
-    fontWeight: "bold",
+    fontWeight: "700",
+    color: "#111",
     marginBottom: 6,
   },
-
   subtitle: {
     fontSize: 14,
-    color: "gray",
-    marginBottom: 20,
+    color: "#666",
+    marginBottom: 24,
+    lineHeight: 20,
   },
-
   card: {
-    backgroundColor: "#F9F9F9",
-    borderRadius: 15,
-    padding: 20,
-    marginBottom: 15,
-    minHeight: 120, // increased height
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
-    position: "relative",
+    backgroundColor: "#f9f9f9",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#eee",
   },
-
   cardContent: {
     flexDirection: "row",
     alignItems: "center",
+    marginBottom: 12,
   },
-
   iconContainer: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: "#E6F4D9",
+    width: 52,
+    height: 52,
+    borderRadius: 10,
+    backgroundColor: "#f0f9e6",
     justifyContent: "center",
     alignItems: "center",
   },
-
   cardTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "600",
-    marginBottom: 4,
+    color: "#111",
+    marginBottom: 2,
   },
-
   cardSubtitle: {
     fontSize: 12,
-    color: "gray",
+    color: "#888",
   },
-
   uploadBtn: {
-    position: "absolute",
-    bottom: 15,
-    right: 15,
-    backgroundColor: PRIMARY,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 25,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#79B531",
+    borderRadius: 8,
+    paddingVertical: 10,
   },
-
   uploadBtnText: {
-    color: "#fff",
+    color: "white",
     fontWeight: "600",
     fontSize: 14,
   },
-
   uploadedText: {
     marginTop: 8,
-    fontSize: 12,
-    color: PRIMARY,
-    fontWeight: "600",
+    fontSize: 13,
+    color: "#79B531",
+    fontWeight: "500",
   },
-
+  shareCodeInput: {
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: "#111",
+    backgroundColor: "#fff",
+    letterSpacing: 1.5,
+  },
   button: {
-    backgroundColor: PRIMARY,
+    backgroundColor: "#79B531",
+    borderRadius: 12,
     paddingVertical: 16,
-    borderRadius: 30,
     alignItems: "center",
-    marginTop: 20,
+    marginTop: 8,
   },
-
   buttonText: {
     color: "white",
     fontSize: 16,
-    fontWeight: "bold",
+    fontWeight: "700",
   },
 });

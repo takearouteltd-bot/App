@@ -219,11 +219,6 @@ const fetchRiderData = useCallback(async () => {
       >
         {/* Header */}
         <View style={styles.header}>
-          <View style={styles.headerTop}>
-            <TouchableOpacity style={styles.settingsBtn} onPress={() => navigation.navigate("Settings")}>
-              <Ionicons name="settings-outline" size={22} color="#fff" />
-            </TouchableOpacity>
-          </View>
 
           <View style={styles.profileSection}>
             <View style={styles.avatarContainer}>
@@ -260,7 +255,6 @@ const fetchRiderData = useCallback(async () => {
         {/* Stats Dashboard */}
         <View style={styles.statsContainer}>
           <StatCard icon="car-outline" value={stats.totalRides} label="Rides" color={PRIMARY} />
-          <StatCard icon="star" value={stats.rating} label="Rating" color="#FFD700" />
           <StatCard icon="wallet-outline" value={`£${stats.totalSpent}`} label="Spent" color={SECONDARY} />
         </View>
 
@@ -296,34 +290,6 @@ const fetchRiderData = useCallback(async () => {
             subtitle="View past trips & receipts"
             onPress={() => navigation.navigate("RideHistory")}
           />
-
-          <SectionHeader title="Safety & Support" />
-
-          <MenuItem
-            icon="shield-checkmark-outline"
-            title="Safety Toolkit"
-            subtitle="Emergency contacts & ride checks"
-            onPress={() => navigation.navigate("Safety")}
-          />
-
-          <MenuItem
-            icon="help-circle-outline"
-            title="Help Center"
-            subtitle="FAQs, support & report issues"
-            onPress={() => navigation.navigate("HelpCenter")}
-          />
-
-          <SectionHeader title="Preferences" />
-
-          <MenuItem
-            icon="notifications-outline"
-            title="Notifications"
-            subtitle="Push, email & SMS preferences"
-            onPress={() => navigation.navigate("Preferences")}
-          />
-
-          
-
           <SectionHeader title="Account Actions" />
 
           <MenuItem icon="log-out-outline" title="Sign Out" danger onPress={handleLogout} />
@@ -333,9 +299,11 @@ const fetchRiderData = useCallback(async () => {
 
         {/* Footer */}
         <View style={styles.footer}>
-          <View style={styles.footerLogo}>
-            <Text style={styles.footerLogoText}>T</Text>
-          </View>
+          <Image
+            source={require("../../../assets/myicon.png")}
+            style={styles.footerLogo}
+            resizeMode="contain"
+          />
           <Text style={styles.versionText}>TakeARoute v1.0 (UK-STABLE)</Text>
           <Text style={styles.legalText}>Terms • Privacy • Licenses</Text>
         </View>
@@ -386,20 +354,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 5,
-  },
-  headerTop: {
-    flexDirection: "row",
-    justifyContent: "flex-end",
-    paddingHorizontal: 20,
-    marginBottom: 10,
-  },
-  settingsBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "rgba(255,255,255,0.15)",
-    justifyContent: "center",
-    alignItems: "center",
   },
   profileSection: {
     alignItems: "center",
@@ -582,18 +536,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   footerLogo: {
-    width: 36,
-    height: 36,
-    borderRadius: 8,
-    backgroundColor: SECONDARY,
-    justifyContent: "center",
-    alignItems: "center",
+    width: 72,
+    height: 72,
     marginBottom: 10,
-  },
-  footerLogoText: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "700",
   },
   versionText: {
     fontSize: 12,

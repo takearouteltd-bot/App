@@ -18,6 +18,49 @@ import { db, auth } from "../../config/firebase";
 const TOTAL_STEPS = 5;
 const PRIMARY = "#79B531";
 
+// UK National Insurance number: 2 prefix letters + 6 digits + 1 suffix letter.
+// Excludes invalid prefixes/letters per HMRC rules.
+const NINO_REGEX =
+  /^(?!BG|GB|NK|KN|TN|NT|ZZ)[ABCEGHJ-PRSTW-Z][ABCEGHJ-NPRSTW-Z]\d{6}[A-D]$/;
+
+const isValidNino = (value) => NINO_REGEX.test(value.replace(/\s/g, "").toUpperCase());
+
+// Date of birth as DD/MM/YYYY — must be a real past date and 18+.
+const isValidDob = (value) => {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value);
+  if (!match) return false;
+
+  const day = parseInt(match[1], 10);
+  const month = parseInt(match[2], 10);
+  const year = parseInt(match[3], 10);
+
+  const date = new Date(year, month - 1, day);
+  // Reject impossible dates (e.g. 31/02) that JS would roll over.
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return false;
+  }
+
+  const today = new Date();
+  if (date > today) return false;
+
+  // Must be at least 18 years old.
+  const eighteenth = new Date(
+    date.getFullYear() + 18,
+    date.getMonth(),
+    date.getDate()
+  );
+  if (eighteenth > today) return false;
+
+  // Sanity upper bound.
+  if (year < today.getFullYear() - 100) return false;
+
+  return true;
+};
+
 export default function PersonalInformationScreen({
   navigation,
   setOnboardingStatus,
@@ -31,6 +74,23 @@ export default function PersonalInformationScreen({
   const [address, setAddress] = useState("");
 
   const driverId = auth.currentUser?.uid;
+
+  // Auto-format DOB as DD/MM/YYYY while typing.
+  const handleDobChange = (text) => {
+    const digits = text.replace(/\D/g, "").slice(0, 8);
+    let formatted = digits;
+    if (digits.length > 4) {
+      formatted = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+    } else if (digits.length > 2) {
+      formatted = `${digits.slice(0, 2)}/${digits.slice(2)}`;
+    }
+    setDob(formatted);
+  };
+
+  // Force uppercase, strip spaces, cap at 9 chars for the NI number.
+  const handleNinChange = (text) => {
+    setNin(text.replace(/\s/g, "").toUpperCase().slice(0, 9));
+  };
 
   // ✅ Fetch existing data (if user returns)
   useEffect(() => {
@@ -64,6 +124,22 @@ export default function PersonalInformationScreen({
 
     if (!firstName || !lastName || !dob || !nin || !address) {
       Alert.alert("Missing Fields", "Please fill all fields.");
+      return;
+    }
+
+    if (!isValidDob(dob)) {
+      Alert.alert(
+        "Invalid Date of Birth",
+        "Enter a valid date as DD/MM/YYYY. You must be at least 18 years old."
+      );
+      return;
+    }
+
+    if (!isValidNino(nin)) {
+      Alert.alert(
+        "Invalid National Insurance Number",
+        "Enter a valid UK NI number, e.g. AB123456C (2 letters, 6 digits, 1 letter)."
+      );
       return;
     }
 
@@ -161,16 +237,21 @@ export default function PersonalInformationScreen({
           <TextInput
             placeholder="DD/MM/YYYY"
             value={dob}
-            onChangeText={setDob}
+            onChangeText={handleDobChange}
+            keyboardType="number-pad"
+            maxLength={10}
             style={styles.input}
           />
 
           {/* NIN */}
-          <Text style={styles.label}>National ID Number</Text>
+          <Text style={styles.label}>National Insurance Number</Text>
           <TextInput
-            placeholder="Enter ID number"
+            placeholder="AB123456C"
             value={nin}
-            onChangeText={setNin}
+            onChangeText={handleNinChange}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            maxLength={9}
             style={styles.input}
           />
 

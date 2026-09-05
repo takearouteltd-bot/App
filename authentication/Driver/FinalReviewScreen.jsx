@@ -54,16 +54,20 @@ export default function ApplicationSummaryScreen({
             )
           );
           setIdentityDocsVerified(
-            !!(data.driverLicenseUrl && data.pcoLicenseUrl && data.selfieUrl)
+            !!(
+              (data.driverLicenseFrontUrl || data.driverLicenseUrl) &&
+              (data.driverLicenseBackUrl || data.driverLicenseUrl) &&
+              data.pcoLicenseUrl &&
+              data.selfieUrl
+            )
           );
           setVehicleDocsUploaded(
             !!(
               data.makeModel &&
               data.registrationNumber &&
-              data.v5Url &&
+              data.vehicleType &&
               data.motUrl &&
-              data.insuranceUrl &&
-              data.vehiclePcoUrl
+              data.insuranceUrl
             )
           );
           setBankDetailsConnected(

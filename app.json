@@ -2,33 +2,41 @@
   "expo": {
     "name": "takearoute",
     "slug": "takearoute",
-    "version": "1.0.0",
+    "version": "1.0.5",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/myicon.png",
     "scheme": "takearoute",
     "userInterfaceStyle": "light",
     "newArchEnabled": false,
     "splash": {
       "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
+      "resizeMode": "cover",
       "backgroundColor": "#ffffff"
     },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.hassanjamil.takearoute",
       "googleServicesFile": "./GoogleService-Info.plist",
+      "config": {
+        "googleMapsApiKey": "AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ"
+      },
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/myicon.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
       "googleServicesFile": "./google-services.json",
-      "package": "com.hassanjamil.takearoute"
+      "package": "com.takearoute.app",
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ"
+        }
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -49,12 +57,13 @@
             "useFrameworks": "static"
           },
           "android": {
-            "compileSdkVersion": 34
+            "compileSdkVersion": 35
           }
         }
       ],
       "expo-web-browser",
       "@react-native-google-signin/google-signin"
+      
     ]
   }
 }

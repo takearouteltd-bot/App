@@ -57,6 +57,58 @@ exports.createStripeCustomer = functions.https.onCall(async (data, context) => {
 });
 
 /* ======================================
+   EXCHANGE PHONE AUTH -> CUSTOM TOKEN
+   The phone OTP is sent/confirmed on the client via the NATIVE
+   @react-native-firebase SDK (reCAPTCHA-free). But the rest of the
+   app runs on the JS SDK. This verifies the native ID token and mints
+   a JS-SDK custom token for the SAME uid so the two stay in sync.
+====================================== */
+exports.exchangePhoneAuthToken = functions.https.onCall(
+    async (data, context) => {
+      const idToken = data && data.idToken;
+
+      if (!idToken) {
+        throw new functions.https.HttpsError(
+            "invalid-argument",
+            "Missing idToken",
+        );
+      }
+
+      try {
+        const decoded = await admin.auth().verifyIdToken(idToken);
+
+        // Only allow this bridge for genuine phone sign-ins.
+        const isPhoneUser =
+        (decoded.phone_number) ||
+        (decoded.firebase &&
+          decoded.firebase.sign_in_provider === "phone");
+
+        if (!isPhoneUser) {
+          throw new functions.https.HttpsError(
+              "permission-denied",
+              "Not a phone authentication token",
+          );
+        }
+
+        const customToken = await admin.auth().createCustomToken(decoded.uid);
+
+        return {token: customToken};
+      } catch (error) {
+        console.error("exchangePhoneAuthToken error:", error);
+
+        if (error instanceof functions.https.HttpsError) {
+          throw error;
+        }
+
+        throw new functions.https.HttpsError(
+            "unauthenticated",
+            "Invalid or expired token",
+        );
+      }
+    },
+);
+
+/* ======================================
    CREATE SETUP INTENT
 ====================================== */
 exports.createSetupIntent = functions.https.onCall(async (data, context) => {
@@ -992,6 +1044,77 @@ exports.completeDriverPayout = functions.https.onCall(async (data, context) => {
     return {success: true, payoutId: payoutId};
   } catch (error) {
     console.error("Complete payout failed:", error);
+    throw error;
+  }
+});
+
+exports.rejectDriverPayout = functions.https.onCall(async (data, context) => {
+  const {payoutId, reason} = data;
+  const adminId = context.auth ? context.auth.uid : null;
+
+  if (!adminId) {
+    throw new functions.https.HttpsError("unauthenticated", "Login required");
+  }
+
+  if (!reason) {
+    throw new functions.https.HttpsError("invalid-argument",
+        "Rejection reason required");
+  }
+
+  const payoutRef = db.collection("driverPayouts").doc(payoutId);
+
+  try {
+    await db.runTransaction(async (transaction) => {
+      const payoutSnap = await transaction.get(payoutRef);
+
+      if (!payoutSnap.exists) {
+        throw new functions.https.HttpsError("not-found", "Payout not found");
+      }
+
+      const payout = payoutSnap.data();
+
+      if (payout.status !== "pending_admin") {
+        throw new functions.https.HttpsError("failed-precondition",
+            "Payout not in pending status");
+      }
+
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      const walletRef = db.collection("driverWallets").doc(payout.driverId);
+
+      transaction.update(payoutRef, {
+        status: "rejected",
+        processedBy: adminId,
+        processedAt: now,
+        rejectionReason: reason,
+        rejectedAt: now,
+        updatedAt: now,
+      });
+
+      transaction.update(walletRef, {
+        availableBalance: admin.firestore.FieldValue.increment(payout.amount),
+        updatedAt: now,
+      });
+
+      const walletTxQuery = await db
+          .collection("driverWallets")
+          .doc(payout.driverId)
+          .collection("transactions")
+          .where("payoutId", "==", payoutId)
+          .limit(1)
+          .get();
+
+      if (!walletTxQuery.empty) {
+        transaction.update(walletTxQuery.docs[0].ref, {
+          status: "rejected",
+          rejectionReason: reason,
+          updatedAt: now,
+        });
+      }
+    });
+
+    return {success: true, payoutId: payoutId};
+  } catch (error) {
+    console.error("Reject payout failed:", error);
     throw error;
   }
 });

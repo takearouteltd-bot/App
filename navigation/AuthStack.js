@@ -11,8 +11,9 @@ const Stack = createNativeStackNavigator();
 
 export default function AuthStack({
 setUserRole,
-setIsLoggedIn,
+setIsLoggedIn, 
 setRiderOnboardingStatus,
+setDriverOnboardingStatus,
 }) {
 return (
 <Stack.Navigator screenOptions={{ headerShown: false }}>
@@ -23,6 +24,7 @@ return (
   <Stack.Screen name="PhoneLogin" component={PhoneLoginScreen} />
   <Stack.Screen name="VerifyPhone" component={VerifyPhone} />
 
+
   {/* Email Authentication (login + signup) */}
  <Stack.Screen name="EmailAuth">
   {(props) => (
@@ -31,6 +33,7 @@ return (
       setIsLoggedIn={setIsLoggedIn}
       setUserRole={setUserRole}
       setRiderOnboardingStatus={setRiderOnboardingStatus}
+      setDriverOnboardingStatus={setDriverOnboardingStatus}
     />
   )}
 </Stack.Screen>
@@ -43,6 +46,7 @@ return (
         setUserRole={setUserRole}
         setIsLoggedIn={setIsLoggedIn}
         setRiderOnboardingStatus={setRiderOnboardingStatus}
+        setDriverOnboardingStatus={setDriverOnboardingStatus}
       />
     )}
   </Stack.Screen>

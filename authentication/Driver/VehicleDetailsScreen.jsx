@@ -15,12 +15,53 @@ import {
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db, auth, storage } from "../../config/firebase";
-import * as ImagePicker from "expo-image-picker";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import {
+  inferUploadExtension,
+  isPdfUpload,
+  selectUploadAsset,
+} from "../../helpers/uploadPicker";
 
 const TOTAL_STEPS = 5;
 const PRIMARY = "#79B531";
 const DARK = "#1a1a1a";
+const VEHICLE_TYPES = [
+  {
+    id: "RouteMini",
+    label: "RouteMini",
+    description: "Affordable everyday rides",
+    icon: "car",
+    passengers: 4,
+  },
+  {
+    id: "RoutePlus",
+    label: "RoutePlus",
+    description: "Comfortable sedans",
+    icon: "car",
+    passengers: 4,
+  },
+  {
+    id: "RouteXL",
+    label: "RouteXL",
+    description: "Spacious SUVs for groups",
+    icon: "car-estate",
+    passengers: 6,
+  },
+  {
+    id: "RouteEco",
+    label: "RouteEco",
+    description: "Eco-friendly hybrid rides",
+    icon: "leaf",
+    passengers: 4,
+  },
+  {
+    id: "RouteExecutive",
+    label: "Executive",
+    description: "Premium luxury experience",
+    icon: "car-wash",
+    passengers: 4,
+  },
+];
 
 export default function VehicleDetailsScreen({
   navigation,
@@ -30,12 +71,14 @@ export default function VehicleDetailsScreen({
   const driverId = auth.currentUser?.uid;
 
   const [makeModel, setMakeModel] = useState("");
+  const [year, setYear] = useState("");
   const [registrationNumber, setRegistrationNumber] = useState("");
+  const [vehicleType, setVehicleType] = useState("");
+  const [ownershipType, setOwnershipType] = useState(null); // "company" | "private"
 
-  const [v5Url, setV5Url] = useState(null);
   const [motUrl, setMotUrl] = useState(null);
   const [insuranceUrl, setInsuranceUrl] = useState(null);
-  const [pcoUrl, setPcoUrl] = useState(null);
+  const [companyAgreementUrl, setCompanyAgreementUrl] = useState(null);
 
   // Fetch existing data
   useEffect(() => {
@@ -50,12 +93,14 @@ export default function VehicleDetailsScreen({
 
           setCurrentStep(data.onboardingStep || 3);
           setMakeModel(data.makeModel || "");
+          setYear(data.year || "");
           setRegistrationNumber(data.registrationNumber || "");
+          setVehicleType(data.vehicleType || "");
+          setOwnershipType(data.ownershipType || null);
 
-          setV5Url(data.v5Url || null);
           setMotUrl(data.motUrl || null);
           setInsuranceUrl(data.insuranceUrl || null);
-          setPcoUrl(data.vehiclePcoUrl || null);
+          setCompanyAgreementUrl(data.companyAgreementUrl || null);
         }
       } catch (error) {
         console.log("Error fetching vehicle data:", error);
@@ -69,25 +114,20 @@ export default function VehicleDetailsScreen({
   const pickDocument = async (type) => {
     if (!driverId) return;
 
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert("Permission required");
+    const asset = await selectUploadAsset();
+    if (!asset) return;
+
+    if (asset.error) {
+      Alert.alert("Permission required", asset.error);
       return;
     }
 
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.7,
-    });
-
-    if (result.canceled) return;
-
     try {
-      const imageUri = result.assets[0].uri;
-      const response = await fetch(imageUri);
+      const response = await fetch(asset.uri);
       const blob = await response.blob();
+      const extension = inferUploadExtension(asset.name, asset.mimeType);
 
-      const storageRef = ref(storage, `drivers/${driverId}/${type}.jpg`);
+      const storageRef = ref(storage, `drivers/${driverId}/${type}.${extension}`);
       await uploadBytes(storageRef, blob);
 
       const downloadUrl = await getDownloadURL(storageRef);
@@ -95,10 +135,6 @@ export default function VehicleDetailsScreen({
       let updateData = {};
 
       switch (type) {
-        case "v5Logbook":
-          setV5Url(downloadUrl);
-          updateData.v5Url = downloadUrl;
-          break;
         case "motCert":
           setMotUrl(downloadUrl);
           updateData.motUrl = downloadUrl;
@@ -107,9 +143,9 @@ export default function VehicleDetailsScreen({
           setInsuranceUrl(downloadUrl);
           updateData.insuranceUrl = downloadUrl;
           break;
-        case "vehiclePco":
-          setPcoUrl(downloadUrl);
-          updateData.vehiclePcoUrl = downloadUrl;
+        case "companyAgreement":
+          setCompanyAgreementUrl(downloadUrl);
+          updateData.companyAgreementUrl = downloadUrl;
           break;
       }
 
@@ -122,15 +158,25 @@ export default function VehicleDetailsScreen({
     }
   };
 
+  const isFormComplete = () => {
+    const baseComplete =
+      makeModel &&
+      year &&
+      registrationNumber &&
+      vehicleType &&
+      ownershipType &&
+      motUrl &&
+      insuranceUrl;
+
+    if (ownershipType === "company") {
+      return baseComplete && !!companyAgreementUrl;
+    }
+
+    return baseComplete;
+  };
+
   const handleContinue = async () => {
-    if (
-      !makeModel ||
-      !registrationNumber ||
-      !v5Url ||
-      !motUrl ||
-      !insuranceUrl ||
-      !pcoUrl
-    ) {
+    if (!isFormComplete()) {
       Alert.alert("Missing info", "Please complete all fields & uploads.");
       return;
     }
@@ -140,7 +186,10 @@ export default function VehicleDetailsScreen({
         doc(db, "drivers", driverId),
         {
           makeModel,
+          year,
           registrationNumber,
+          vehicleType,
+          ownershipType,
           onboardingStep: 4,
           onboardingComplete: false,
           updatedAt: new Date(),
@@ -166,8 +215,16 @@ export default function VehicleDetailsScreen({
         activeOpacity={0.8}
       >
         <View style={styles.uploadPreview}>
-          {isUploaded ? (
+          {isUploaded && !isPdfUpload(stateVar) ? (
             <Image source={{ uri: stateVar }} style={styles.uploadThumb} />
+          ) : isUploaded ? (
+            <View style={styles.uploadPlaceholder}>
+              <MaterialCommunityIcons
+                name="file-pdf-box"
+                size={28}
+                color={PRIMARY}
+              />
+            </View>
           ) : (
             <View style={styles.uploadPlaceholder}>
               <MaterialCommunityIcons name={icon} size={28} color={PRIMARY} />
@@ -204,10 +261,16 @@ export default function VehicleDetailsScreen({
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
-        <ScrollView contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          contentContainerStyle={styles.container}
+          showsVerticalScrollIndicator={false}
+        >
           {/* Header */}
           <View style={styles.header}>
-            <TouchableOpacity style={styles.iconBtn} onPress={() => navigation.goBack()}>
+            <TouchableOpacity
+              style={styles.iconBtn}
+              onPress={() => navigation.goBack()}
+            >
               <Ionicons name="arrow-back" size={22} color={DARK} />
             </TouchableOpacity>
 
@@ -241,13 +304,25 @@ export default function VehicleDetailsScreen({
             placeholderTextColor="#aaa"
           />
 
-          {/* Registration Number with UK Flag */}
+          {/* Year */}
+          <Text style={styles.label}>Year</Text>
+          <TextInput
+            value={year}
+            onChangeText={setYear}
+            style={styles.input}
+            placeholder="e.g. 2021"
+            placeholderTextColor="#aaa"
+            keyboardType="numeric"
+            maxLength={4}
+          />
+
+          {/* Registration Number */}
           <Text style={styles.label}>Registration Number</Text>
           <View style={styles.regRow}>
             <Image
-            source={{ uri: "https://flagcdn.com/w40/gb.png" }}
-            style={styles.flag}
-          />
+              source={{ uri: "https://flagcdn.com/w40/gb.png" }}
+              style={styles.flag}
+            />
             <TextInput
               value={registrationNumber}
               onChangeText={setRegistrationNumber}
@@ -259,21 +334,156 @@ export default function VehicleDetailsScreen({
             />
           </View>
 
+          <Text style={styles.label}>Vehicle Type</Text>
+          <View style={styles.vehicleTypeList}>
+            {VEHICLE_TYPES.map((option) => {
+              const selected = vehicleType === option.id;
+              return (
+                <TouchableOpacity
+                  key={option.id}
+                  style={[
+                    styles.vehicleTypeCard,
+                    selected && styles.vehicleTypeCardSelected,
+                  ]}
+                  onPress={() => setVehicleType(option.id)}
+                  activeOpacity={0.85}
+                >
+                  <View style={styles.vehicleTypeLeft}>
+                    <View
+                      style={[
+                        styles.vehicleTypeIconWrap,
+                        selected && styles.vehicleTypeIconWrapSelected,
+                      ]}
+                    >
+                      <MaterialCommunityIcons
+                        name={option.icon}
+                        size={20}
+                        color={selected ? PRIMARY : DARK}
+                      />
+                    </View>
+                    <View style={styles.vehicleTypeContent}>
+                      <Text
+                        style={[
+                          styles.vehicleTypeTitle,
+                          selected && styles.vehicleTypeTitleSelected,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                      <Text style={styles.vehicleTypeDescription}>
+                        {option.description}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.vehicleTypeMeta}>
+                    <Text style={styles.vehicleTypePassengers}>
+                      {option.passengers} seats
+                    </Text>
+                    {selected ? (
+                      <Ionicons name="checkmark-circle" size={22} color={PRIMARY} />
+                    ) : (
+                      <Ionicons name="ellipse-outline" size={20} color="#C7C7CC" />
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          {/* Vehicle Ownership */}
+          <Text style={styles.label}>Vehicle Ownership</Text>
+          <View style={styles.radioRow}>
+            <TouchableOpacity
+              style={[
+                styles.radioOption,
+                ownershipType === "company" && styles.radioOptionSelected,
+              ]}
+              onPress={() => setOwnershipType("company")}
+              activeOpacity={0.8}
+            >
+              <View style={styles.radioCircle}>
+                {ownershipType === "company" && (
+                  <View style={styles.radioFill} />
+                )}
+              </View>
+              <MaterialCommunityIcons
+                name="office-building-outline"
+                size={18}
+                color={ownershipType === "company" ? PRIMARY : "#999"}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.radioLabel,
+                  ownershipType === "company" && styles.radioLabelSelected,
+                ]}
+              >
+                Company Car
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.radioOption,
+                ownershipType === "private" && styles.radioOptionSelected,
+              ]}
+              onPress={() => setOwnershipType("private")}
+              activeOpacity={0.8}
+            >
+              <View style={styles.radioCircle}>
+                {ownershipType === "private" && (
+                  <View style={styles.radioFill} />
+                )}
+              </View>
+              <MaterialCommunityIcons
+                name="car-outline"
+                size={18}
+                color={ownershipType === "private" ? PRIMARY : "#999"}
+                style={{ marginRight: 6 }}
+              />
+              <Text
+                style={[
+                  styles.radioLabel,
+                  ownershipType === "private" && styles.radioLabelSelected,
+                ]}
+              >
+                Private Car
+              </Text>
+            </TouchableOpacity>
+          </View>
+
           {/* Documents Section */}
           <Text style={styles.sectionTitle}>Required Documents</Text>
-          <Text style={styles.sectionSub}>Upload clear photos of each document</Text>
+          <Text style={styles.sectionSub}>
+            Upload clear photos of each document
+          </Text>
 
           <View style={styles.uploadGrid}>
-            {renderUploadCard("V5 Logbook", v5Url, "v5Logbook", "file-document-outline")}
-            {renderUploadCard("MOT Certificate", motUrl, "motCert", "certificate-outline")}
-            {renderUploadCard("PHV Insurance", insuranceUrl, "phvInsurance", "shield-check-outline")}
-            {renderUploadCard("PCO License", pcoUrl, "vehiclePco", "card-account-details-outline")}
+            {renderUploadCard(
+              "MOT Certificate",
+              motUrl,
+              "motCert",
+              "certificate-outline"
+            )}
+            {renderUploadCard(
+              "PHV Insurance",
+              insuranceUrl,
+              "phvInsurance",
+              "shield-check-outline"
+            )}
+            {ownershipType === "company" &&
+              renderUploadCard(
+                "Company Agreement",
+                companyAgreementUrl,
+                "companyAgreement",
+                "file-sign"
+              )}
           </View>
 
           <TouchableOpacity
-            style={[styles.button, (!makeModel || !registrationNumber || !v5Url || !motUrl || !insuranceUrl || !pcoUrl) && styles.buttonDisabled]}
+            style={[styles.button, !isFormComplete() && styles.buttonDisabled]}
             onPress={handleContinue}
-            disabled={!makeModel || !registrationNumber || !v5Url || !motUrl || !insuranceUrl || !pcoUrl}
+            disabled={!isFormComplete()}
           >
             <Text style={styles.buttonText}>Continue</Text>
             <Ionicons name="arrow-forward" size={18} color="#fff" />
@@ -353,58 +563,11 @@ const styles = StyleSheet.create({
     color: DARK,
   },
 
-  /* Registration with UK Flag */
   regRow: {
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 24,
     gap: 10,
-  },
-  flagBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#1a3f95",
-    paddingHorizontal: 10,
-    paddingVertical: 12,
-    borderRadius: 10,
-    gap: 6,
-    borderWidth: 1,
-    borderColor: "#152e6e",
-  },
-  ukFlag: {
-    width: 28,
-    height: 18,
-    backgroundColor: "#012169",
-    borderRadius: 2,
-    overflow: "hidden",
-    position: "relative",
-  },
-  ukFlagCross: {
-    position: "absolute",
-    width: 28,
-    height: 4,
-    backgroundColor: "#fff",
-    top: 7,
-  },
-  ukFlagCrossDiag1: {
-    position: "absolute",
-    width: 4,
-    height: 18,
-    backgroundColor: "#fff",
-    left: 12,
-  },
-  ukFlagCrossDiag2: {
-    position: "absolute",
-    width: 28,
-    height: 2,
-    backgroundColor: "#C8102E",
-    top: 8,
-  },
-  gbText: {
-    color: "#fff",
-    fontSize: 13,
-    fontWeight: "800",
-    letterSpacing: 0.5,
   },
   regInput: {
     flex: 1,
@@ -418,6 +581,114 @@ const styles = StyleSheet.create({
     borderColor: "#eee",
     color: DARK,
     letterSpacing: 2,
+  },
+  vehicleTypeList: {
+    gap: 12,
+    marginBottom: 24,
+  },
+  vehicleTypeCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#F8F9FA",
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: "#eee",
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  vehicleTypeCardSelected: {
+    borderColor: PRIMARY,
+    backgroundColor: "rgba(121,181,49,0.08)",
+  },
+  vehicleTypeLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    marginRight: 12,
+  },
+  vehicleTypeIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: "#fff",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 12,
+  },
+  vehicleTypeIconWrapSelected: {
+    backgroundColor: "rgba(121,181,49,0.14)",
+  },
+  vehicleTypeContent: {
+    flex: 1,
+  },
+  vehicleTypeTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: DARK,
+  },
+  vehicleTypeTitleSelected: {
+    color: PRIMARY,
+  },
+  vehicleTypeDescription: {
+    fontSize: 12,
+    color: "#777",
+    marginTop: 4,
+  },
+  vehicleTypeMeta: {
+    alignItems: "flex-end",
+    gap: 6,
+  },
+  vehicleTypePassengers: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#777",
+  },
+
+  /* Radio Buttons */
+  radioRow: {
+    flexDirection: "row",
+    gap: 12,
+    marginBottom: 28,
+  },
+  radioOption: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: "#eee",
+    backgroundColor: "#F8F9FA",
+  },
+  radioOptionSelected: {
+    borderColor: PRIMARY,
+    backgroundColor: "rgba(121,181,49,0.06)",
+  },
+  radioCircle: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 2,
+    borderColor: "#ccc",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 8,
+  },
+  radioFill: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: PRIMARY,
+  },
+  radioLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#888",
+  },
+  radioLabelSelected: {
+    color: PRIMARY,
   },
 
   /* Upload Section */

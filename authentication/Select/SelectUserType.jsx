@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { auth, db, functions } from "../../config/firebase";
-import { doc, updateDoc, setDoc, getDoc } from "firebase/firestore";
+import { doc, setDoc, getDoc, serverTimestamp } from "firebase/firestore";
 
 import { httpsCallable } from "firebase/functions";
 
@@ -28,8 +28,6 @@ const handleContinue = async () => {
     return;
   }
 
-  let customerId = null;
-
   try {
     setLoading(true);
 
@@ -42,80 +40,53 @@ const handleContinue = async () => {
     const uid = user.uid;
     const email = user.email || `${uid}@phone.user`;
     const userRef = doc(db, "users", uid);
-    const userSnap = await getDoc(userRef);
 
-    if (!userSnap.exists()) {
-      throw new Error("User data not found");
+    // Role-specific setup first
+    if (selected === "driver") {
+      await setDoc(
+        doc(db, "drivers", uid),
+        {
+          createdAt: serverTimestamp(),
+          approved: false,
+          onboardingComplete: false,
+        },
+        { merge: true }
+      );
     }
 
-    const userData = userSnap.data();
+    if (selected === "rider") {
+      await setDoc(
+        doc(db, "riders", uid),
+        {
+          createdAt: serverTimestamp(),
+          fullName: "",
+          locationEnabled: false,
+          onboardingComplete: false,
+        },
+        { merge: true }
+      );
 
-    // ================================
-    // 🔥 STRIPE CUSTOMER (SAFE LOGIC)
-    // ================================
-    customerId = userData?.stripeCustomerId;
-
-    if (!customerId) {
-      const createStripeCustomer = httpsCallable(functions, "createStripeCustomer");
-
-      console.log("Creating Stripe customer...");
-
-      const res = await createStripeCustomer({
-        email,
-        uid,
-      });
-
-      customerId = res.data.customerId;
-
-      console.log("Stripe Customer Created:", customerId);
-
-      if (!customerId) {
-        throw new Error("Failed to create Stripe customer");
+      // Stripe customers are only used for rider payments; the backend
+      // stores the id on riders/{uid}, so check there to avoid duplicates.
+      const riderSnap = await getDoc(doc(db, "riders", uid));
+      if (!riderSnap.data()?.stripeCustomerId) {
+        const createStripeCustomer = httpsCallable(functions, "createStripeCustomer");
+        const res = await createStripeCustomer({ email, uid });
+        if (!res.data?.customerId) {
+          throw new Error("Failed to set up payments. Please try again.");
+        }
       }
-    } else {
-      console.log("Existing Stripe Customer:", customerId);
     }
 
- 
-   // ================================
-// 🔥 ROLE-SPECIFIC SETUP FIRST
-// ================================
-if (selected === "driver") {
-  await setDoc(
-    doc(db, "drivers", uid),
-    {
-      createdAt: new Date(),
-      approved: false,
-      onboardingComplete: false, // ✅ FIXED NAME
-    },
-    { merge: true }
-  );
-}
-
-if (selected === "rider") {
-  await setDoc(
-    doc(db, "riders", uid),
-    {
-      createdAt: new Date(),
-      fullName: "",
-      locationEnabled: false,
-      onboardingComplete: false,
-    },
-    { merge: true }
-  );
-}
-
-// ================================
-// 🔥 THEN SAVE USER ROLE
-// ================================
-await setDoc(
-  userRef,
-  {
-    role: selected,
-    updatedAt: new Date(),
-  },
-  { merge: true }
-);
+    // Then save the user role — App.js's listener picks this up
+    await setDoc(
+      userRef,
+      {
+        role: selected,
+        updatedAt: serverTimestamp(),
+      },
+      { merge: true }
+    );
 
     // ================================
     // 🔥 STATE UPDATES

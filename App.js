@@ -131,6 +131,7 @@ export default function App() {
                   {...props}
                   setUserRole={setUserRole}
                   setRiderOnboardingStatus={setRiderOnboardingStatus}
+                  setDriverOnboardingStatus={setDriverOnboardingStatus}
                 />
               )}
             </Stack.Screen>

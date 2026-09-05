@@ -12,7 +12,20 @@
           "package_name": "com.hassanjamil.takearoute"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "196931860484-fuk1lrk15lrkt4ht2sts7vbomtgre961.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.hassanjamil.takearoute",
+            "certificate_hash": "5738d4be9a59b5c1263f00f493943367ad2cf6a4"
+          }
+        },
+        {
+          "client_id": "196931860484-e8ngs73d5i441ab1r6hkhivos8rveljc.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyCyt4kH_KKMNkkboxOGBoCQM_mIyD--66U"
@@ -20,7 +33,55 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "196931860484-0ufi7chp8rca0u2kqhcnb3d281l8fusa.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "196931860484-m2hfis3673gvnr1dpnvqros155tli106.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.hassanjamil.takearoute"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:196931860484:android:a1b9e5cd88853819905d51",
+        "android_client_info": {
+          "package_name": "com.takearoute.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "196931860484-e8ngs73d5i441ab1r6hkhivos8rveljc.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCyt4kH_KKMNkkboxOGBoCQM_mIyD--66U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "196931860484-0ufi7chp8rca0u2kqhcnb3d281l8fusa.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "196931860484-m2hfis3673gvnr1dpnvqros155tli106.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.hassanjamil.takearoute"
+              }
+            }
+          ]
         }
       }
     }

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -8,103 +8,127 @@ import {
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
-  Image,
   ActivityIndicator,
   Alert,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { FirebaseRecaptchaVerifierModal } from "expo-firebase-recaptcha";
-import { PhoneAuthProvider } from "firebase/auth";
-import { auth } from "../../config/firebase";
-import app from "../../config/firebase";
+import nativeAuth from "@react-native-firebase/auth";
+import { setConfirmation } from "../../store/phoneAuthStore";
 
-export default function PhoneLoginScreen({ navigation, setUserRole, setRiderOnboardingStatus, setDriverOnboardingStatus }) {
+const PRIMARY = "#79B531";
+const DARK = "#111827";
 
-  const [phone, setPhone] = useState("");
+const UK_DIAL_CODE = "+44";
+const UK_LOCAL_LENGTH = 10; // UK mobile: 7xxxxxxxxx (the leading 0 is dropped)
+
+// Keep only digits, drop a leading 0 (UK users type 07..., E.164 omits it),
+// and cap at the UK subscriber-number length so typing/pasting stays smooth.
+const sanitizeLocal = (value) => {
+  let digits = value.replace(/\D/g, "");
+  if (digits.startsWith("0")) digits = digits.replace(/^0+/, "");
+  return digits.slice(0, UK_LOCAL_LENGTH);
+};
+
+// Light "7700 900123" grouping purely for display.
+const formatLocal = (digits) => {
+  if (digits.length <= 4) return digits;
+  return `${digits.slice(0, 4)} ${digits.slice(4)}`;
+};
+
+export default function PhoneLoginScreen({ navigation }) {
+  const [local, setLocal] = useState("");
   const [loading, setLoading] = useState(false);
-  const recaptchaVerifier = useRef(null);
+  const inputRef = useRef(null);
 
- const handleContinue = async () => {
-    if (phone.length !== 10) {
-      Alert.alert("Invalid Number", "Please enter a valid 10-digit phone number (without the leading 0).");
+  const fullNumber = useMemo(() => `${UK_DIAL_CODE}${local}`, [local]);
+  const canSubmit = local.length === UK_LOCAL_LENGTH;
+
+  const handleChange = (text) => setLocal(sanitizeLocal(text));
+
+  const handleContinue = async () => {
+    if (!canSubmit) {
+      Alert.alert(
+        "Invalid Number",
+        "Enter your 10-digit UK mobile number after +44 (for example 7700 900123)."
+      );
       return;
     }
 
-    const fullPhone = `+92${phone}`;
     setLoading(true);
-
     try {
-      const phoneProvider = new PhoneAuthProvider(auth);
-      const verificationId = await phoneProvider.verifyPhoneNumber(fullPhone, recaptchaVerifier.current);
-
-      // ✅ Forward the same props email screen uses
-      navigation.navigate("VerifyPhone", {
-        phone: fullPhone,
-        verificationId,
-        setUserRole,
-        setRiderOnboardingStatus,
-        setDriverOnboardingStatus,
+      const confirmation = await nativeAuth().signInWithPhoneNumber(fullNumber);
+      setConfirmation({
+        verificationId: confirmation.verificationId,
+        phoneNumber: fullNumber,
       });
+
+      navigation.navigate("VerifyPhone", { phone: fullNumber });
     } catch (error) {
       console.log("Phone auth error:", error);
-      Alert.alert("Error", error.message || "Failed to send code. Please try again.");
+      Alert.alert(
+        "Verification Failed",
+        error?.message || "Failed to send verification code. Please try again."
+      );
     } finally {
       setLoading(false);
     }
   };
+
   return (
     <SafeAreaView style={styles.container}>
-      <FirebaseRecaptchaVerifierModal
-        ref={recaptchaVerifier}
-        firebaseConfig={app.options}
-        attemptInvisibleVerification={true}
-      />
-
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.innerContainer}
       >
         <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={28} color="#111827" />
+          <Ionicons name="arrow-back" size={28} color={DARK} />
         </TouchableOpacity>
 
         <Text style={styles.title}>Enter your phone number</Text>
         <Text style={styles.subtitle}>
-          We will send a code to verify your account
+          We will send a verification code to sign you in.
         </Text>
 
-        <View style={styles.inputContainer}>
-          {/* UK Flag */}
-          <Image
-            source={{ uri: "https://flagcdn.com/w40/gb.png" }}
-            style={styles.flag}
-          />
-          
-          <Text style={styles.countryCode}>+92</Text>
+        <TouchableOpacity
+          activeOpacity={1}
+          style={styles.inputContainer}
+          onPress={() => inputRef.current?.focus()}
+        >
+          <View style={styles.prefix}>
+            <Text style={styles.flag}>🇬🇧</Text>
+            <Text style={styles.prefixText}>{UK_DIAL_CODE}</Text>
+          </View>
+          <View style={styles.divider} />
           <TextInput
+            ref={inputRef}
             style={styles.input}
-            placeholder="7700 900 123"
+            placeholder="7700 900123"
             placeholderTextColor="#9ca3af"
             keyboardType="number-pad"
-            maxLength={10}
-            value={phone}
-            onChangeText={setPhone}
+            textContentType="telephoneNumber"
+            autoComplete="tel"
+            value={formatLocal(local)}
+            onChangeText={handleChange}
+            autoFocus
+            maxLength={12}
           />
-        </View>
+        </TouchableOpacity>
 
-        <Text style={styles.hint}>Enter your number without the leading 0</Text>
+        <Text style={styles.hint}>
+          UK mobile numbers only. Enter the number after +44 without the leading 0.
+        </Text>
 
         <View style={{ flex: 1 }} />
 
         <TouchableOpacity
-          style={[styles.button, (loading || phone.length !== 10) && { opacity: 0.5 }]}
+          style={[styles.button, (!canSubmit || loading) && styles.buttonDisabled]}
           onPress={handleContinue}
-          disabled={loading || phone.length !== 10}
+          disabled={!canSubmit || loading}
         >
           {loading ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.buttonText}>Send a Verification Code</Text>
+            <Text style={styles.buttonText}>Send Verification Code</Text>
           )}
         </TouchableOpacity>
       </KeyboardAvoidingView>
@@ -116,8 +140,8 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#fff" },
   innerContainer: { flex: 1, paddingHorizontal: 25, paddingTop: 20 },
   backBtn: { marginBottom: 30 },
-  title: { fontSize: 36, fontWeight: "bold", color: "#111827", marginBottom: 10 },
-  subtitle: { fontSize: 16, color: "#6b7280", marginBottom: 40 },
+  title: { fontSize: 34, fontWeight: "bold", color: DARK, marginBottom: 10 },
+  subtitle: { fontSize: 16, color: "#6b7280", marginBottom: 40, lineHeight: 22 },
   inputContainer: {
     flexDirection: "row",
     alignItems: "center",
@@ -127,16 +151,30 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     height: 60,
   },
-  flag: { width: 32, height: 20, marginRight: 10, resizeMode: "contain" },
-  countryCode: { fontSize: 18, fontWeight: "bold", color: "#111827", marginRight: 10 },
-  input: { flex: 1, fontSize: 18, color: "#111827" },
+  prefix: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  flag: { fontSize: 20 },
+  prefixText: { fontSize: 18, fontWeight: "600", color: DARK },
+  divider: {
+    width: 1,
+    height: 28,
+    backgroundColor: "#d1d5db",
+    marginHorizontal: 12,
+  },
+  input: { flex: 1, fontSize: 18, color: DARK, letterSpacing: 0.5 },
   hint: { fontSize: 13, color: "#9ca3af", marginTop: 8, marginLeft: 4 },
   button: {
-    backgroundColor: "#79B531",
+    backgroundColor: PRIMARY,
     paddingVertical: 20,
     borderRadius: 30,
     alignItems: "center",
     marginBottom: 15,
+  },
+  buttonDisabled: {
+    opacity: 0.5,
   },
   buttonText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
 });

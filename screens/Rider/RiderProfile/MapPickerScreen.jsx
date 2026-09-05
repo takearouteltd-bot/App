@@ -128,7 +128,7 @@ export default function MapPickerScreen() {
     }
   };
 
-  const searchPlaces = async (text) => {
+  const searchPlaces = async (text) => { 
     setSearchQuery(text);
     if (text.length < 2) {
       setPredictions([]);
@@ -310,7 +310,6 @@ export default function MapPickerScreen() {
       {/* Map */}
       <MapView
         ref={mapRef}
-        provider={PROVIDER_GOOGLE}
         style={styles.map}
         region={region}
         onPress={handleMapPress}
