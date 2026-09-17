@@ -114,14 +114,14 @@ export default function ApplicationSummaryScreen({
       if (driverId) {
         await updateDoc(doc(db, "drivers", driverId), {
           onboardingComplete: true,
-          onboardingStatus: "pending", // Can change to "approved" after admin review
-          approved: true,
+          onboardingStatus: "pending", // Admin approves or rejects from the dashboard
+          approved: false,
           updatedAt: new Date(),
         });
       }
 
       // Update global onboarding status to move driver to main app
-      setOnboardingStatus('complete')
+      setOnboardingStatus('pending')
 
     } catch (error) {
       console.log("Error submitting application:", error);

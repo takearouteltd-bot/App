@@ -290,6 +290,13 @@ const fetchRiderData = useCallback(async () => {
             subtitle="View past trips & receipts"
             onPress={() => navigation.navigate("RideHistory")}
           />
+
+          <MenuItem
+            icon="mail-outline"
+            title="Messages"
+            subtitle="Updates & offers from TakeARoute"
+            onPress={() => navigation.navigate("Inbox", { role: "rider" })}
+          />
           <SectionHeader title="Account Actions" />
 
           <MenuItem icon="log-out-outline" title="Sign Out" danger onPress={handleLogout} />

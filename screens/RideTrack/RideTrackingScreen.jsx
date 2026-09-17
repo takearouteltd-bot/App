@@ -8,12 +8,13 @@ import {
   Image,
   ActivityIndicator,
   Animated,
+  Alert,
 } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 import MapViewDirections from 'react-native-maps-directions';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 
 const PRIMARY = '#79B431';
@@ -47,30 +48,96 @@ export default function RideTrackingScreen() {
 
   /* ================= RIDE LISTENER ================= */
  const hasNavigatedToProgress = useRef(false);
+ // One driver listener at a time. Previously a new one was opened on every
+ // ride update and never closed.
+ const driverUnsubRef = useRef(null);
+ const listeningDriverId = useRef(null);
 
 useEffect(() => {
   const rideRef = doc(db, 'rides', rideId);
 
+  const stopDriverListener = () => {
+    if (driverUnsubRef.current) {
+      driverUnsubRef.current();
+      driverUnsubRef.current = null;
+    }
+    listeningDriverId.current = null;
+  };
+
   const unsubscribe = onSnapshot(rideRef, (snap) => {
     if (!snap.exists()) return;
+    if (hasNavigatedToProgress.current) return;
 
     const data = snap.data();
     setRideData(data);
 
     // ✅ Auto-navigate when trip starts
-    if (data.status === 'ongoing' && !hasNavigatedToProgress.current) {
+    if (data.status === 'ongoing') {
       hasNavigatedToProgress.current = true;
       navigation.replace('RideInProgress', { rideId });
       return; // stop processing, unmounting anyway
     }
 
-    if (data.driverId) {
-      listenToDriver(data.driverId);
+    // Driver gave the job back: return to the searching screen.
+    if (data.status === 'searching') {
+      hasNavigatedToProgress.current = true;
+      Alert.alert('Finding you another driver', 'Your driver had to cancel. We are looking for a new one now.');
+      navigation.replace('RideRequest', { rideId });
+      return;
+    }
+
+    if (data.status === 'cancelled' || data.status === 'canceled') {
+      hasNavigatedToProgress.current = true;
+      navigation.popToTop();
+      return;
+    }
+
+    if (data.driverId && listeningDriverId.current !== data.driverId) {
+      stopDriverListener();
+      listeningDriverId.current = data.driverId;
+      driverUnsubRef.current = listenToDriver(data.driverId);
     }
   });
 
-  return () => unsubscribe();
+  return () => {
+    unsubscribe();
+    stopDriverListener();
+  };
 }, []);
+
+  /* ================= CALL ================= */
+  // This handler was referenced by the call button but never defined, so
+  // tapping the button crashed the app. Numbers stay hidden until masked
+  // calling is added, so for now it points the passenger to chat.
+  const handleCall = () => {
+    Alert.alert('Message your driver', 'In-app calling is coming soon. Please use chat to reach your driver.', [
+      { text: 'Close', style: 'cancel' },
+      { text: 'Open chat', onPress: handleChat },
+    ]);
+  };
+
+  /* ================= CANCEL (before pickup) ================= */
+  const handleCancelRide = () => {
+    Alert.alert('Cancel this ride?', 'Your driver will be told straight away.', [
+      { text: 'Keep ride', style: 'cancel' },
+      {
+        text: 'Cancel ride',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await updateDoc(doc(db, 'rides', rideId), {
+              status: 'cancelled',
+              cancelledBy: 'rider',
+              cancelledAt: serverTimestamp(),
+            });
+          } catch (error) {
+            console.log('Error cancelling ride:', error);
+            Alert.alert('Error', 'Could not cancel the ride. Please try again.');
+          }
+        },
+      },
+    ]);
+  };
 
   /* ================= DRIVER LISTENER ================= */
   const listenToDriver = (driverId) => {
@@ -267,14 +334,17 @@ useEffect(() => {
           </View>
         )}
 
-        {/* Track Progress Button */}
-        <TouchableOpacity
-          style={styles.primaryButton}
-          onPress={() => navigation.navigate('RideInProgress', { rideId })}
-        >
-          <Text style={styles.primaryText}>Track Ride Progress</Text>
-          <Ionicons name="arrow-forward" size={18} color="#fff" />
-        </TouchableOpacity>
+        {/* The trip screen opens by itself when the driver starts the ride.
+            Opening it early showed "Heading to destination" before pickup
+            and left two copies of the screen open. */}
+        {(status === 'accepted' || status === 'arrived') && (
+          <TouchableOpacity
+            style={[styles.primaryButton, { backgroundColor: '#fff', borderWidth: 1, borderColor: '#DC2626' }]}
+            onPress={handleCancelRide}
+          >
+            <Text style={[styles.primaryText, { color: '#DC2626' }]}>Cancel ride</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </SafeAreaView>
   );

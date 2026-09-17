@@ -40,6 +40,8 @@ export default function RideInProgressScreen() {
     if (!rideId) return;
 
     const rideRef = doc(db, 'rides', rideId);
+    let hasFinished = false;
+    let finishTimer = null;
 
     const unsubscribe = onSnapshot(rideRef, (snap) => {
       if (!snap.exists()) return;
@@ -47,9 +49,10 @@ export default function RideInProgressScreen() {
       const data = snap.data();
       setRide(data);
 
-      /* 🚀 NAVIGATE WHEN COMPLETED */
-      if (data.status === 'completed') {
-        setTimeout(() => {
+      /* 🚀 NAVIGATE WHEN COMPLETED (once only) */
+      if (data.status === 'completed' && !hasFinished) {
+        hasFinished = true;
+        finishTimer = setTimeout(() => {
           navigation.reset({
             index: 0,
             routes: [
@@ -63,7 +66,10 @@ export default function RideInProgressScreen() {
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (finishTimer) clearTimeout(finishTimer);
+    };
   }, [rideId]);
 
   /* ================= DRIVER LISTENER ================= */

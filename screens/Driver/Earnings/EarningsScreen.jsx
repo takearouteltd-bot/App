@@ -104,11 +104,7 @@ const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
       <View style={styles.transactionCard}>
         <View style={styles.transactionLeft}>
           <View style={styles.iconContainer}>
-            <TouchableOpacity
-            onPress={() => navigation.navigate('AdminPayout')}
-            >
-              <Ionicons name={iconName} size={20} color="#235594" />
-            </TouchableOpacity>
+            <Ionicons name={iconName} size={20} color="#235594" />
           </View>
 
           <View>

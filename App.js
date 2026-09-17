@@ -1,12 +1,12 @@
 import "./config/firebase";
 import "react-native-gesture-handler";
 import React, { useState, useEffect } from "react";
-import { LogBox, View, ActivityIndicator } from "react-native";
+import { LogBox, View, ActivityIndicator, Text, TouchableOpacity } from "react-native";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { auth, db } from "./config/firebase";
 import { doc, onSnapshot, getDoc } from "firebase/firestore";
-import { onAuthStateChanged } from "firebase/auth";
+import { onAuthStateChanged, signOut } from "firebase/auth";
 
 import AuthStack from "./navigation/AuthStack";
 import RiderNavigator from "./navigation/RiderNavigator";
@@ -30,6 +30,8 @@ export default function App() {
   const [userRole, setUserRole] = useState(null);
   const [riderOnboardingStatus, setRiderOnboardingStatus] = useState("not_started");
   const [driverOnboardingStatus, setDriverOnboardingStatus] = useState(null);
+  // Set from the admin dashboard (Users > Block account).
+  const [isBlocked, setIsBlocked] = useState(false);
 
   useEffect(() => {
     let unsubscribeUserDoc = null;
@@ -42,6 +44,7 @@ export default function App() {
       }
 
       if (!user) {
+        setIsBlocked(false);
         setUserRole(null);
         setDriverOnboardingStatus(null);
         setRiderOnboardingStatus("not_started");
@@ -67,6 +70,7 @@ export default function App() {
             const riderDoc = await getDoc(doc(db, "riders", uid));
             if (riderDoc.exists()) {
               const data = riderDoc.data();
+              setIsBlocked(data.blocked === true);
               if (!data.fullName) {
                 setRiderOnboardingStatus("profile");
               } else if (!data.locationEnabled) {
@@ -85,6 +89,7 @@ export default function App() {
               setDriverOnboardingStatus("onboarding");
             } else {
               const data = driverDoc.data();
+              setIsBlocked(data.blocked === true);
               if (!data.onboardingComplete) {
                 setDriverOnboardingStatus("onboarding");
               } else if (!data.approved) {
@@ -116,6 +121,25 @@ export default function App() {
 
   if (initializing) {
     return <SplashScreen />;
+  }
+
+  if (isBlocked) {
+    return (
+      <View style={{ flex: 1, backgroundColor: "#fff", alignItems: "center", justifyContent: "center", padding: 28 }}>
+        <Text style={{ fontSize: 22, fontWeight: "800", color: "#1A1A1A", textAlign: "center", marginBottom: 10 }}>
+          Account suspended
+        </Text>
+        <Text style={{ fontSize: 15, lineHeight: 22, color: "#666", textAlign: "center", marginBottom: 24 }}>
+          Your TakeARoute account has been suspended. Please contact support if you think this is a mistake.
+        </Text>
+        <TouchableOpacity
+          onPress={() => signOut(auth).catch(() => {})}
+          style={{ backgroundColor: "#235594", paddingVertical: 14, paddingHorizontal: 28, borderRadius: 14 }}
+        >
+          <Text style={{ color: "#fff", fontSize: 15, fontWeight: "700" }}>Sign out</Text>
+        </TouchableOpacity>
+      </View>
+    );
   }
 
   return (

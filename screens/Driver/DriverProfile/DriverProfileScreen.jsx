@@ -312,6 +312,23 @@ export default function DriverProfileScreen() {
           <Ionicons name="chevron-forward" size={20} color="#C5C5C7" />
         </TouchableOpacity>
 
+        {/* Messages from TakeARoute */}
+        <Text style={styles.sectionTitle}>Messages</Text>
+        <TouchableOpacity
+          style={styles.card}
+          activeOpacity={0.85}
+          onPress={() => navigation.navigate("Inbox", { role: "driver" })}
+        >
+          <View style={styles.cardIconWrap}>
+            <Ionicons name="mail-outline" size={24} color={SECONDARY} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cardTitle}>Inbox</Text>
+            <Text style={styles.cardSubText}>Updates & offers from TakeARoute</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color="#C5C5C7" />
+        </TouchableOpacity>
+
         {/* Compliance Section */}
         <Text style={styles.sectionTitle}>Compliance & Documents</Text>
         {documents.map((docItem, index) => (

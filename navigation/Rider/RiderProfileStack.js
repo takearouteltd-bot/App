@@ -11,6 +11,7 @@ import MapPickerScreen from "../../screens/Rider/RiderProfile/MapPickerScreen";
 import RiderPaymentStack from "./RiderPaymentStack";
 import RiderTripsStack from "./RiderTripsStack";
 import PreferencesScreen from "../../screens/Rider/RiderProfile/PreferencesScreen";
+import InboxScreen from "../../screens/Inbox/InboxScreen";
 
 const Stack = createNativeStackNavigator();
 
@@ -25,6 +26,7 @@ export default function RiderProfileStack() {
       <Stack.Screen name="PaymentMethods" component={RiderPaymentStack} options={{ headerShown: false }} />
       <Stack.Screen name="RideHistory" component={RiderTripsStack} options={{ headerShown: false }} />
       <Stack.Screen name="Preferences" component={PreferencesScreen} />
+      <Stack.Screen name="Inbox" component={InboxScreen} initialParams={{ role: "rider" }} />
 
     
     </Stack.Navigator>

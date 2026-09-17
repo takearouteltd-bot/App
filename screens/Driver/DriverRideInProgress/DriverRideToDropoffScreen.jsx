@@ -250,6 +250,7 @@ const handleCompleteRide = async () => {
       updateDoc(driverRef, {
         isOnRide: false,
         currentRideId: null,
+        status: 'online',
       }),
     ]);
 

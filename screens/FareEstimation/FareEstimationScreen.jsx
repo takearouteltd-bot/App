@@ -19,6 +19,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { db } from '../../config/firebase';
 import { addDoc, collection, serverTimestamp, doc, updateDoc, getDoc, onSnapshot, getDocs } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
+import { useAppConfig } from '../../utils/appConfig';
 
 const { width, height } = Dimensions.get('window');
 const PRIMARY = '#79B531';
@@ -34,6 +35,7 @@ export default function FareEstimationScreen({ route }) {
   const auth = getAuth();
   const currentUser = auth.currentUser;
 
+  const appConfig = useAppConfig();
   const [distance, setDistance] = useState(0);
   const [duration, setDuration] = useState(0);
   const [selectedRide, setSelectedRide] = useState('RouteMini');
@@ -158,12 +160,14 @@ useEffect(() => {
   ];
 
   const calculateFareDetails = useCallback((multiplier = 1) => {
-    const baseFare = 3.0;
-    const ratePerMile = 2.2;
-    const ratePerMin = 0.25;
-    const minFare = 6;
+    // Rates come from the admin dashboard (config/app), with the original
+    // values as fallback.
+    const baseFare = appConfig.fares.baseFare;
+    const ratePerMile = appConfig.fares.ratePerMile;
+    const ratePerMin = appConfig.fares.ratePerMinute;
+    const minFare = appConfig.fares.minimumFare;
     const surge = 1;
-    const vatRate = 0.2;
+    const vatRate = appConfig.fares.vatPercent / 100;
 
     const distanceInMiles = distance * 0.621371;
 
@@ -191,7 +195,7 @@ useEffect(() => {
       distanceInMiles: Number(distanceInMiles.toFixed(2)),
       subtotal: Number(discountedFare.toFixed(2)),
     };
-  }, [distance, duration, promoApplied, discount]);
+  }, [distance, duration, promoApplied, discount, appConfig]);
 
   const handleConfirmRide = async () => {
     if (!currentUser) {

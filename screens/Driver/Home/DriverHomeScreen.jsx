@@ -22,12 +22,14 @@ import {
   onSnapshot,
   doc,
   setDoc,
+  updateDoc,
   getDoc,
   runTransaction,
   serverTimestamp,
 } from "firebase/firestore";
 import { db } from "../../../config/firebase";
 import { getAuth } from "firebase/auth";
+import { useAppConfig } from "../../../utils/appConfig";
 
 const { width, height } = Dimensions.get('window');
 const PRIMARY = '#79B531';
@@ -44,7 +46,10 @@ export default function DriverHomeScreen() {
   const navigation = useNavigation();
 
   const [location, setLocation] = useState(null);
+  const { dispatch: dispatchConfig } = useAppConfig();
+  const searchRadiusKm = dispatchConfig.searchRadiusKm;
   const [isOnline, setIsOnline] = useState(true);
+  const [isApproved, setIsApproved] = useState(true);
   const [loading, setLoading] = useState(true);
 
   const [rideRequests, setRideRequests] = useState([]);
@@ -95,6 +100,7 @@ export default function DriverHomeScreen() {
         const data = snap.data();
         setDriverName(data.firstName || data.fullName || 'Driver');
         setIsOnline(data.status === 'online');
+        setIsApproved(data.approved === true);
       }
     });
 
@@ -198,6 +204,14 @@ export default function DriverHomeScreen() {
     if (!driverId) return;
     const newStatus = !isOnline ? 'online' : 'offline';
 
+    if (newStatus === 'online' && !isApproved) {
+      Alert.alert(
+        "Application under review",
+        "You can go online as soon as your application has been approved."
+      );
+      return;
+    }
+
     try {
       const driverRef = doc(db, "drivers", driverId);
       await setDoc(driverRef, { status: newStatus }, { merge: true });
@@ -223,6 +237,8 @@ export default function DriverHomeScreen() {
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
         if (!data.pickupLocation) return;
+        // Jobs this driver already cancelled are not offered to them again.
+        if (Array.isArray(data.declinedBy) && data.declinedBy.includes(driverId)) return;
 
         const distance = getDistanceFromLatLonInKm(
           location.latitude,
@@ -231,7 +247,7 @@ export default function DriverHomeScreen() {
           data.pickupLocation.longitude
         );
 
-        if (distance <= 50 && data.status === "searching") {
+        if (distance <= searchRadiusKm && data.status === "searching") {
           rides.push({
             id: docSnap.id,
             ...data,
@@ -250,7 +266,7 @@ export default function DriverHomeScreen() {
     });
 
     return () => unsubscribe();
-  }, [isOnline, location]);
+  }, [isOnline, location, searchRadiusKm]);
 
   /* ================= DISTANCE ================= */
   const getDistanceFromLatLonInKm = (lat1, lon1, lat2, lon2) => {
@@ -399,9 +415,12 @@ useEffect(() => {
       const status = rideData.status;
       let navigateTo = null;
 
-      if (status === 'accepted' || status === 'arrived') {
+      // Only resume a job that still belongs to this driver.
+      const stillMine = rideData.driverId === driverId;
+
+      if (stillMine && (status === 'accepted' || status === 'arrived')) {
         navigateTo = 'DriverRideInProgress';
-      } else if (status === 'ongoing') {
+      } else if (stillMine && status === 'ongoing') {
         navigateTo = 'RideToDropoff';
       }
 
@@ -411,7 +430,13 @@ useEffect(() => {
         });
         // Don't setCheckingRide(false) — we're leaving this screen
       } else {
-        // Ride exists but not in a state we should navigate to
+        // Ride exists but not in a state we should navigate to (finished,
+        // cancelled, or handed to another driver). Clear the stale pointer.
+        try {
+          await updateDoc(driverRef, { isOnRide: false, currentRideId: null });
+        } catch (clearError) {
+          console.log('Could not clear stale ride pointer:', clearError);
+        }
         setCheckingRide(false);
       }
 

@@ -2,6 +2,36 @@ import { Alert } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 
+// Live selfie: opens the front camera only. No gallery option, so a driver
+// cannot submit an old or borrowed photo.
+export async function captureSelfie() {
+  try {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      return { error: "Allow camera access to take your selfie." };
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      cameraType: ImagePicker.CameraType.front,
+      allowsEditing: false,
+      quality: 0.7,
+    });
+
+    if (result.canceled) return null;
+
+    const asset = result.assets[0];
+    return {
+      uri: asset.uri,
+      mimeType: asset.mimeType || "image/jpeg",
+      name: asset.fileName || "selfie.jpg",
+    };
+  } catch (error) {
+    console.log("Camera error:", error);
+    return { error: "The camera could not be opened on this device." };
+  }
+}
+
 export async function selectUploadAsset() {
   return new Promise((resolve) => {
     Alert.alert(

@@ -268,6 +268,21 @@ exports.authorizePaymentOnRideAccept = functions.firestore
 
       if (!riderId) return null;
 
+      // Re-dispatch: a driver gave the job back and another accepted it.
+      // The card hold from the first accept is still valid, so reuse it
+      // instead of placing a second hold on the passenger's card.
+      if (after.paymentIntentId && after.paymentStatus === "authorized") {
+        try {
+          await db.collection("payments").doc(after.paymentIntentId).update({
+            driverId: driverId || null,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        } catch (error) {
+          console.error("Could not update payment driver:", error);
+        }
+        return null;
+      }
+
       try {
         const riderDoc = await db.collection("riders").doc(riderId).get();
         if (!riderDoc.exists) return null;
@@ -592,7 +607,10 @@ exports.cancelRidePayment = functions.firestore
       const after = change.after.data();
       const rideId = context.params.rideId;
 
-      if (before.status === "canceled" || after.status !== "canceled") {
+      // The app writes "cancelled", Stripe uses "canceled". Accept both.
+      const cancelWords = ["canceled", "cancelled"];
+      if (cancelWords.includes(before.status) ||
+          !cancelWords.includes(after.status)) {
         return null;
       }
 
@@ -968,19 +986,30 @@ exports.requestDriverPayout = functions.https.onCall(async (data, context) => {
   }
 });
 
-exports.completeDriverPayout = functions.https.onCall(async (data, context) => {
-  const {payoutId, transactionReference, adminNotes} = data;
-  const adminId = context.auth ? context.auth.uid : null;
-
-  if (!adminId) {
+/* ======================================
+   ADMIN GUARD
+   Caller must have an active admins/{uid} document.
+====================================== */
+/**
+ * Throws unless the caller is a signed-in, active admin.
+ * @param {object} context Callable function context.
+ * @return {Promise<string>} The admin uid.
+ */
+async function assertAdmin(context) {
+  const uid = context.auth ? context.auth.uid : null;
+  if (!uid) {
     throw new functions.https.HttpsError("unauthenticated", "Login required");
   }
+  const adminDoc = await db.collection("admins").doc(uid).get();
+  if (!adminDoc.exists || adminDoc.data().isActive === false) {
+    throw new functions.https.HttpsError("permission-denied", "Admin only");
+  }
+  return uid;
+}
 
-  // Check if caller is admin
-  // const adminDoc = await db.collection("admins").doc(adminId).get();
-  // if (!adminDoc.exists) {
-  //   throw new functions.https.HttpsError("permission-denied", "Admin only");
-  // }
+exports.completeDriverPayout = functions.https.onCall(async (data, context) => {
+  const {payoutId, transactionReference, adminNotes} = data;
+  const adminId = await assertAdmin(context);
 
   if (!transactionReference) {
     throw new functions.https.HttpsError("invalid-argument",
@@ -1050,11 +1079,7 @@ exports.completeDriverPayout = functions.https.onCall(async (data, context) => {
 
 exports.rejectDriverPayout = functions.https.onCall(async (data, context) => {
   const {payoutId, reason} = data;
-  const adminId = context.auth ? context.auth.uid : null;
-
-  if (!adminId) {
-    throw new functions.https.HttpsError("unauthenticated", "Login required");
-  }
+  const adminId = await assertAdmin(context);
 
   if (!reason) {
     throw new functions.https.HttpsError("invalid-argument",

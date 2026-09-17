@@ -11,12 +11,14 @@ import {
   Dimensions,
   StatusBar,
   Platform,
+  Alert,
+  Linking,
 } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 import MapViewDirections from 'react-native-maps-directions';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { doc, onSnapshot, updateDoc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, serverTimestamp, getDoc, arrayUnion } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 
 const { width, height } = Dimensions.get('window');
@@ -48,6 +50,9 @@ const heightAnim = useRef(new Animated.Value(height * 0.7)).current;
   const [distance, setDistance] = useState(null);
   const [loadingAction, setLoadingAction] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
+  // Guards against leaving this screen twice (handler + listener both fire).
+  const hasLeftScreen = useRef(false);
+  const driverIdRef = useRef(null);
 
   /* ================= ANIMATIONS ================= */
   useEffect(() => {
@@ -68,14 +73,48 @@ const heightAnim = useRef(new Animated.Value(height * 0.7)).current;
       if (!snap.exists()) return;
       const data = snap.data();
       setRide(data);
+      if (data.driverId) driverIdRef.current = data.driverId;
+
+      if (hasLeftScreen.current) return;
 
       // Auto-navigate if ride status changes
       if (data.status === 'ongoing') {
+        hasLeftScreen.current = true;
         navigation.replace('RideToDropoff', { rideId });
+        return;
+      }
+
+      // Passenger cancelled: tell the driver and free them up for the next job.
+      if (data.status === 'cancelled' || data.status === 'canceled') {
+        hasLeftScreen.current = true;
+        releaseDriver();
+        Alert.alert('Job cancelled', 'The passenger cancelled this job.', [
+          { text: 'OK', onPress: goHome },
+        ]);
       }
     });
     return () => unsubscribe();
   }, [rideId]);
+
+  /* ================= LEAVING THE JOB ================= */
+  const goHome = () => {
+    navigation.reset({ index: 0, routes: [{ name: 'DriverHome' }] });
+  };
+
+  // Clears the "on a job" flags on the driver record and puts them back online.
+  const releaseDriver = async () => {
+    const id = driverIdRef.current;
+    if (!id) return;
+    try {
+      await updateDoc(doc(db, 'drivers', id), {
+        isOnRide: false,
+        currentRideId: null,
+        status: 'online',
+      });
+    } catch (error) {
+      console.log('Error releasing driver:', error);
+    }
+  };
 
   /* ================= DRIVER LOCATION ================= */
   useEffect(() => {
@@ -161,17 +200,64 @@ const toggleMinimize = useCallback(() => {
         status: 'ongoing',
         startedAt: serverTimestamp(),
       });
-      navigation.replace('RideToDropoff', { rideId });
+      if (!hasLeftScreen.current) {
+        hasLeftScreen.current = true;
+        navigation.replace('RideToDropoff', { rideId });
+      }
     } catch (error) {
       console.error('Error starting ride:', error);
       setLoadingAction(false);
     }
   }, [rideId, navigation]);
 
-  const handleCancel = useCallback(async () => {
-    // Optional: Add cancel logic
-    console.log('Cancel ride');
-  }, []);
+  // Driver gives the job back. It returns to "searching" so the next
+  // available driver can take it, and this driver will not be offered it again.
+  const handleCancel = useCallback(() => {
+    Alert.alert(
+      'Cancel this job?',
+      'The job will be offered to another driver.',
+      [
+        { text: 'Keep job', style: 'cancel' },
+        {
+          text: 'Cancel job',
+          style: 'destructive',
+          onPress: async () => {
+            const id = driverIdRef.current;
+            if (!id) return;
+            setLoadingAction(true);
+            try {
+              hasLeftScreen.current = true;
+              await updateDoc(doc(db, 'rides', rideId), {
+                status: 'searching',
+                driverId: null,
+                acceptedAt: null,
+                declinedBy: arrayUnion(id),
+                lastDriverCancelAt: serverTimestamp(),
+              });
+              await releaseDriver();
+              goHome();
+            } catch (error) {
+              hasLeftScreen.current = false;
+              console.error('Error cancelling job:', error);
+              Alert.alert('Error', 'Could not cancel the job. Please try again.');
+              setLoadingAction(false);
+            }
+          },
+        },
+      ]
+    );
+  }, [rideId]);
+
+  // Opens turn-by-turn directions to the pickup point in the phone's maps app.
+  const handleNavigate = useCallback(() => {
+    const point = ride?.pickupLocation;
+    if (!point?.latitude || !point?.longitude) {
+      Alert.alert('No pickup location', 'This job has no pickup coordinates.');
+      return;
+    }
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${point.latitude},${point.longitude}&travelmode=driving`;
+    Linking.openURL(url).catch(() => Alert.alert('Error', 'Could not open maps.'));
+  }, [ride]);
 
   /* ================= RENDER HELPERS ================= */
   const getStatusConfig = () => {
@@ -477,6 +563,15 @@ const toggleMinimize = useCallback(() => {
                 </>
               )}
             </TouchableOpacity>
+
+            {/* Navigate to pickup */}
+            {status === 'accepted' && (
+              <TouchableOpacity style={styles.cancelBtn} onPress={handleNavigate}>
+                <Text style={[styles.cancelText, { color: SECONDARY, fontWeight: '700' }]}>
+                  Navigate to pickup
+                </Text>
+              </TouchableOpacity>
+            )}
 
             {/* Cancel Option */}
             {status === 'accepted' && (

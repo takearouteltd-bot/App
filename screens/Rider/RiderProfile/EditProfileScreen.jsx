@@ -157,7 +157,12 @@ export default function EditProfileScreen() {
       Alert.alert("Success", "Profile photo updated");
     } catch (error) {
       console.error("Upload error:", error);
-      Alert.alert("Error", "Failed to upload image");
+      Alert.alert(
+        "Error",
+        error?.code === "storage/unauthorized"
+          ? "Photo uploads are not allowed for this account yet. (storage/unauthorized)"
+          : `Failed to upload image${error?.code ? ` (${error.code})` : ""}`
+      );
     } finally {
       setUploadingImage(false);
     }

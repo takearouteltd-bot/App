@@ -16,6 +16,7 @@ import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db, auth, storage } from "../../config/firebase";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import {
+  captureSelfie,
   inferUploadExtension,
   selectUploadAsset,
 } from "../../helpers/uploadPicker";
@@ -73,7 +74,8 @@ export default function IdentityVerificationScreen({
   const pickDocument = async (type) => {
     if (!driverId) return;
 
-    const asset = await selectUploadAsset();
+    // The selfie must be taken live with the front camera.
+    const asset = type === "selfie" ? await captureSelfie() : await selectUploadAsset();
     if (!asset) return;
 
     if (asset.error) {
