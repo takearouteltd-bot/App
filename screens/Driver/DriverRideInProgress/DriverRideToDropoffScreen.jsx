@@ -11,6 +11,7 @@ import {
   Dimensions,
   StatusBar,
   Platform,
+  Alert,
 } from 'react-native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
@@ -18,6 +19,8 @@ import { useRoute, useNavigation } from '@react-navigation/native';
 import polyline from '@mapbox/polyline';
 import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
+import { currencySymbol } from '../../../utils/appConfig';
+import SafetyButton from '../../../components/SafetyButton';
 
 const { width, height } = Dimensions.get('window');
 const PRIMARY = '#79B531';
@@ -230,7 +233,48 @@ export default function DriverRideToDropoffScreen() {
     }
   };
 
-const handleCompleteRide = async () => {
+// Straight-line distance in km between two { latitude, longitude } points.
+const distanceKm = (a, b) => {
+  if (!a || !b) return null;
+  const R = 6371;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(b.latitude - a.latitude);
+  const dLon = toRad(b.longitude - a.longitude);
+  const h = Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.latitude)) * Math.cos(toRad(b.latitude)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+};
+
+// How close to the drop-off the driver should be before completing.
+const COMPLETE_RADIUS_KM = 0.5;
+
+// Checks the driver is near the drop-off first. Ending early is allowed (the
+// passenger may ask to get out) but needs a confirmation and is flagged on
+// the ride so support can see it if the fare is disputed.
+const handleCompleteRide = () => {
+  if (completing) return;
+  const away = distanceKm(driverLocation, ride?.dropoffLocation);
+
+  if (away !== null && away > COMPLETE_RADIUS_KM) {
+    const shown = away < 1 ? `${Math.round(away * 1000)} m` : `${away.toFixed(1)} km`;
+    Alert.alert(
+      'You are not at the drop-off yet',
+      `You are ${shown} from the drop-off. Only complete the trip here if the passenger has asked to get out.`,
+      [
+        { text: 'Keep driving', style: 'cancel' },
+        {
+          text: 'Passenger got out here',
+          style: 'destructive',
+          onPress: () => completeRide({ completedAwayFromDropoff: true, completeDistanceKm: Number(away.toFixed(2)) }),
+        },
+      ]
+    );
+    return;
+  }
+  completeRide({ completedAwayFromDropoff: false, completeDistanceKm: away !== null ? Number(away.toFixed(2)) : null });
+};
+
+const completeRide = async (extra) => {
   if (completing) return;
   setCompleting(true);
 
@@ -246,6 +290,7 @@ const handleCompleteRide = async () => {
         status: 'completed',
         expiresAt: serverTimestamp(),
         completedAt: serverTimestamp(),
+        ...extra,
       }),
       updateDoc(driverRef, {
         isOnRide: false,
@@ -338,9 +383,9 @@ const handleCompleteRide = async () => {
         </TouchableOpacity>
         
 
-        <TouchableOpacity style={styles.moreBtn} activeOpacity={0.8}>
-          <Ionicons name="ellipsis-vertical" size={22} color="#fff" />
-        </TouchableOpacity>
+        {/* Safety: 999, 101 and the driver's emergency contact. Replaces an
+            unused menu button. */}
+        <SafetyButton role="driver" rideId={rideId} />
       </SafeAreaView>
 
       {/* ================= FLOATING STATS ================= */}
@@ -351,7 +396,7 @@ const handleCompleteRide = async () => {
         </View>
         <View style={styles.statPill}>
           <Ionicons name="cash-outline" size={14} color={PRIMARY} />
-          <Text style={styles.statPillText}>£{ride.fare?.total?.toFixed(2) || '0.00'}</Text>
+          <Text style={styles.statPillText}>{currencySymbol()}{ride.fare?.total?.toFixed(2) || '0.00'}</Text>
         </View>
       </View>
 

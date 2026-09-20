@@ -4,6 +4,7 @@
 //
 // Every value falls back to the number the app used before this file existed,
 // so a missing document, a bad value, or a denied read never changes behaviour.
+// Keep these in step with CONFIG_DEFAULTS in the dashboard's OperationsSettings.jsx.
 import { useEffect, useState } from "react";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../config/firebase";
@@ -17,8 +18,21 @@ export const DEFAULT_APP_CONFIG = {
     minimumFare: 6,
     vatPercent: 20,
   },
+  waiting: {
+    freeMinutes: 5,
+    ratePerMinute: 0.25,
+    maxCharge: 10,
+  },
   dispatch: {
     searchRadiusKm: 50,
+    requestTimeoutSeconds: 20,
+  },
+  drivers: {
+    maxShiftHours: 12,
+    minimumPayout: 10,
+  },
+  subscription: {
+    monthlyPrice: 99.99,
   },
 };
 
@@ -37,28 +51,96 @@ function mergeSection(defaults, incoming) {
 export function normaliseAppConfig(raw) {
   const data = raw || {};
   return {
-    currency: typeof data.currency === "string" && data.currency ? data.currency : DEFAULT_APP_CONFIG.currency,
+    currency: typeof data.currency === "string" && data.currency ? data.currency.toUpperCase() : DEFAULT_APP_CONFIG.currency,
     fares: mergeSection(DEFAULT_APP_CONFIG.fares, data.fares),
+    waiting: mergeSection(DEFAULT_APP_CONFIG.waiting, data.waiting),
     dispatch: mergeSection(DEFAULT_APP_CONFIG.dispatch, data.dispatch),
+    drivers: mergeSection(DEFAULT_APP_CONFIG.drivers, data.drivers),
+    subscription: mergeSection(DEFAULT_APP_CONFIG.subscription, data.subscription),
   };
 }
 
+/* ---------------- shared live copy ----------------
+   One listener for the whole app. Screens either use the hook (re-renders on
+   change) or the plain getters below (money(), currencySymbol()), which read
+   the latest copy without needing a hook. */
+let currentConfig = DEFAULT_APP_CONFIG;
+const subscribers = new Set();
+let stopListener = null;
+
+function startListener() {
+  if (stopListener) return;
+  try {
+    stopListener = onSnapshot(
+      doc(db, "config", "app"),
+      (snap) => {
+        currentConfig = normaliseAppConfig(snap.exists() ? snap.data() : null);
+        subscribers.forEach((fn) => fn(currentConfig));
+      },
+      () => {
+        // Read denied (e.g. not signed in yet) or offline: keep whatever we
+        // had, defaults at worst, and allow the next screen to try again.
+        stopListener = null;
+      }
+    );
+  } catch (error) {
+    stopListener = null;
+  }
+}
+
+// Call once at app start so prices show the right currency straight away.
+export function startAppConfigSync() {
+  startListener();
+}
+
+export function getAppConfig() {
+  return currentConfig;
+}
+
 export function useAppConfig() {
-  const [config, setConfig] = useState(DEFAULT_APP_CONFIG);
+  const [config, setConfig] = useState(currentConfig);
 
   useEffect(() => {
-    let unsubscribe = () => {};
-    try {
-      unsubscribe = onSnapshot(
-        doc(db, "config", "app"),
-        (snap) => setConfig(normaliseAppConfig(snap.exists() ? snap.data() : null)),
-        () => setConfig(DEFAULT_APP_CONFIG)
-      );
-    } catch (error) {
-      setConfig(DEFAULT_APP_CONFIG);
-    }
-    return () => unsubscribe();
+    startListener();
+    subscribers.add(setConfig);
+    setConfig(currentConfig);
+    return () => subscribers.delete(setConfig);
   }, []);
 
   return config;
+}
+
+/* ---------------- money ---------------- */
+const SYMBOLS = {
+  GBP: "£",
+  EUR: "€",
+  USD: "$",
+  CAD: "CA$",
+  AUD: "A$",
+  AED: "AED ",
+  PKR: "Rs ",
+  SAR: "SAR ",
+};
+
+// Symbol for a currency code. With no code, uses the live app currency.
+export function currencySymbol(code) {
+  const c = String(code || currentConfig.currency || "GBP").toUpperCase();
+  return SYMBOLS[c] || `${c} `;
+}
+
+// money(12.5) -> "£12.50". Pass a code to format a stored ride in its own currency.
+export function money(amount, code) {
+  const n = Number(amount);
+  return currencySymbol(code) + (Number.isFinite(n) ? n.toFixed(2) : "0.00");
+}
+
+/* ---------------- waiting charge ----------------
+   Same maths as the chargeOnRideCompletion Cloud Function, so the figure the
+   driver and passenger see is the one that gets charged. */
+export function waitingCharge(waitedMs, policy) {
+  const p = mergeSection(DEFAULT_APP_CONFIG.waiting, policy);
+  const minutes = Math.max(0, waitedMs) / 60000;
+  const chargeable = Math.max(0, Math.ceil(minutes - p.freeMinutes));
+  const charge = Math.min(chargeable * p.ratePerMinute, p.maxCharge);
+  return Math.round(charge * 100) / 100;
 }

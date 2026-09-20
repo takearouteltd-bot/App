@@ -24,6 +24,7 @@ import {
   getDocs,
   onSnapshot,
 } from "firebase/firestore";
+import { currencySymbol } from '../../../utils/appConfig';
 
 const PRIMARY = "#79B531";
 const SECONDARY = "#235594";
@@ -280,10 +281,10 @@ export default function DriverProfileScreen() {
           <View>
             <Text style={styles.earningsLabel}>Total Earnings</Text>
             <Text style={styles.earningsValue}>
-              £{totalEarned.toFixed(2)}
+              {currencySymbol()}{totalEarned.toFixed(2)}
             </Text>
             <Text style={styles.earningsSubtext}>
-              Available: £{availableBalance.toFixed(2)}
+              Available: {currencySymbol()}{availableBalance.toFixed(2)}
             </Text>
           </View>
           <View style={styles.earningsButton}>
@@ -328,6 +329,42 @@ export default function DriverProfileScreen() {
           </View>
           <Ionicons name="chevron-forward" size={20} color="#C5C5C7" />
         </TouchableOpacity>
+
+        {/* Help & safety */}
+        <Text style={styles.sectionTitle}>Help & Safety</Text>
+        {[
+          {
+            icon: "chatbubbles-outline",
+            title: "My Reports",
+            sub: "Issues, lost property & replies from support",
+            go: () => navigation.navigate("MyReports", { role: "driver" }),
+          },
+          {
+            icon: "shield-checkmark-outline",
+            title: "Safety",
+            sub: driver?.emergencyContact?.name
+              ? `Emergency contact: ${driver.emergencyContact.name}`
+              : "Add your next of kin",
+            go: () => navigation.navigate("EmergencyContact", { role: "driver" }),
+          },
+          {
+            icon: "folder-open-outline",
+            title: "My Documents",
+            sub: "Expiry dates & replacement uploads",
+            go: () => navigation.navigate("DriverDocuments"),
+          },
+        ].map((item) => (
+          <TouchableOpacity key={item.title} style={styles.card} activeOpacity={0.85} onPress={item.go}>
+            <View style={styles.cardIconWrap}>
+              <Ionicons name={item.icon} size={24} color={SECONDARY} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cardTitle}>{item.title}</Text>
+              <Text style={styles.cardSubText}>{item.sub}</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={20} color="#C5C5C7" />
+          </TouchableOpacity>
+        ))}
 
         {/* Compliance Section */}
         <Text style={styles.sectionTitle}>Compliance & Documents</Text>

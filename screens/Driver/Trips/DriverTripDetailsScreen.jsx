@@ -14,6 +14,7 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
+import { currencySymbol } from '../../../utils/appConfig';
 
 const PRIMARY = '#79B531';
 const SECONDARY = '#235594';
@@ -63,7 +64,7 @@ export default function DriverTripDetailsScreen() {
 
   // Fare is an object — extract the total
   const fareTotal = trip.fare?.total ?? 0;
-  const currency = trip.fare?.currency === 'GBP' ? '£' : trip.fare?.currency || '£';
+  const currency = currencySymbol(trip.fare?.currency);
 
   // Pickup & dropoff from nested location objects
   const pickup = trip.pickupLocation || {};

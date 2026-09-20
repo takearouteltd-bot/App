@@ -119,3 +119,17 @@ export function isPdfUpload(value) {
   if (!value) return false;
   return value.toLowerCase().includes(".pdf");
 }
+
+// Reads a local file into a Blob using XMLHttpRequest. On Android,
+// fetch(uri).blob() often returns a blob with an empty type or fails outright,
+// which Firebase Storage then rejects.
+export function uriToBlob(uri) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.onload = () => resolve(xhr.response);
+    xhr.onerror = () => reject(new Error("Could not read the selected file."));
+    xhr.responseType = "blob";
+    xhr.open("GET", uri, true);
+    xhr.send(null);
+  });
+}

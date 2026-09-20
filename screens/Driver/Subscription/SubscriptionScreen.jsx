@@ -13,13 +13,15 @@ import { auth, db } from "../../../config/firebase";
 import { doc, getDoc, updateDoc, Timestamp } from "firebase/firestore";
 import { useNavigation } from "@react-navigation/native";
 import { Ionicons } from "@expo/vector-icons";
+import { currencySymbol, money, useAppConfig } from '../../../utils/appConfig';
 
 const PRIMARY = "#79B531";
 const DARK_BLUE = "#235594";
-const MONTHLY_PRICE = 99.99;
-const MONTHLY_PRICE_STR = "£99.99";
-
 export default function SubscriptionScreen({ setOnboardingStatus }) {
+  // Price comes from the admin dashboard (Settings, Subscription).
+  const appConfig = useAppConfig();
+  const MONTHLY_PRICE = appConfig.subscription.monthlyPrice;
+  const MONTHLY_PRICE_STR = money(MONTHLY_PRICE);
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
   const [subscription, setSubscription] = useState(null);
@@ -133,10 +135,10 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
   };
 
   const formatCurrency = (amount) => {
-    if (amount === undefined || amount === null) return "£0.00";
+    if (amount === undefined || amount === null) return money(0);
     const n = typeof amount === "number" ? amount : parseFloat(amount);
-    if (isNaN(n)) return "£0.00";
-    return "£" + n.toFixed(2);
+    if (isNaN(n)) return money(0);
+    return money(n);
   };
 
   const formatPaymentMethod = (method) => {
@@ -163,7 +165,7 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
     const debtAmount = Number(subscription.debtAmount) || 0;
     const hasDebt = debtAmount > 0;
     const nextBillingDate = formatDate(subscription.nextBillingDate);
-    const monthlyAmount = formatCurrency(subscription.amount || MONTHLY_PRICE);
+    const monthlyAmount = formatCurrency(MONTHLY_PRICE);
     const paymentMethod = formatPaymentMethod(subscription.paymentMethod);
     const debtStr = formatCurrency(debtAmount);
 

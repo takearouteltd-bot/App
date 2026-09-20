@@ -7,6 +7,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { currencySymbol } from '../../../utils/appConfig';
 
 export default function WithdrawalSuccessScreen() {
   const navigation = useNavigation();
@@ -34,7 +35,7 @@ export default function WithdrawalSuccessScreen() {
         <Text style={styles.title}>Withdrawal Successful</Text>
 
         {/* Amount */}
-        <Text style={styles.amount}>£{amount.toFixed(2)}</Text>
+        <Text style={styles.amount}>{currencySymbol()}{amount.toFixed(2)}</Text>
 
         <Text style={styles.subText}>
           is on its way to your bank account and should arrive within 2 hours.
@@ -57,7 +58,7 @@ export default function WithdrawalSuccessScreen() {
           <View style={styles.rowBetween}>
             <Text style={styles.label}>Amount</Text>
             <Text style={[styles.value, styles.amountHighlight]}>
-              £{amount.toFixed(2)}
+              {currencySymbol()}{amount.toFixed(2)}
             </Text>
           </View>
 

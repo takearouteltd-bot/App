@@ -29,7 +29,19 @@ import {
 } from "firebase/firestore";
 import { db } from "../../../config/firebase";
 import { getAuth } from "firebase/auth";
-import { useAppConfig } from "../../../utils/appConfig";
+import { useAppConfig, currencySymbol } from '../../../utils/appConfig';
+import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocuments';
+import { clearJobAlerts } from '../../../utils/notifications';
+
+// "Online 2h 10m of 12h" while a shift limit applies.
+function shiftLabel(startedMs, maxHours) {
+  if (!startedMs) return null;
+  const mins = Math.max(0, Math.floor((Date.now() - startedMs) / 60000));
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  const online = h ? `${h}h ${m}m` : `${m}m`;
+  return maxHours > 0 ? `Online ${online} of ${maxHours}h` : `Online ${online}`;
+}
 
 const { width, height } = Dimensions.get('window');
 const PRIMARY = '#79B531';
@@ -46,7 +58,10 @@ export default function DriverHomeScreen() {
   const navigation = useNavigation();
 
   const [location, setLocation] = useState(null);
-  const { dispatch: dispatchConfig } = useAppConfig();
+  const { dispatch: dispatchConfig, drivers: driverConfig } = useAppConfig();
+  const maxShiftHours = driverConfig.maxShiftHours; // 0 means unlimited
+  const [shiftStartedAt, setShiftStartedAt] = useState(null);
+  const [onRide, setOnRide] = useState(false);
   const searchRadiusKm = dispatchConfig.searchRadiusKm;
   const [isOnline, setIsOnline] = useState(true);
   const [isApproved, setIsApproved] = useState(true);
@@ -62,6 +77,7 @@ export default function DriverHomeScreen() {
   const [walletBalance, setWalletBalance] = useState(0);
   const [tripsToday, setTripsToday] = useState(0);
   const [driverName, setDriverName] = useState('');
+  const [documentAlerts, setDocumentAlerts] = useState([]);
 
   const auth = getAuth();
   const driverId = auth.currentUser?.uid;
@@ -80,6 +96,14 @@ export default function DriverHomeScreen() {
             latitude: coords.latitude,
             longitude: coords.longitude,
           },
+          // Shown on the dashboard's Live drivers page. The phone reports
+          // speed in m/s, or a negative number when it doesn't know.
+          speedKph: typeof coords.speed === 'number' && coords.speed >= 0
+            ? Math.round(coords.speed * 3.6)
+            : null,
+          heading: typeof coords.heading === 'number' && coords.heading >= 0
+            ? Math.round(coords.heading)
+            : null,
           lastUpdated: serverTimestamp(),
         },
         { merge: true }
@@ -101,6 +125,15 @@ export default function DriverHomeScreen() {
         setDriverName(data.firstName || data.fullName || 'Driver');
         setIsOnline(data.status === 'online');
         setIsApproved(data.approved === true);
+        setOnRide(data.isOnRide === true);
+        // Expiry dates are set by admin on the dashboard.
+        setDocumentAlerts(expiryAlertsFor(data));
+        const started = data.shiftStartedAt?.toMillis?.() ?? null;
+        setShiftStartedAt(started);
+        // Online from before shift tracking existed: start the clock now.
+        if (data.status === 'online' && !data.shiftStartedAt) {
+          setDoc(driverRef, { shiftStartedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+        }
       }
     });
 
@@ -214,13 +247,58 @@ export default function DriverHomeScreen() {
 
     try {
       const driverRef = doc(db, "drivers", driverId);
-      await setDoc(driverRef, { status: newStatus }, { merge: true });
+      // shiftStartedAt drives the maximum shift length set on the dashboard.
+      // It is kept while the driver goes on and off trips, and cleared when
+      // they go offline themselves.
+      await setDoc(
+        driverRef,
+        newStatus === 'online'
+          ? { status: newStatus, shiftStartedAt: serverTimestamp() }
+          : { status: newStatus, shiftStartedAt: null },
+        { merge: true }
+      );
       setIsOnline(!isOnline);
     } catch (error) {
       console.log("Status update error:", error);
       Alert.alert("Error", "Failed to update status. Please try again.");
     }
   };
+
+  /* ================= MAXIMUM SHIFT LENGTH =================
+     Set on the dashboard (Settings, Drivers). When the limit is reached the
+     driver is taken offline for safety. A driver on a trip finishes it first. */
+  const shiftEndedRef = useRef(false);
+  useEffect(() => {
+    if (!driverId || !isOnline || !shiftStartedAt || !(maxShiftHours > 0)) return;
+    shiftEndedRef.current = false;
+
+    const check = async () => {
+      if (shiftEndedRef.current || onRide) return;
+      const limitMs = maxShiftHours * 60 * 60 * 1000;
+      if (Date.now() - shiftStartedAt < limitMs) return;
+
+      shiftEndedRef.current = true;
+      try {
+        await setDoc(
+          doc(db, "drivers", driverId),
+          { status: 'offline', shiftStartedAt: null, lastShiftEndedAt: serverTimestamp() },
+          { merge: true }
+        );
+        setIsOnline(false);
+        Alert.alert(
+          "Shift limit reached",
+          `You have been online for ${maxShiftHours} hours, so you have been taken offline for your safety. Please take a break before driving again.`
+        );
+      } catch (error) {
+        shiftEndedRef.current = false;
+        console.log("Shift limit update error:", error);
+      }
+    };
+
+    check();
+    const id = setInterval(check, 60 * 1000);
+    return () => clearInterval(id);
+  }, [driverId, isOnline, shiftStartedAt, maxShiftHours, onRide]);
 
   /* ================= RIDE LISTENER ================= */
   useEffect(() => {
@@ -239,6 +317,8 @@ export default function DriverHomeScreen() {
         if (!data.pickupLocation) return;
         // Jobs this driver already cancelled are not offered to them again.
         if (Array.isArray(data.declinedBy) && data.declinedBy.includes(driverId)) return;
+        // Passengers who asked not to be matched with this driver.
+        if (Array.isArray(data.blockedDriverIds) && data.blockedDriverIds.includes(driverId)) return;
 
         const distance = getDistanceFromLatLonInKm(
           location.latitude,
@@ -311,7 +391,8 @@ export default function DriverHomeScreen() {
   useEffect(() => {
     if (!rideRequests.length) return;
 
-    setTimer(15);
+    // Job alert length from the dashboard (Settings, Dispatch).
+    setTimer(Math.max(5, Math.round(dispatchConfig.requestTimeoutSeconds || 15)));
 
     const interval = setInterval(() => {
       setTimer((prev) => (prev > 1 ? prev - 1 : 1));
@@ -329,6 +410,8 @@ export default function DriverHomeScreen() {
     try {
       const rideRef = doc(db, "rides", ride.id);
       const driverRef = doc(db, "drivers", driverId);
+
+      clearJobAlerts();
 
       await runTransaction(db, async (transaction) => {
         const rideDoc = await transaction.get(rideRef);
@@ -535,7 +618,9 @@ useEffect(() => {
               {isOnline ? 'You are online' : 'You are offline'}
             </Text>
             <Text style={styles.subText}>
-              {isOnline ? 'Finding trips near you' : 'Go online to find trips'}
+              {isOnline
+                ? shiftLabel(shiftStartedAt, maxShiftHours) || 'Finding trips near you'
+                : 'Go online to find trips'}
             </Text>
           </View>
         </View>
@@ -554,6 +639,35 @@ useEffect(() => {
 
       {/* EARNINGS CARD - Professional Design */}
       <View style={styles.earningsCard}>
+        {/* Document expiry: expired, or due within 30 days */}
+        {documentAlerts.length > 0 && (
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => navigation.navigate('DriverDocuments')}
+            style={[
+              styles.docBanner,
+              documentAlerts[0].status === 'expired' ? styles.docBannerExpired : styles.docBannerExpiring,
+            ]}
+          >
+            <Ionicons
+              name={documentAlerts[0].status === 'expired' ? 'alert-circle' : 'time-outline'}
+              size={22}
+              color={documentAlerts[0].status === 'expired' ? '#B91C1C' : '#B45309'}
+            />
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={styles.docBannerTitle}>
+                {documentAlerts[0].label}: {describeExpiry(documentAlerts[0]).toLowerCase()}
+              </Text>
+              <Text style={styles.docBannerSub}>
+                {documentAlerts.length > 1
+                  ? `and ${documentAlerts.length - 1} more. Tap to upload replacements.`
+                  : 'Tap to upload a replacement.'}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#6B7280" />
+          </TouchableOpacity>
+        )}
+
         <View style={styles.earningsTopRow}>
           <View style={styles.earningsHeader}>
             <View style={styles.earningsIconBox}>
@@ -561,7 +675,7 @@ useEffect(() => {
             </View>
             <View>
               <Text style={styles.cardTitle}>Earnings Today</Text>
-              <Text style={styles.amount}>£{earningsToday.toFixed(2)}</Text>
+              <Text style={styles.amount}>{currencySymbol()}{earningsToday.toFixed(2)}</Text>
             </View>
           </View>
 
@@ -572,7 +686,7 @@ useEffect(() => {
             <Ionicons name="wallet-outline" size={16} color={SECONDARY} />
             <View style={{ marginLeft: 8 }}>
               <Text style={styles.walletMiniLabel}>Wallet</Text>
-              <Text style={styles.walletMiniValue}>£{walletBalance.toFixed(2)}</Text>
+              <Text style={styles.walletMiniValue}>{currencySymbol()}{walletBalance.toFixed(2)}</Text>
             </View>
             <Ionicons name="chevron-forward" size={14} color="#C5C5C7" style={{ marginLeft: 6 }} />
           </TouchableOpacity>
@@ -587,7 +701,7 @@ useEffect(() => {
           </View>
           <View style={styles.miniStatDivider} />
           <View style={styles.miniStat}>
-            <Text style={styles.miniStatValue}>£{avgPerTrip.toFixed(2)}</Text>
+            <Text style={styles.miniStatValue}>{currencySymbol()}{avgPerTrip.toFixed(2)}</Text>
             <Text style={styles.miniStatLabel}>Avg / Trip</Text>
           </View>
           <View style={styles.miniStatDivider} />
@@ -640,7 +754,7 @@ useEffect(() => {
           <View style={styles.fareSection}>
             <Text style={styles.fareLabel}>Trip Fare</Text>
             <Text style={styles.fare}>
-              £{currentRide.fareEstimate.toFixed(2)}
+              {currencySymbol()}{currentRide.fareEstimate.toFixed(2)}
             </Text>
           </View>
 
@@ -1117,4 +1231,16 @@ const styles = StyleSheet.create({
     color: '#888',
     textAlign: 'center',
   },
+  docBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+  },
+  docBannerExpired: { backgroundColor: '#FEE2E2', borderColor: '#FCA5A5' },
+  docBannerExpiring: { backgroundColor: '#FEF3C7', borderColor: '#FCD34D' },
+  docBannerTitle: { fontSize: 14, fontWeight: '700', color: '#1F2937' },
+  docBannerSub: { fontSize: 12, color: '#4B5563', marginTop: 2 },
 });

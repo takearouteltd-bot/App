@@ -14,10 +14,11 @@ import MapView, { Marker } from 'react-native-maps';
 import MapViewDirections from 'react-native-maps-directions';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
-import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { getAuth } from 'firebase/auth';
 import { confirmPayment } from '@stripe/stripe-react-native';
+import { currencySymbol } from '../../utils/appConfig';
 
 const { width } = Dimensions.get('window');
 const PRIMARY = '#79B431';
@@ -57,6 +58,8 @@ export default function RideRequestScreen() {
 
   /* ================= REAL-TIME LISTENER ================= */
 const hasNavigatedToTracking = useRef(false);
+const hasLeftScreen = useRef(false);
+const cancelledByMe = useRef(false);
 
 useEffect(() => {
   if (!rideId) return;
@@ -99,8 +102,13 @@ useEffect(() => {
       handlePaymentConfirmation(data);
     }
 
-    if (data.status === "cancelled") {
-      Alert.alert("Ride Cancelled", "This ride has been cancelled.");
+    // Leave once. Before, cancelling here called goBack twice (once from the
+    // button and once from this listener), popping an extra screen.
+    if ((data.status === "cancelled" || data.status === "canceled") && !hasLeftScreen.current) {
+      hasLeftScreen.current = true;
+      if (!cancelledByMe.current) {
+        Alert.alert("Ride Cancelled", "This ride has been cancelled.");
+      }
       navigation.goBack();
     }
   });
@@ -183,11 +191,18 @@ useEffect(() => {
               const currentUser = auth.currentUser;
               if (!currentUser) return;
 
-              await updateDoc(doc(db, 'rides', rideId), { status: 'cancelled' });
+              cancelledByMe.current = true;
+              await updateDoc(doc(db, 'rides', rideId), {
+                status: 'cancelled',
+                cancelledBy: 'rider',
+                cancelledAt: serverTimestamp(),
+              });
               await updateDoc(doc(db, 'riders', currentUser.uid), { currentRideId: null });
-              navigation.goBack();
+              // The ride listener above leaves the screen.
             } catch (error) {
+              cancelledByMe.current = false;
               console.error('Failed to cancel ride:', error);
+              Alert.alert('Error', 'Could not cancel the ride. Please try again.');
               setCancelling(false);
             }
           },
@@ -297,7 +312,7 @@ useEffect(() => {
             <View style={styles.searchingDetails}>
               <View style={styles.detailChip}>
                 <Ionicons name="card-outline" size={14} color={SECONDARY} />
-                <Text style={styles.chipText}>£{fareEstimate}</Text>
+                <Text style={styles.chipText}>{currencySymbol()}{fareEstimate}</Text>
               </View>
               <View style={styles.detailChip}>
                 <Ionicons name="navigate-outline" size={14} color={SECONDARY} />
@@ -365,7 +380,7 @@ useEffect(() => {
                   <Text style={styles.fareLabel}>Trip Fare</Text>
                   <Text style={styles.fareSub}>Includes VAT & fees</Text>
                 </View>
-                <Text style={styles.fareValue}>£{fareEstimate}</Text>
+                <Text style={styles.fareValue}>{currencySymbol()}{fareEstimate}</Text>
               </View>
 
               <View style={styles.fareDivider} />

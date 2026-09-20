@@ -18,6 +18,7 @@ import * as ImagePicker from "expo-image-picker";
 import { auth, db, storage } from "../../config/firebase";
 import { doc, updateDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { uriToBlob } from "../../helpers/uploadPicker";
 
 const TOTAL_STEPS = 3;
 const PRIMARY = "#79B531";
@@ -54,11 +55,11 @@ export default function RiderProfileScreen({ navigation }) {
   // ☁️ Upload image
   const uploadImage = async (uri, uid) => {
     try {
-      const response = await fetch(uri);
-      const blob = await response.blob();
+      const blob = await uriToBlob(uri);
 
       const imageRef = ref(storage, `riders/${uid}/profile.jpg`);
-      await uploadBytes(imageRef, blob);
+      await uploadBytes(imageRef, blob, { contentType: "image/jpeg" });
+      blob.close?.();
 
       return await getDownloadURL(imageRef);
     } catch (error) {

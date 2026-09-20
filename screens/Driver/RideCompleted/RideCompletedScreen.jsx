@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { doc, onSnapshot, updateDoc, increment, setDoc } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
+import { currencySymbol } from '../../../utils/appConfig';
 
 export default function RideCompletedScreen() {
   const route = useRoute();
@@ -94,6 +95,10 @@ export default function RideCompletedScreen() {
   const routeData = ride.route || {};
 
   const baseFare = fare.baseFare || 0;
+  // finalTotal (fare plus any waiting charge) is written by the payment
+  // function a moment after completion; the estimate shows until then.
+  const finalFare = Number(fare.finalTotal ?? ride.fareEstimate ?? 0);
+  const waitingFee = Number(fare.waitingCharge || 0);
   const distancePremium = fare.distanceFare || 0;
 
   const distanceKm = routeData.distanceKm || 0;
@@ -136,7 +141,7 @@ export default function RideCompletedScreen() {
         {/* Fare Card */}
         <View style={styles.card}>
           <Text style={styles.fareAmount}>
-            £{ride.fareEstimate?.toFixed(2) || '0.00'}
+            {currencySymbol()}{finalFare.toFixed(2)}
           </Text>
 
           <View style={styles.badge}>
@@ -147,13 +152,20 @@ export default function RideCompletedScreen() {
 
           <View style={styles.fareRow}>
             <Text style={styles.fareLabel}>Base Fare</Text>
-            <Text style={styles.fareValue}>£{baseFare.toFixed(2)}</Text>
+            <Text style={styles.fareValue}>{currencySymbol()}{baseFare.toFixed(2)}</Text>
           </View>
 
           <View style={styles.fareRow}>
             <Text style={styles.fareLabel}>Distance Premium</Text>
-            <Text style={styles.fareValue}>£{distancePremium.toFixed(2)}</Text>
+            <Text style={styles.fareValue}>{currencySymbol()}{distancePremium.toFixed(2)}</Text>
           </View>
+
+          {waitingFee > 0 && (
+            <View style={styles.fareRow}>
+              <Text style={styles.fareLabel}>Waiting charge</Text>
+              <Text style={styles.fareValue}>{currencySymbol()}{waitingFee.toFixed(2)}</Text>
+            </View>
+          )}
 
           <View style={styles.fareRow}>
             <Text style={styles.fareLabel}>Distance</Text>
@@ -177,7 +189,7 @@ export default function RideCompletedScreen() {
             style={{ marginRight: 6 }}
           />
           <Text style={styles.walletText}>
-            £{ride.fareEstimate?.toFixed(2) || '0.00'} added to wallet
+            {currencySymbol()}{finalFare.toFixed(2)} added to wallet
           </Text>
         </View>
 

@@ -12,6 +12,7 @@ import MapView, { Marker, Polyline } from 'react-native-maps';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import polyline from '@mapbox/polyline'; // decode Google polyline
+import { currencySymbol } from '../../../utils/appConfig';
 
 export default function IncomingRideScreen() {
   const route = useRoute();
@@ -85,6 +86,12 @@ export default function IncomingRideScreen() {
         style={styles.map}
         customMapStyle={mapStyle}
         showsCompass={false}
+        initialRegion={{
+          latitude: ride.pickup.latitude,
+          longitude: ride.pickup.longitude,
+          latitudeDelta: 0.05,
+          longitudeDelta: 0.05,
+        }}
       >
         {/* Pickup */}
         <Marker coordinate={ride.pickup} pinColor="#7FD957" />
@@ -130,7 +137,7 @@ export default function IncomingRideScreen() {
         </View>
 
         <View style={styles.fareRow}>
-          <Text style={styles.fareText}>£{ride.fare}</Text>
+          <Text style={styles.fareText}>{currencySymbol()}{ride.fare}</Text>
           <Text style={styles.distanceText}>{ride.distance} km</Text>
         </View>
 

@@ -11,11 +11,12 @@ import {
 import { auth, db } from "../../config/firebase";
 import { doc, getDoc, updateDoc, Timestamp } from "firebase/firestore";
 import { useNavigation } from "@react-navigation/native";
+import { currencySymbol, useAppConfig } from '../../utils/appConfig';
 
 const PRIMARY = "#79B531";
-const MONTHLY_PRICE = 99.99;
-
 export default function SubscriptionScreen({ setOnboardingStatus }) {
+  // Price comes from the admin dashboard (Settings, Subscription).
+  const MONTHLY_PRICE = useAppConfig().subscription.monthlyPrice;
   const [loading, setLoading] = useState(false);
   const navigation = useNavigation();
   const driverId = auth.currentUser?.uid;
@@ -90,7 +91,7 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
 
         Alert.alert(
           "Activated",
-          `You're active! £${MONTHLY_PRICE} will be deducted from your earnings as soon as your wallet reaches that amount.`
+          `You're active! ${currencySymbol()}MONTHLY_PRICE} will be deducted from your earnings as soon as your wallet reaches that amount.`
         );
       }
 
@@ -108,12 +109,12 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
     <SafeAreaView style={styles.container}>
       <Text style={styles.title}>Activate Your Account</Text>
       <Text style={styles.subtitle}>
-        Monthly subscription of £{MONTHLY_PRICE} — deducted from your wallet
+        Monthly subscription of {currencySymbol()}{MONTHLY_PRICE} — deducted from your wallet
       </Text>
 
       <View style={styles.card}>
         <Text style={styles.planTitle}>Monthly Driver Plan</Text>
-        <Text style={styles.planPrice}>£{MONTHLY_PRICE}<Text style={styles.perMonth}>/month</Text></Text>
+        <Text style={styles.planPrice}>{currencySymbol()}{MONTHLY_PRICE}<Text style={styles.perMonth}>/month</Text></Text>
         <View style={styles.perkRow}>
           <Text style={styles.bullet}>•</Text>
           <Text style={styles.perkText}>Zero commission on all rides</Text>
@@ -130,7 +131,7 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
 
       <View style={styles.infoBox}>
         <Text style={styles.infoText}>
-          If your wallet has £{MONTHLY_PRICE} or more, we'll deduct it now. 
+          If your wallet has {currencySymbol()}{MONTHLY_PRICE} or more, we'll deduct it now. 
           Otherwise, it will be deducted automatically once you earn enough.
         </Text>
       </View>

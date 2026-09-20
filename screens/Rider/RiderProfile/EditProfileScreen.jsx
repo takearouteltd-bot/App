@@ -19,6 +19,7 @@ import {
   doc,
   getDoc,
   updateDoc,
+  setDoc,
   serverTimestamp,
 } from "firebase/firestore";
 import {
@@ -32,6 +33,7 @@ import {
   updatePhoneNumber,
 } from "firebase/auth";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { uriToBlob } from "../../../helpers/uploadPicker";
 import { db, auth, storage } from "../../../config/firebase";
 
 const PRIMARY = "#79B531";
@@ -138,20 +140,24 @@ export default function EditProfileScreen() {
     setUploadingImage(true);
 
     try {
-      const response = await fetch(uri);
-      const blob = await response.blob();
+      // XHR blob plus an explicit content type. Storage rules that check
+      // for image/* rejected the old upload, whose blob type was empty on Android.
+      const blob = await uriToBlob(uri);
 
       const imageRef = ref(storage, `riders/${user.uid}/profile.jpg`);
-      await uploadBytes(imageRef, blob);
+      await uploadBytes(imageRef, blob, { contentType: "image/jpeg" });
+      blob.close?.();
       const downloadURL = await getDownloadURL(imageRef);
 
       await updateProfile(user, { photoURL: downloadURL });
 
+      // merge, so it also works if the rider record doesn't exist yet
       const riderRef = doc(db, "riders", user.uid);
-      await updateDoc(riderRef, {
-        profileImage: downloadURL,
-        updatedAt: serverTimestamp(),
-      });
+      await setDoc(
+        riderRef,
+        { profileImage: downloadURL, updatedAt: serverTimestamp() },
+        { merge: true }
+      );
 
       setProfileImage(downloadURL);
       Alert.alert("Success", "Profile photo updated");

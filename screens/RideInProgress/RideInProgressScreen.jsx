@@ -16,6 +16,8 @@ import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
+import SafetyButton from '../../components/SafetyButton';
+import { confirmMaskedCall } from '../../utils/calling';
 
 const PRIMARY = '#79B431';
 const SECONDARY = '#235594';
@@ -108,17 +110,27 @@ export default function RideInProgressScreen() {
   }, []);
 
   /* ================= MAP RECENTER ================= */
+  // Same fix as the tracking screen: no more fitting only once the driver's
+  // location exists, which left the map at 0,0 off West Africa.
   const recenterMap = () => {
-    if (!ride || !driverLocation) return;
-
-    mapRef.current?.fitToCoordinates(
-      [ride.pickupLocation, ride.dropoffLocation, driverLocation],
-      {
-        edgePadding: { top: 120, right: 60, bottom: 420, left: 60 },
-        animated: true,
-      }
+    if (!ride) return;
+    const coords = [ride.pickupLocation, ride.dropoffLocation, driverLocation].filter(
+      (c) => c && typeof c.latitude === 'number' && typeof c.longitude === 'number'
     );
+    if (coords.length === 0) return;
+
+    mapRef.current?.fitToCoordinates(coords, {
+      edgePadding: { top: 120, right: 60, bottom: 420, left: 60 },
+      animated: true,
+    });
   };
+
+  const hasFitDriver = useRef(false);
+  useEffect(() => {
+    if (!ride || !driverLocation || hasFitDriver.current) return;
+    hasFitDriver.current = true;
+    recenterMap();
+  }, [ride, driverLocation]);
 
   /* ================= ACTIONS ================= */
   const handleChat = () => {
@@ -131,10 +143,8 @@ export default function RideInProgressScreen() {
     });
   };
 
-  const handleCall = () => {
-    if (!driverData?.phoneNumber) return;
-    Alert.alert('Call', driverData.phoneNumber);
-  };
+  // Masked call through Twilio. Neither side sees a real number.
+  const handleCall = () => confirmMaskedCall(rideId, 'your driver');
 
   /* ================= LOADING ================= */
   if (!ride) {
@@ -153,7 +163,21 @@ export default function RideInProgressScreen() {
   return (
     <SafeAreaView style={styles.container}>
       {/* MAP */}
-      <MapView ref={mapRef} style={styles.map} onMapReady={recenterMap}>
+      <MapView
+        ref={mapRef}
+        style={styles.map}
+        onMapReady={recenterMap}
+        initialRegion={
+          (dropoffLocation || pickupLocation)
+            ? {
+                latitude: (dropoffLocation || pickupLocation).latitude,
+                longitude: (dropoffLocation || pickupLocation).longitude,
+                latitudeDelta: 0.05,
+                longitudeDelta: 0.05,
+              }
+            : undefined
+        }
+      >
         {pickupLocation && (
           <Marker coordinate={pickupLocation}>
             <View style={styles.originMarker}>
@@ -204,9 +228,12 @@ export default function RideInProgressScreen() {
           <Text style={styles.statusText}>Ride in progress</Text>
         </View>
 
-        <TouchableOpacity style={styles.iconButton} onPress={recenterMap}>
-          <Ionicons name="locate" size={22} color={DARK} />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <SafetyButton role="rider" rideId={rideId} />
+          <TouchableOpacity style={styles.iconButton} onPress={recenterMap}>
+            <Ionicons name="locate" size={22} color={DARK} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* ================= BOTTOM SHEET ================= */}

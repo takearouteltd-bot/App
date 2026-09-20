@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Linking,
 } from 'react-native';
 import { Ionicons, MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -27,7 +28,7 @@ const SECONDARY = '#235594';
 const DANGER = '#DC2626';
 const WARNING = '#F59E0B';
 
-const CATEGORIES = [
+const DRIVER_CATEGORIES = [
   {
     id: 'rider_behavior',
     label: 'Rider Issue',
@@ -87,10 +88,43 @@ const CATEGORIES = [
   },
 ];
 
+// Passengers report about their driver, not about a rider.
+const DRIVER_ISSUE = {
+  id: 'driver_behavior',
+  label: 'Driver Issue',
+  icon: 'person-outline',
+  iconSet: 'Ionicons',
+  color: SECONDARY,
+  subCategories: [
+    { id: 'rude_behavior', label: 'Rude Behaviour', severity: 'medium' },
+    { id: 'unsafe_driving', label: 'Unsafe Driving', severity: 'high' },
+    { id: 'wrong_route', label: 'Took a Long Route', severity: 'low' },
+    { id: 'driver_no_show', label: 'Driver Did Not Arrive', severity: 'low' },
+    { id: 'vehicle_mismatch', label: 'Car or Driver Did Not Match', severity: 'high' },
+    { id: 'dont_match_again', label: "Don't Match Me With This Driver", severity: 'low' },
+  ],
+};
+
+// Lost & Found sits inside support tickets so replies come back to My Reports.
+const LOST_FOUND = {
+  id: 'lost_found',
+  label: 'Lost & Found',
+  icon: 'briefcase-outline',
+  iconSet: 'Ionicons',
+  color: '#8B5CF6',
+  subCategories: [
+    { id: 'lost_item', label: 'I Left Something Behind', severity: 'medium' },
+    { id: 'found_item', label: 'I Found an Item', severity: 'medium' },
+  ],
+};
+
 export default function ReportIssueScreen() {
   const navigation = useNavigation();
   const route = useRoute();
   const { trip, reporterType = 'driver' } = route.params || {};
+  const CATEGORIES = reporterType === 'rider'
+    ? [DRIVER_ISSUE, ...DRIVER_CATEGORIES.slice(1), LOST_FOUND]
+    : [...DRIVER_CATEGORIES, LOST_FOUND];
 
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [selectedSubCategory, setSelectedSubCategory] = useState(null);
@@ -215,11 +249,25 @@ export default function ReportIssueScreen() {
               </Text>
             </View>
           )}
+          {isEmergency && (
+            <TouchableOpacity
+              style={[styles.doneButton, { backgroundColor: DANGER, marginBottom: 12 }]}
+              onPress={() => Linking.openURL('tel:999')}
+            >
+              <Text style={styles.doneButtonText}>Call 999 now</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             style={styles.doneButton}
             onPress={() => navigation.goBack()}
           >
             <Text style={styles.doneButtonText}>Done</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{ marginTop: 14, padding: 8 }}
+            onPress={() => navigation.navigate('MyReports', { role: reporterType })}
+          >
+            <Text style={{ color: SECONDARY, fontWeight: '700', fontSize: 15 }}>Track it in My reports</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>

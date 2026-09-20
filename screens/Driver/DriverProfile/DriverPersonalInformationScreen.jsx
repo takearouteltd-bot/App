@@ -1,266 +1,214 @@
-import React, { useState } from "react";
+// Driver personal details. Drivers cannot edit these directly: each change is
+// sent to TakeARoute as a request and applied once an admin approves it.
+// (This screen previously showed placeholder data and saved nothing.)
+import React, { useEffect, useState } from 'react';
 import {
+  SafeAreaView,
+  ScrollView,
   View,
   Text,
-  StyleSheet,
-  TouchableOpacity,
-  SafeAreaView,
   Image,
-  ScrollView,
-  TextInput,
+  Alert,
   KeyboardAvoidingView,
   Platform,
-} from "react-native";
-import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+  StyleSheet,
+} from 'react-native';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { auth, db } from '../../../config/firebase';
+import { submitChangeRequest, useChangeRequests } from '../../../utils/changeRequests';
+import {
+  COLORS, TYPE, ScreenHeader, Section, Card, ListRow, StatusPill, Button, Field, Loading, formatWhen,
+} from '../../../components/ui/kit';
 
-const PRIMARY = "#79B531";
-const SECONDARY = "#235594";
+const DETAILS = [
+  { field: 'fullName', label: 'Full name', icon: 'person-outline', keyboard: 'default' },
+  { field: 'phoneNumber', label: 'Phone number', icon: 'call-outline', keyboard: 'phone-pad' },
+  { field: 'email', label: 'Email address', icon: 'mail-outline', keyboard: 'email-address' },
+  { field: 'address', label: 'Home address', icon: 'home-outline', keyboard: 'default' },
+];
 
-export default function PersonalInformationScreen({ navigation }) {
-  const isOnline = true;
+function valueOf(driver, field) {
+  if (!driver) return '';
+  if (field === 'fullName') {
+    return driver.fullName || [driver.firstName, driver.lastName].filter(Boolean).join(' ');
+  }
+  if (field === 'email') return driver.email || auth.currentUser?.email || '';
+  if (field === 'phoneNumber') return driver.phoneNumber || driver.phone || auth.currentUser?.phoneNumber || '';
+  return driver[field] || '';
+}
 
-  const [fullName, setFullName] = useState("Hassan Jamil");
-  const [email, setEmail] = useState("hassan@email.com");
-  const [phone, setPhone] = useState("+44 7123 456789");
-  const [address, setAddress] = useState("221B Baker Street, London");
+export default function DriverPersonalInformationScreen({ navigation }) {
+  const driverId = auth.currentUser?.uid;
+  const [driver, setDriver] = useState(null);
+  const [editing, setEditing] = useState(null); // field being changed
+  const [newValue, setNewValue] = useState('');
+  const [note, setNote] = useState('');
+  const [sending, setSending] = useState(false);
+  const { items, pendingFor } = useChangeRequests(driverId);
+
+  useEffect(() => {
+    if (!driverId) return undefined;
+    return onSnapshot(doc(db, 'drivers', driverId), (snap) => setDriver(snap.exists() ? snap.data() : {}));
+  }, [driverId]);
+
+  const startEdit = (field) => {
+    setEditing(field);
+    setNewValue('');
+    setNote('');
+  };
+
+  const send = async (item) => {
+    const value = newValue.trim();
+    if (!value) {
+      Alert.alert(item.label, `Enter the new ${item.label.toLowerCase()}.`);
+      return;
+    }
+    if (value === valueOf(driver, item.field)) {
+      Alert.alert(item.label, 'That is the same as the current value.');
+      return;
+    }
+    setSending(true);
+    try {
+      await submitChangeRequest(driverId, valueOf(driver, 'fullName'), {
+        kind: 'detail',
+        field: item.field,
+        fieldLabel: item.label,
+        currentValue: valueOf(driver, item.field),
+        requestedValue: value,
+        note,
+      });
+      setEditing(null);
+      Alert.alert('Request sent', 'We will review the change and let you know. Your current details stay in place until then.');
+    } catch (error) {
+      console.log('Change request error:', error);
+      Alert.alert('Request not sent', 'Check your connection and try again.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  if (!driver) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <Loading />
+      </SafeAreaView>
+    );
+  }
+
+  const recent = items.filter((r) => r.kind === 'detail').slice(0, 5);
 
   return (
-    <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-      >
-        <View style={{ flex: 1 }}>
-          <ScrollView
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingBottom: 120 }}
-          >
-            {/* Header */}
-            <View style={styles.header}>
-              <TouchableOpacity onPress={() => navigation?.goBack()}>
-                <Ionicons name="arrow-back" left={20} size={24} color={SECONDARY} />
-              </TouchableOpacity>
+    <SafeAreaView style={styles.safe}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          <ScreenHeader
+            title="Personal details"
+            subtitle="Changes are checked by TakeARoute before they go live."
+            onBack={() => navigation.goBack()}
+          />
 
-              <Text style={styles.headerTitle}>Personal Information</Text>
-
-              <View style={{ width: 24 }} />
+          <View style={styles.identity}>
+            {driver.selfieUrl ? (
+              <Image source={{ uri: driver.selfieUrl }} style={styles.avatar} />
+            ) : (
+              <View style={[styles.avatar, styles.avatarEmpty]}>
+                <Text style={styles.initials}>{(valueOf(driver, 'fullName') || 'D').charAt(0).toUpperCase()}</Text>
+              </View>
+            )}
+            <View style={{ flex: 1 }}>
+              <Text style={TYPE.heading}>{valueOf(driver, 'fullName') || 'Driver'}</Text>
+              <Text style={TYPE.small}>
+                {driver.approved ? 'Approved driver' : 'Application under review'}
+              </Text>
             </View>
+          </View>
 
-            {/* Profile Section */}
-            <View style={styles.profileSection}>
-              <Image
-                source={{ uri: "https://i.pravatar.cc/150?img=3" }}
-                style={styles.avatar}
-              />
+          <Section title="Your details">
+            <Card style={{ paddingVertical: 0 }}>
+              {DETAILS.map((item, i) => {
+                const pending = pendingFor(item.field);
+                const isEditing = editing === item.field;
+                return (
+                  <View key={item.field}>
+                    <ListRow
+                      icon={item.icon}
+                      title={item.label}
+                      detail={valueOf(driver, item.field) || 'Not set'}
+                      last={i === DETAILS.length - 1 && !isEditing}
+                      onPress={pending || isEditing ? undefined : () => startEdit(item.field)}
+                      right={pending ? <StatusPill status="pending" label="Pending" /> : isEditing ? null : undefined}
+                    />
+                    {isEditing ? (
+                      <View style={styles.editBox}>
+                        <Field
+                          label={`New ${item.label.toLowerCase()}`}
+                          value={newValue}
+                          onChangeText={setNewValue}
+                          keyboardType={item.keyboard}
+                          autoCapitalize={item.field === 'email' ? 'none' : 'words'}
+                          autoFocus
+                        />
+                        <Field
+                          label="Reason (optional)"
+                          value={note}
+                          onChangeText={setNote}
+                          placeholder="For example, I changed my number"
+                        />
+                        <View style={{ flexDirection: 'row', gap: 10 }}>
+                          <Button title="Cancel" variant="secondary" onPress={() => setEditing(null)} style={{ flex: 1 }} />
+                          <Button title="Send request" onPress={() => send(item)} loading={sending} style={{ flex: 1.4 }} />
+                        </View>
+                      </View>
+                    ) : null}
+                  </View>
+                );
+              })}
+            </Card>
+          </Section>
 
-              <Text style={styles.name}>Hassan Jamil</Text>
-
-              <View style={styles.badgeRow}>
-                <View
-                  style={[
-                    styles.statusBadge,
-                    { backgroundColor: isOnline ? PRIMARY : "#ccc" },
-                  ]}
-                >
-                  <Text style={styles.badgeText}>
-                    {isOnline ? "Online" : "Offline"}
-                  </Text>
-                </View>
-
-                <View style={styles.premiumBadge}>
-                  <MaterialCommunityIcons
-                    name="crown"
-                    size={14}
-                    color="#fff"
-                    style={{ marginRight: 4 }}
+          {recent.length ? (
+            <Section title="Recent requests">
+              <Card style={{ paddingVertical: 0 }}>
+                {recent.map((r, i) => (
+                  <ListRow
+                    key={r.id}
+                    title={`${r.fieldLabel}: ${r.requestedValue}`}
+                    detail={
+                      r.status === 'rejected' && r.adminNote
+                        ? `Not approved: ${r.adminNote}`
+                        : formatWhen(r.createdAt)
+                    }
+                    right={<StatusPill status={r.status} />}
+                    last={i === recent.length - 1}
                   />
-                  <Text style={styles.badgeText}>TakeARoute Premium</Text>
-                </View>
-              </View>
-            </View>
+                ))}
+              </Card>
+            </Section>
+          ) : null}
 
-            {/* Form Section */}
-            <View style={styles.formContainer}>
-              
-              {/* Full Name */}
-              <Text style={styles.label}>Full Name</Text>
-              <View style={styles.inputWrapper}>
-                <Ionicons name="person-outline" size={20} color={SECONDARY} />
-                <TextInput
-                  value={fullName}
-                  onChangeText={setFullName}
-                  placeholder="Enter full name"
-                  style={styles.input}
-                />
-              </View>
-
-              {/* Email */}
-              <Text style={styles.label}>Email Address</Text>
-              <View style={styles.inputWrapper}>
-                <Ionicons name="mail-outline" size={20} color={SECONDARY} />
-                <TextInput
-                  value={email}
-                  onChangeText={setEmail}
-                  placeholder="Enter email"
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  style={styles.input}
-                />
-              </View>
-
-              {/* Phone */}
-              <Text style={styles.label}>Phone Number</Text>
-              <View style={styles.inputWrapper}>
-                <Ionicons name="call-outline" size={20} color={SECONDARY} />
-                <TextInput
-                  value={phone}
-                  onChangeText={setPhone}
-                  placeholder="Enter phone number"
-                  keyboardType="phone-pad"
-                  style={styles.input}
-                />
-              </View>
-
-              {/* Address */}
-              <Text style={styles.label}>Home Address</Text>
-              <View style={styles.inputWrapper}>
-                <Ionicons name="location-outline" size={20} color={SECONDARY} />
-                <TextInput
-                  value={address}
-                  onChangeText={setAddress}
-                  placeholder="Enter home address"
-                  style={styles.input}
-                />
-              </View>
-            </View>
-            <TouchableOpacity style={styles.saveButton}>
-              <Text style={styles.saveButtonText}>Save Changes</Text>
-            </TouchableOpacity>
-          </ScrollView>
-
-          {/* Fixed Bottom Button */}
-            
-   
-        </View>
+          <Section title="Documents">
+            <Card style={{ paddingVertical: 0 }}>
+              <ListRow
+                icon="folder-open-outline"
+                title="My documents"
+                detail="Check expiry dates and upload replacements"
+                onPress={() => navigation.navigate('DriverDocuments')}
+                last
+              />
+            </Card>
+          </Section>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#fff",
-    paddingHorizontal: 20,
-  },
-
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginTop: 10,
-  },
-
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: SECONDARY,
-  },
-
-  profileSection: {
-    alignItems: "center",
-    marginTop: 30,
-  },
-
-  avatar: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-  },
-
-  name: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#000",
-    marginTop: 15,
-  },
-
-  badgeRow: {
-    flexDirection: "row",
-    marginTop: 15,
-  },
-
-  statusBadge: {
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    borderRadius: 20,
-    marginRight: 10,
-  },
-
-  premiumBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: SECONDARY,
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    borderRadius: 20,
-  },
-
-  badgeText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "600",
-  },
-
-  formContainer: {
-    marginTop: 40,
-  },
-
-  label: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#444",
-    marginBottom: 6,
-    marginTop: 15,
-    padding: 20
-  },
-
-  inputWrapper: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    paddingHorizontal: 15,
-    paddingVertical: 14,
-    elevation: 3,
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-  },
-
-  input: {
-    flex: 1,
-    marginLeft: 12,
-    fontSize: 14,
-    color: "#000",
-  },
-
-
-
-  saveButton: {
-    backgroundColor: PRIMARY,
-    paddingVertical: 16,
-    width: '90%',
-    borderRadius: 30,
-    alignItems: "center",
-    margin: 20,
-    marginTop: 50
-  },
-
-  saveButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "700",
-  },
+  safe: { flex: 1, backgroundColor: COLORS.surface },
+  content: { padding: 20, paddingBottom: 48 },
+  identity: { flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 20 },
+  avatar: { width: 60, height: 60, borderRadius: 18 },
+  avatarEmpty: { backgroundColor: COLORS.blueSoft, alignItems: 'center', justifyContent: 'center' },
+  initials: { fontSize: 24, fontWeight: '800', color: COLORS.blue },
+  editBox: { paddingBottom: 16, paddingTop: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.line },
 });

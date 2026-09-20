@@ -14,6 +14,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../config/firebase';
+import { currencySymbol } from '../../utils/appConfig';
+import EmailReceiptButton from '../../components/EmailReceiptButton';
 
 const PRIMARY = '#79B431';
 const SECONDARY = '#235594';
@@ -117,7 +119,8 @@ const isPending = !isPaid && !isFailed;
     );
   }
 
-  const fare = ride.fareEstimate || 0;
+  // Includes any waiting charge once the payment function has run.
+  const fare = Number(ride.fare?.finalTotal ?? ride.fareEstimate ?? 0);
   const distance = ride.route?.distanceKm || 0;
   const duration = ride.route?.durationMinutes || 0;
 
@@ -195,7 +198,7 @@ const isPending = !isPaid && !isFailed;
 
         {/* Fare Card */}
         <Animated.View style={[styles.card, { transform: [{ translateY: cardSlide }], opacity: cardOpacity }]}>
-          <Text style={styles.fareAmount}>£{fare.toFixed(2)}</Text>
+          <Text style={styles.fareAmount}>{currencySymbol()}{fare.toFixed(2)}</Text>
 
           {/* Shimmer effect for pending */}
           {isPending && (
@@ -278,6 +281,9 @@ const isPending = !isPaid && !isFailed;
 
       {/* Bottom Button */}
       <View style={styles.buttonContainer}>
+        {!isPending && rideId ? (
+          <EmailReceiptButton rideId={rideId} style={{ marginBottom: 10 }} />
+        ) : null}
         <TouchableOpacity
           style={[styles.nextRideBtn, isPending && { opacity: 0.6 }]}
           onPress={() =>

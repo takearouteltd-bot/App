@@ -1,17 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  SafeAreaView,
-  TouchableOpacity,
-  FlatList,
-  ActivityIndicator,
-} from 'react-native';
+import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, FlatList } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { getFirestore, doc, onSnapshot, collection, query, orderBy } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
+import { money, useAppConfig } from '../../../utils/appConfig';
+import { COLORS, TYPE, Card, Button, EmptyState, Loading } from '../../../components/ui/kit';
 
 export default function EarningsScreen() {
   const navigation = useNavigation();
@@ -25,6 +19,7 @@ export default function EarningsScreen() {
   const [subscription, setSubscription] = useState(null);
 
   const driverId = auth.currentUser ? auth.currentUser.uid : null;
+  const appConfig = useAppConfig();
 
   useEffect(() => {
     if (!driverId) return;
@@ -72,54 +67,60 @@ const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
     };
   }, [driverId]);
 
-  const totalBalance = wallet ? wallet.availableBalance : 0;
+  const totalBalance = wallet ? wallet.availableBalance || 0 : 0;
+  const minimumPayout = appConfig.drivers.minimumPayout;
 
+  // Subscription deductions are written as "subscription_deduction" by the
+  // payment function; the old filter looked for "subscription" and found none.
+  const isSubscription = (t) => t.type === 'subscription_deduction' || t.type === 'subscription';
   const filteredTransactions =
     selectedFilter === 'All'
       ? transactions
-      : transactions.filter(t => {
-          if (selectedFilter === 'Trip') return t.type === 'ride_earning';
-          if (selectedFilter === 'Payout') return t.type === 'payout_request';
-          if (selectedFilter === 'Subscription') return t.type === 'subscription';
+      : transactions.filter((t) => {
+          if (selectedFilter === 'Trips') return t.type === 'ride_earning';
+          if (selectedFilter === 'Payouts') return t.type === 'payout_request' || t.type === 'payout';
+          if (selectedFilter === 'Subscription') return isSubscription(t);
           return true;
         });
+
+  // Earned this week (Monday onwards), from trip earnings.
+  const weekStart = (() => {
+    const now = new Date();
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    return d.getTime();
+  })();
+  const earnedThisWeek = transactions
+    .filter((t) => t.type === 'ride_earning' && (t.createdAt?.toMillis?.() || 0) >= weekStart)
+    .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
 
   const formatDate = (timestamp) => {
     if (!timestamp) return '';
     const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-    return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ', ' +
+      date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   };
 
   const renderTransaction = ({ item }) => {
-    const isPositive = item.amount > 0;
-
-    let iconName = 'car-outline';
-    if (item.type === 'payout_request') iconName = 'arrow-down-outline';
-    else if (item.type === 'subscription') iconName = 'calendar-outline';
-
+    const amount = Number(item.amount) || 0;
+    const isPositive = amount > 0;
+    let icon = 'car-outline';
     let title = item.description || item.type;
-    if (item.type === 'ride_earning') title = 'Ride Earning';
+    if (item.type === 'ride_earning') title = 'Trip earnings';
+    if (item.type === 'payout_request' || item.type === 'payout') icon = 'arrow-down-outline';
+    if (isSubscription(item)) icon = 'calendar-outline';
 
     return (
-      <View style={styles.transactionCard}>
-        <View style={styles.transactionLeft}>
-          <View style={styles.iconContainer}>
-            <Ionicons name={iconName} size={20} color="#235594" />
-          </View>
-
-          <View>
-            <Text style={styles.transactionTitle}>{title}</Text>
-            <Text style={styles.transactionDate}>{formatDate(item.createdAt)}</Text>
-          </View>
+      <View style={styles.txRow}>
+        <View style={[styles.txIcon, { backgroundColor: isPositive ? COLORS.greenSoft : COLORS.blueSoft }]}>
+          <Ionicons name={icon} size={18} color={isPositive ? '#3F6F12' : COLORS.blue} />
         </View>
-
-        <Text
-          style={[
-            styles.transactionAmount,
-            { color: isPositive ? '#16A34A' : '#DC2626' },
-          ]}
-        >
-          {isPositive ? '+' : '-'}£{Math.abs(item.amount).toFixed(2)}
+        <View style={{ flex: 1 }}>
+          <Text style={styles.txTitle} numberOfLines={1}>{title}</Text>
+          <Text style={TYPE.small}>{formatDate(item.createdAt)}</Text>
+        </View>
+        <Text style={[styles.txAmount, { color: isPositive ? '#3F6F12' : COLORS.ink }]}>
+          {isPositive ? '+' : '-'}{money(Math.abs(amount))}
         </Text>
       </View>
     );
@@ -127,324 +128,131 @@ const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
 
   if (loading) {
     return (
-      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-        <ActivityIndicator size="large" color="#235594" />
-      </View>
+      <SafeAreaView style={styles.safe}>
+        <Loading />
+      </SafeAreaView>
     );
   }
 
-  return (
-    <View style={styles.container}>
-      {/* Upper Half */}
-      <View style={styles.upperContainer}>
-        <View style={styles.header}>
-          <View style={{ width: 28 }} />
-          <Text style={styles.headerTitle}>My Wallet</Text>
-          <TouchableOpacity>
-            <Ionicons name="help-circle-outline" size={28} color="#fff" />
-          </TouchableOpacity>
-        </View>
+  const header = (
+    <View>
+      <Text style={[TYPE.title, { marginTop: 8 }]}>Earnings</Text>
 
-        <View style={styles.balanceCard}>
-          <Text style={styles.balanceLabel}>TOTAL BALANCE</Text>
-          <Text style={styles.balanceValue}>£{totalBalance.toFixed(2)}</Text>
-          <Text style={styles.balanceSubtext}>
-            Available for immediate withdrawal
-          </Text>
-
-          <TouchableOpacity 
-            onPress={() => navigation.navigate('WithdrawScreen')}
-            style={[
-              styles.withdrawBtn,
-              totalBalance <= 0 && { opacity: 0.5 }
-            ]}
-            disabled={totalBalance <= 0}
-          >
-            <Ionicons
-              name="wallet-outline"
-              size={20}
-              color="#fff"
-              style={{ marginRight: 8 }}
-            />
-            <Text style={styles.withdrawBtnText}>Withdraw to Bank</Text>
-          </TouchableOpacity>
-        </View>
+      {/* The one bold element on this screen: the balance you can take out. */}
+      <View style={styles.balance}>
+        <Text style={styles.balanceLabel}>Available to withdraw</Text>
+        <Text style={styles.balanceValue}>{money(totalBalance)}</Text>
+        <Text style={styles.balanceSub}>
+          {totalBalance < minimumPayout
+            ? `You can withdraw once you reach ${money(minimumPayout)}.`
+            : 'Paid to your bank after admin approval.'}
+        </Text>
+        <Button
+          title="Withdraw to bank"
+          icon="wallet-outline"
+          style={styles.withdrawBtn}
+          disabled={totalBalance <= 0 || totalBalance < minimumPayout}
+          onPress={() => navigation.navigate('WithdrawScreen')}
+        />
       </View>
 
-      {/* Bottom Half */}
-      <View style={styles.bottomContainer}>
-        {/* Stats Row */}
-        <View style={styles.statsRow}>
-          <View style={styles.statBox}>
-            <Text style={styles.statLabel}>Total Earned</Text>
-            <Text style={styles.statValue}>
-              £{(wallet ? wallet.totalEarned : 0).toFixed(2)}
-            </Text>
-          </View>
-          <View style={styles.statBox}>
-            <Text style={styles.statLabel}>Pending</Text>
-            <Text style={styles.statValue}>
-              £{(wallet ? (wallet.pendingBalance || 0) : 0).toFixed(2)}
-            </Text>
-          </View>
-        </View>
+      <View style={styles.stats}>
+        <Card style={styles.stat}>
+          <Text style={TYPE.small}>This week</Text>
+          <Text style={styles.statValue}>{money(earnedThisWeek)}</Text>
+        </Card>
+        <Card style={styles.stat}>
+          <Text style={TYPE.small}>All time</Text>
+          <Text style={styles.statValue}>{money(wallet ? wallet.totalEarned || 0 : 0)}</Text>
+        </Card>
+        <Card style={styles.stat}>
+          <Text style={TYPE.small}>Pending</Text>
+          <Text style={styles.statValue}>{money(wallet ? wallet.pendingBalance || 0 : 0)}</Text>
+        </Card>
+      </View>
 
-        {subscription && subscription.status === 'active' && (
-  <View style={styles.subBanner}>
-    <Ionicons name="calendar-outline" size={18} color="#235594" />
-    <Text style={styles.subBannerText}>
-      Next subscription due: {subscription.nextBillingDate ? subscription.nextBillingDate.toDate().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
-    </Text>
-    <Text style={styles.subBannerAmount}>£{subscription.amount || 99.99}</Text>
-  </View>
-)}
+      {subscription && subscription.status === 'active' ? (
+        <Card style={{ marginTop: 12 }}>
+          <Text style={styles.txTitle}>Subscription {money(appConfig.subscription.monthlyPrice)} a month</Text>
+          <Text style={TYPE.small}>
+            Next payment{' '}
+            {subscription.nextBillingDate?.toDate
+              ? subscription.nextBillingDate.toDate().toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })
+              : 'date not set'}
+            , taken from your wallet.
+          </Text>
+        </Card>
+      ) : null}
 
-{subscription && subscription.status === 'suspended' && (
-  <View style={[styles.subBanner, { backgroundColor: '#FEF2F2', borderColor: '#EF4444' }]}>
-    <Ionicons name="alert-circle-outline" size={18} color="#EF4444" />
-    <Text style={[styles.subBannerText, { color: '#EF4444' }]}>
-      Subscription suspended. Top up wallet to reactivate.
-    </Text>
-  </View>
-)}
+      {subscription && subscription.status === 'suspended' ? (
+        <Card tone="danger" style={{ marginTop: 12 }}>
+          <Text style={[styles.txTitle, { color: COLORS.red }]}>Subscription suspended</Text>
+          <Text style={TYPE.small}>Complete trips to top up your wallet and it will restart automatically.</Text>
+        </Card>
+      ) : null}
 
-        {/* Transaction History Title */}
-        <Text style={styles.sectionTitle}>Transaction History</Text>
-
-        {/* Filters */}
-        <View style={styles.filterContainer}>
-          {['All', 'Trip', 'Payout'].map(filter => (
-            <TouchableOpacity
-              key={filter}
-              style={[
-                styles.filterButton,
-                selectedFilter === filter && styles.activeFilter,
-              ]}
-              onPress={() => setSelectedFilter(filter)}
-            >
-              <Text
-                style={[
-                  styles.filterText,
-                  selectedFilter === filter && styles.activeFilterText,
-                ]}
-              >
-                {filter}
-              </Text>
+      <Text style={[TYPE.heading, { marginTop: 24, marginBottom: 10 }]}>Activity</Text>
+      <View style={styles.filters}>
+        {['All', 'Trips', 'Payouts', 'Subscription'].map((f) => {
+          const active = selectedFilter === f;
+          return (
+            <TouchableOpacity key={f} onPress={() => setSelectedFilter(f)} style={[styles.chip, active && styles.chipActive]}>
+              <Text style={[styles.chipText, active && { color: COLORS.white }]}>{f}</Text>
             </TouchableOpacity>
-          ))}
-        </View>
-
-        {/* Transaction List */}
-        <FlatList
-          data={filteredTransactions}
-          keyExtractor={item => item.id}
-          renderItem={renderTransaction}
-          contentContainerStyle={{ paddingBottom: 120 }}
-          showsVerticalScrollIndicator={false}
-          ListEmptyComponent={
-            <Text style={{ textAlign: 'center', color: '#6B7280', marginTop: 40 }}>
-              No transactions yet
-            </Text>
-          }
-        />
+          );
+        })}
       </View>
     </View>
   );
+
+  return (
+    <SafeAreaView style={styles.safe}>
+      <FlatList
+        data={filteredTransactions}
+        keyExtractor={(item) => item.id}
+        renderItem={renderTransaction}
+        ListHeaderComponent={header}
+        contentContainerStyle={styles.content}
+        ListEmptyComponent={
+          <EmptyState
+            icon="receipt-outline"
+            title="Nothing here yet"
+            body={selectedFilter === 'All' ? 'Trip earnings and payouts will show here.' : 'Nothing in this category yet.'}
+          />
+        }
+      />
+    </SafeAreaView>
+  );
 }
 
-
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  upperContainer: {
-    backgroundColor: '#235594',
-    height: '37%',
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-    paddingHorizontal: 16,
-    paddingTop: 50,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  balanceCard: {
-    backgroundColor: '#D0E6FF',
-    borderRadius: 20,
-    padding: 16,
-  },
-  balanceLabel: {
-    fontSize: 12,
-    color: '#6B7280',
-    fontWeight: '600',
-  },
-  balanceValue: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: '#111827',
-  },
-  subBanner: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  backgroundColor: '#EFF6FF',
-  borderWidth: 1,
-  borderColor: '#235594',
-  borderRadius: 12,
-  marginTop: 15,
-  padding: 14,
-  marginBottom: 10,
-  gap: 10,
-},
-subBannerText: {
-  flex: 1,
-  fontSize: 13,
-  fontWeight: '600',
-  color: '#235594',
-},
-subBannerAmount: {
-  fontSize: 14,
-  fontWeight: '700',
-  color: '#235594',
-},
-  balanceSubtext: {
-    fontSize: 12,
-    color: '#374151',
-    marginBottom: 16,
-  },
-  withdrawBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#79B531',
-    paddingVertical: 12,
-    borderRadius: 25,
-    justifyContent: 'center',
-  },
-  withdrawBtnText: {
-    color: '#fff',
-    fontWeight: '700',
-  },
-  bottomContainer: {
-    flex: 1,
-    paddingHorizontal: 16,
-  },
-  nextPayoutCard: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    marginTop: 15,
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    elevation: 2,
-  },
-  nextPayoutLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#6B7280',
-  },
-  nextPayoutDate: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  nextPayoutSubtext: {
-    fontSize: 12,
-    color: '#6B7280',
-  },
-  scheduleBtn: {
-    backgroundColor: '#D0E6FF',
-    borderRadius: 20,
-    padding: 10,
-    marginLeft: 12,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    marginTop: 20,
-    marginBottom: 12,
-  },
-  filterContainer: {
-    flexDirection: 'row',
-    marginBottom: 16,
-  },
-  filterButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    borderRadius: 20,
-    backgroundColor: '#E5E7EB',
-    marginRight: 10,
-  },
-  activeFilter: {
-    backgroundColor: '#235594',
-  },
-  filterText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#374151',
-  },
-  activeFilterText: {
-    color: '#fff',
-  },
-  transactionCard: {
-    backgroundColor: '#fff',
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  transactionLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  iconContainer: {
-    backgroundColor: '#E6F0FA',
-    padding: 10,
-    borderRadius: 12,
-    marginRight: 12,
-  },
-  transactionTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  transactionDate: {
-    fontSize: 12,
-    color: '#6B7280',
-  },
-  transactionAmount: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-    statsRow: {
-    flexDirection: 'row',
+  safe: { flex: 1, backgroundColor: COLORS.surface },
+  content: { padding: 20, paddingBottom: 48 },
+  balance: {
     marginTop: 16,
-    gap: 12,
+    backgroundColor: COLORS.navy,
+    borderRadius: 22,
+    padding: 22,
   },
-  statBox: {
-    flex: 1,
-    backgroundColor: '#fff',
-    borderRadius: 14,
-    padding: 14,
-    alignItems: 'center',
+  balanceLabel: { fontSize: 14, fontWeight: '600', color: '#C9D6EA' },
+  balanceValue: { fontSize: 40, fontWeight: '800', color: COLORS.white, letterSpacing: -1, marginTop: 4 },
+  balanceSub: { fontSize: 13, color: '#C9D6EA', marginTop: 4 },
+  withdrawBtn: { marginTop: 18 },
+  stats: { flexDirection: 'row', gap: 10, marginTop: 12 },
+  stat: { flex: 1, padding: 12 },
+  statValue: { fontSize: 17, fontWeight: '800', color: COLORS.navy, marginTop: 4 },
+  filters: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
+  chip: {
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999,
+    borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.white,
   },
-  statLabel: {
-    fontSize: 12,
-    color: '#6B7280',
-    fontWeight: '600',
-    marginBottom: 4,
+  chipActive: { backgroundColor: COLORS.navy, borderColor: COLORS.navy },
+  chipText: { fontSize: 14, fontWeight: '600', color: COLORS.ink },
+  txRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.line,
   },
-  statValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#111827',
-  },
+  txIcon: { width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  txTitle: { fontSize: 15, fontWeight: '600', color: COLORS.ink },
+  txAmount: { fontSize: 15, fontWeight: '700' },
 });

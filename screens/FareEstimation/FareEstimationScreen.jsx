@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Animated,
   ScrollView,
+  TextInput,
 } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 import MapViewDirections from 'react-native-maps-directions';
@@ -19,7 +20,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { db } from '../../config/firebase';
 import { addDoc, collection, serverTimestamp, doc, updateDoc, getDoc, onSnapshot, getDocs } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
-import { useAppConfig } from '../../utils/appConfig';
+import { useAppConfig, currencySymbol } from '../../utils/appConfig';
 
 const { width, height } = Dimensions.get('window');
 const PRIMARY = '#79B531';
@@ -184,7 +185,9 @@ useEffect(() => {
     const total = discountedFare + vatAmount;
 
     return {
-      currency: 'GBP',
+      currency: appConfig.currency,
+      vatPercent: appConfig.fares.vatPercent,
+      discountAmount: Number((fareBeforeVAT - discountedFare).toFixed(2)),
       baseFare: Number(baseFare.toFixed(2)),
       distanceFare: Number(distanceFare.toFixed(2)),
       timeFare: Number(timeFare.toFixed(2)),
@@ -196,6 +199,49 @@ useEffect(() => {
       subtotal: Number(discountedFare.toFixed(2)),
     };
   }, [distance, duration, promoApplied, discount, appConfig]);
+
+  /* ================= PROMO CODE =================
+     Codes are created in the admin dashboard (promoCodes/{CODE}) as a
+     percentage off the fare before VAT. */
+  const [promoInput, setPromoInput] = useState('');
+  const [promoChecking, setPromoChecking] = useState(false);
+
+  const applyPromo = async () => {
+    const code = promoInput.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (code.length < 3) {
+      Alert.alert('Promo code', 'Please enter a valid code.');
+      return;
+    }
+    setPromoChecking(true);
+    try {
+      const snap = await getDoc(doc(db, 'promoCodes', code));
+      const data = snap.exists() ? snap.data() : null;
+      const percent = Number(data?.percent);
+      const expired = data?.expiresAt
+        ? new Date(`${data.expiresAt}T23:59:59`) < new Date()
+        : false;
+
+      if (!data || data.active === false || expired || !(percent > 0 && percent <= 100)) {
+        Alert.alert('Promo code', expired ? 'This code has expired.' : 'This code is not valid.');
+        return;
+      }
+      setPromoCode(code);
+      setDiscount(percent / 100);
+      setPromoApplied(true);
+    } catch (error) {
+      console.log('Promo check failed:', error);
+      Alert.alert('Promo code', 'Could not check this code right now. Please try again.');
+    } finally {
+      setPromoChecking(false);
+    }
+  };
+
+  const removePromo = () => {
+    setPromoApplied(false);
+    setPromoCode('');
+    setDiscount(0);
+    setPromoInput('');
+  };
 
   const handleConfirmRide = async () => {
     if (!currentUser) {
@@ -232,6 +278,16 @@ useEffect(() => {
       const selectedOption = rideOptions.find(r => r.id === selectedRide);
       const fareDetails = calculateFareDetails(selectedOption.multiplier);
 
+      // Drivers this passenger asked not to be matched with again.
+      let blockedDriverIds = [];
+      try {
+        const riderSnap = await getDoc(doc(db, 'riders', currentUser.uid));
+        const list = riderSnap.exists() ? riderSnap.data().blockedDrivers : null;
+        if (Array.isArray(list)) blockedDriverIds = list;
+      } catch (e) {
+        console.log('Could not load blocked drivers:', e);
+      }
+
       const rideData = {
         riderId: currentUser.uid,
         driverId: null,
@@ -264,6 +320,12 @@ useEffect(() => {
         },
         
         fareEstimate: fareDetails.total,
+        currency: appConfig.currency,
+        blockedDriverIds,
+
+        // Waiting terms at the time of booking. The completion function
+        // charges from these, and both apps show the waiting timer from them.
+        waitingPolicy: { ...appConfig.waiting },
 
         payment: {
           method: paymentMethod,
@@ -460,7 +522,7 @@ useEffect(() => {
                   </View>
 
                   <View style={styles.ridePriceRow}>
-                    <Text style={[styles.rideFare, isSelected && { color: PRIMARY }]}>£{itemFare.total}</Text>
+                    <Text style={[styles.rideFare, isSelected && { color: PRIMARY }]}>{currencySymbol()}{itemFare.total}</Text>
                     {isSelected && <Ionicons name="checkmark-circle" size={20} color={PRIMARY} />}
                   </View>
                 </TouchableOpacity>
@@ -503,27 +565,60 @@ useEffect(() => {
             </TouchableOpacity>
           </View>
 
+          {/* Promo code */}
+          {promoApplied ? (
+            <View style={styles.promoRow}>
+              <Ionicons name="pricetag" size={18} color={PRIMARY} />
+              <Text style={styles.promoText}>{promoCode} applied, {Math.round(discount * 100)}% off</Text>
+              <TouchableOpacity onPress={removePromo}>
+                <Text style={[styles.promoText, { flex: 0, color: DANGER }]}>Remove</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.promoRow}>
+              <Ionicons name="pricetag-outline" size={18} color={PRIMARY} />
+              <TextInput
+                style={[styles.promoText, { paddingVertical: 0 }]}
+                placeholder="Promo code"
+                placeholderTextColor="#9CB87A"
+                autoCapitalize="characters"
+                autoCorrect={false}
+                value={promoInput}
+                onChangeText={setPromoInput}
+                onSubmitEditing={applyPromo}
+                returnKeyType="done"
+              />
+              <TouchableOpacity onPress={applyPromo} disabled={promoChecking || !promoInput.trim()}>
+                {promoChecking ? (
+                  <ActivityIndicator size="small" color={PRIMARY} />
+                ) : (
+                  <Text style={[styles.promoText, { flex: 0, color: SECONDARY }]}>Apply</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* Fare Breakdown */}
           <View style={styles.breakdownCard}>
             <Text style={styles.sectionTitle}>Fare Breakdown</Text>
             
             <View style={styles.breakdownRow}>
               <Text style={styles.breakdownLabel}>Base fare</Text>
-              <Text style={styles.breakdownValue}>£{fare.baseFare}</Text>
+              <Text style={styles.breakdownValue}>{currencySymbol()}{fare.baseFare}</Text>
             </View>
             <View style={styles.breakdownRow}>
               <Text style={styles.breakdownLabel}>Distance ({fare.distanceInMiles} mi)</Text>
-              <Text style={styles.breakdownValue}>£{fare.distanceFare}</Text>
+              <Text style={styles.breakdownValue}>{currencySymbol()}{fare.distanceFare}</Text>
             </View>
             <View style={styles.breakdownRow}>
               <Text style={styles.breakdownLabel}>Time ({Math.ceil(duration)} min)</Text>
-              <Text style={styles.breakdownValue}>£{fare.timeFare}</Text>
+              <Text style={styles.breakdownValue}>{currencySymbol()}{fare.timeFare}</Text>
             </View>
             
             {promoApplied && (
               <View style={styles.breakdownRow}>
-                <Text style={[styles.breakdownLabel, { color: PRIMARY }]}>Promo discount ({discount * 100}%)</Text>
-                <Text style={[styles.breakdownValue, { color: PRIMARY }]}>-£{(fare.subtotal * discount / (1 - discount)).toFixed(2)}</Text>
+                <Text style={[styles.breakdownLabel, { color: PRIMARY }]}>Promo {promoCode} ({Math.round(discount * 100)}%)</Text>
+                <Text style={[styles.breakdownValue, { color: PRIMARY }]}>-{currencySymbol()}{fare.discountAmount.toFixed(2)}</Text>
               </View>
             )}
 
@@ -531,18 +626,18 @@ useEffect(() => {
             
             <View style={styles.breakdownRow}>
               <Text style={styles.breakdownLabel}>Subtotal</Text>
-              <Text style={styles.breakdownValue}>£{fare.subtotal}</Text>
+              <Text style={styles.breakdownValue}>{currencySymbol()}{fare.subtotal}</Text>
             </View>
             <View style={styles.breakdownRow}>
-              <Text style={styles.breakdownLabel}>VAT (20%)</Text>
-              <Text style={styles.breakdownValue}>£{fare.vat}</Text>
+              <Text style={styles.breakdownLabel}>VAT ({fare.vatPercent}%)</Text>
+              <Text style={styles.breakdownValue}>{currencySymbol()}{fare.vat}</Text>
             </View>
 
             <View style={styles.breakdownDivider} />
             
             <View style={styles.totalRow}>
               <Text style={styles.totalLabel}>Total</Text>
-              <Text style={styles.totalValue}>£{fare.total}</Text>
+              <Text style={styles.totalValue}>{currencySymbol()}{fare.total}</Text>
             </View>
           </View>
 
@@ -567,7 +662,7 @@ useEffect(() => {
               <>
                 <Text style={styles.confirmText}>Confirm {selectedOption.label}</Text>
                 <View style={styles.confirmPricePill}>
-                  <Text style={styles.confirmPrice}>£{fare.total}</Text>
+                  <Text style={styles.confirmPrice}>{currencySymbol()}{fare.total}</Text>
                 </View>
               </>
             )}

@@ -13,6 +13,8 @@ import RiderNavigator from "./navigation/RiderNavigator";
 import DriverNavigator from "./navigation/DriverNavigator";
 import { StripeProvider } from "@stripe/stripe-react-native";
 import SplashScreen from "./Splash/SplashScreen";
+import { startAppConfigSync } from "./utils/appConfig";
+import { registerForPushNotifications } from "./utils/notifications";
 
 const Stack = createNativeStackNavigator();
 
@@ -53,6 +55,13 @@ export default function App() {
       }
 
       const uid = user.uid;
+
+      // Load admin settings (currency, prices, limits) once signed in.
+      startAppConfigSync();
+
+      // Save this phone for push notifications (job offers, trip updates,
+      // messages). Asks permission the first time.
+      registerForPushNotifications(uid);
 
       unsubscribeUserDoc = onSnapshot(
         doc(db, "users", uid),

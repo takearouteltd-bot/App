@@ -8,12 +8,15 @@ import {
   ScrollView,
   Image,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
+import { arrayRemove, arrayUnion, doc, getDoc, onSnapshot, setDoc, deleteField } from 'firebase/firestore';
+import { auth, db } from '../../../config/firebase';
+import { currencySymbol } from '../../../utils/appConfig';
+import EmailReceiptButton from '../../../components/EmailReceiptButton';
 
 const PRIMARY = '#79B531';
 const SECONDARY = '#235594';
@@ -26,6 +29,75 @@ export default function RiderTripDetailsScreen() {
 
   const [driver, setDriver] = useState(null);
   const [loadingDriver, setLoadingDriver] = useState(true);
+  const [blockedDrivers, setBlockedDrivers] = useState([]);
+  const riderId = auth.currentUser?.uid;
+
+  // Drivers this passenger asked not to be matched with.
+  useEffect(() => {
+    if (!riderId) return undefined;
+    return onSnapshot(doc(db, 'riders', riderId), (snap) => {
+      const list = snap.exists() ? snap.data().blockedDrivers : null;
+      setBlockedDrivers(Array.isArray(list) ? list : []);
+    });
+  }, [riderId]);
+
+  const isBlocked = trip.driverId ? blockedDrivers.includes(trip.driverId) : false;
+
+  const toggleBlockDriver = () => {
+    if (!riderId || !trip.driverId) return;
+    const name = driver?.fullName || driver?.firstName || 'this driver';
+    if (isBlocked) {
+      setDoc(
+        doc(db, 'riders', riderId),
+        { blockedDrivers: arrayRemove(trip.driverId), blockedDriverInfo: { [trip.driverId]: deleteField() } },
+        { merge: true }
+      ).catch(() => Alert.alert('Not saved', 'Please try again.'));
+      return;
+    }
+    Alert.alert(
+      "Don't match me with this driver?",
+      `You won't be offered ${name} on future trips. You can undo this from Profile, Safety.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: "Don't match again",
+          style: 'destructive',
+          onPress: () =>
+            setDoc(
+              doc(db, 'riders', riderId),
+              {
+                blockedDrivers: arrayUnion(trip.driverId),
+                blockedDriverInfo: {
+                  [trip.driverId]: {
+                    name: driver?.fullName || driver?.firstName || 'Driver',
+                    registration: driver?.registrationNumber || '',
+                    at: new Date().toISOString(),
+                  },
+                },
+              },
+              { merge: true }
+            ).catch(() => Alert.alert('Not saved', 'Please try again.')),
+        },
+      ]
+    );
+  };
+
+  // Opens the fare screen with the same pickup and drop-off.
+  const bookAgain = () => {
+    const p = trip.pickupLocation;
+    const d = trip.dropoffLocation;
+    if (!p?.latitude || !d?.latitude) {
+      Alert.alert('Book again', 'This trip has no saved locations.');
+      return;
+    }
+    navigation.navigate('Home', {
+      screen: 'FareEstimation',
+      params: {
+        origin: { latitude: p.latitude, longitude: p.longitude, address: p.address },
+        destination: { latitude: d.latitude, longitude: d.longitude, address: d.address, description: d.address },
+      },
+    });
+  };
 
   // Fetch real driver data from Firestore
   useEffect(() => {
@@ -66,7 +138,7 @@ export default function RiderTripDetailsScreen() {
 
   // ✅ Fare is an object — extract the total
   const fareTotal = trip.fare?.total ?? 0;
-  const currency = trip.fare?.currency === 'GBP' ? '£' : trip.fare?.currency || '£';
+  const currency = currencySymbol(trip.fare?.currency);
 
   // ✅ Pickup & dropoff from nested location objects
   const pickup = trip.pickupLocation || {};
@@ -303,6 +375,24 @@ export default function RiderTripDetailsScreen() {
         </View> */}
 
         {/* Buttons */}
+        {isCompleted ? (
+          <EmailReceiptButton rideId={trip.id} style={{ marginBottom: 12, borderRadius: 30, minHeight: 50 }} />
+        ) : null}
+
+        <TouchableOpacity onPress={bookAgain} style={styles.secondaryBtn}>
+          <Ionicons name="refresh" size={20} color="#fff" />
+          <Text style={styles.primaryBtnText}>Book this trip again</Text>
+        </TouchableOpacity>
+
+        {trip.driverId ? (
+          <TouchableOpacity onPress={toggleBlockDriver} style={styles.outlineBtn}>
+            <Ionicons name={isBlocked ? 'person-add-outline' : 'person-remove-outline'} size={20} color={SECONDARY} />
+            <Text style={[styles.primaryBtnText, { color: SECONDARY }]}>
+              {isBlocked ? 'Allow this driver again' : "Don't match me with this driver"}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
+
         <TouchableOpacity 
         onPress={() => navigation.navigate('ReportIssueScreen', { 
             trip: trip,
@@ -571,6 +661,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: PRIMARY,
+    paddingVertical: 14,
+    borderRadius: 30,
+    marginBottom: 12,
+  },
+
+  outlineBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#D5DCE6',
     paddingVertical: 14,
     borderRadius: 30,
     marginBottom: 12,

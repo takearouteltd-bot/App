@@ -15,7 +15,11 @@ import MapViewDirections from 'react-native-maps-directions';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 import { db } from '../../config/firebase';
+import { useWaitingClock } from '../../utils/useWaitingClock';
+import SafetyButton from '../../components/SafetyButton';
+import { confirmMaskedCall } from '../../utils/calling';
 
 const PRIMARY = '#79B431';
 const SECONDARY = '#235594';
@@ -33,6 +37,7 @@ export default function RideTrackingScreen() {
   const [rideData, setRideData] = useState(null);
   const [driverData, setDriverData] = useState(null);
   const [driverLocation, setDriverLocation] = useState(null);
+  const waiting = useWaitingClock(rideData);
 
   const GOOGLE_MAPS_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ';
 
@@ -88,6 +93,9 @@ useEffect(() => {
 
     if (data.status === 'cancelled' || data.status === 'canceled') {
       hasNavigatedToProgress.current = true;
+      if (data.cancelledBy === 'driver') {
+        Alert.alert('Ride cancelled', 'Your driver cancelled this ride. You have not been charged.');
+      }
       navigation.popToTop();
       return;
     }
@@ -105,16 +113,9 @@ useEffect(() => {
   };
 }, []);
 
-  /* ================= CALL ================= */
-  // This handler was referenced by the call button but never defined, so
-  // tapping the button crashed the app. Numbers stay hidden until masked
-  // calling is added, so for now it points the passenger to chat.
-  const handleCall = () => {
-    Alert.alert('Message your driver', 'In-app calling is coming soon. Please use chat to reach your driver.', [
-      { text: 'Close', style: 'cancel' },
-      { text: 'Open chat', onPress: handleChat },
-    ]);
-  };
+  /* ================= CALL =================
+     Masked call through Twilio. Neither side sees a real number. */
+  const handleCall = () => confirmMaskedCall(rideId, 'your driver');
 
   /* ================= CANCEL (before pickup) ================= */
   const handleCancelRide = () => {
@@ -130,6 +131,13 @@ useEffect(() => {
               cancelledBy: 'rider',
               cancelledAt: serverTimestamp(),
             });
+            // Clear the rider's active ride so the app doesn't reopen it.
+            const uid = getAuth().currentUser?.uid;
+            if (uid) {
+              updateDoc(doc(db, 'riders', uid), { currentRideId: null }).catch((e) =>
+                console.log('Error clearing currentRideId:', e)
+              );
+            }
           } catch (error) {
             console.log('Error cancelling ride:', error);
             Alert.alert('Error', 'Could not cancel the ride. Please try again.');
@@ -171,23 +179,32 @@ useEffect(() => {
   }, []);
 
   /* ================= MAP FIT ================= */
+  // The map used to have no starting region, and this function bailed out
+  // until the driver's location arrived. The map sat at 0,0, which is the
+  // sea off West Africa. It now starts on the pickup and fits without the
+  // driver if needed.
   const recenterMap = () => {
-    if (!rideData || !driverLocation) return;
+    if (!rideData) return;
 
     const { pickupLocation, dropoffLocation } = rideData;
-
-    mapRef.current?.fitToCoordinates(
-      [
-        pickupLocation,
-        dropoffLocation,
-        driverLocation,
-      ],
-      {
-        edgePadding: { top: 120, right: 60, bottom: 420, left: 60 },
-        animated: true,
-      }
+    const coords = [pickupLocation, dropoffLocation, driverLocation].filter(
+      (c) => c && typeof c.latitude === 'number' && typeof c.longitude === 'number'
     );
+    if (coords.length === 0) return;
+
+    mapRef.current?.fitToCoordinates(coords, {
+      edgePadding: { top: 120, right: 60, bottom: 420, left: 60 },
+      animated: true,
+    });
   };
+
+  // Fit once when the driver's position first comes in.
+  const hasFitDriver = useRef(false);
+  useEffect(() => {
+    if (!rideData || !driverLocation || hasFitDriver.current) return;
+    hasFitDriver.current = true;
+    recenterMap();
+  }, [rideData, driverLocation]);
 
   if (!rideData) {
     return (
@@ -220,7 +237,17 @@ useEffect(() => {
   return (
     <SafeAreaView style={styles.container}>
       {/* MAP */}
-      <MapView ref={mapRef} style={styles.map} onMapReady={recenterMap}>
+      <MapView
+        ref={mapRef}
+        style={styles.map}
+        onMapReady={recenterMap}
+        initialRegion={{
+          latitude: pickupLocation.latitude,
+          longitude: pickupLocation.longitude,
+          latitudeDelta: 0.05,
+          longitudeDelta: 0.05,
+        }}
+      >
         <Marker coordinate={pickupLocation}>
           <View style={styles.originMarker}>
             <View style={styles.originDot} />
@@ -265,9 +292,12 @@ useEffect(() => {
           <Text style={styles.statusText}>{statusConfig.label}</Text>
         </View>
 
-        <TouchableOpacity style={styles.iconButton} onPress={recenterMap}>
-          <Ionicons name="locate" size={22} color={DARK} />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <SafetyButton role="rider" rideId={rideId} />
+          <TouchableOpacity style={styles.iconButton} onPress={recenterMap}>
+            <Ionicons name="locate" size={22} color={DARK} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* BOTTOM SHEET */}
@@ -286,6 +316,14 @@ useEffect(() => {
               {status === 'arrived' && 'Meet your driver at the pickup spot'}
               {status === 'ongoing' && 'Heading to your destination'}
             </Text>
+            {waiting && (
+              <>
+                <Text style={[styles.statusSub, { color: waiting.inFreeTime ? SECONDARY : '#D97706', fontWeight: '700', marginTop: 2 }]}>
+                  {waiting.label}
+                </Text>
+                <Text style={styles.statusSub}>{waiting.detail}</Text>
+              </>
+            )}
           </View>
         </View>
 
@@ -326,7 +364,7 @@ useEffect(() => {
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.actionBtn}
-                onPress={() => handleCall(driverData.phoneNumber)}
+                onPress={handleCall}
               >
                 <Ionicons name="call" size={18} color={SECONDARY} />
               </TouchableOpacity>

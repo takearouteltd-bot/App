@@ -6,6 +6,7 @@ import DriverRideInProgressScreen from "../screens/Driver/DriverRideInProgress/D
 import DriverRideToDropoffScreen from "../screens/Driver/DriverRideInProgress/DriverRideToDropoffScreen";
 import RideCompletedScreen from "../screens/Driver/RideCompleted/RideCompletedScreen";
 import ChatScreen from "../screens/Chat/ChatScreen";
+import DriverDocumentsScreen from '../screens/Driver/Documents/DriverDocumentsScreen';
 
 
 const Stack = createNativeStackNavigator();
@@ -20,6 +21,7 @@ export default function DriverStack() {
         <Stack.Screen name='ChatScreen' component={ChatScreen} />
         <Stack.Screen name='RideToDropoff' component={DriverRideToDropoffScreen} />
         <Stack.Screen name='RideCompleted' component={RideCompletedScreen} />
+        <Stack.Screen name='DriverDocuments' component={DriverDocumentsScreen} />
       {/* Trips */}
 
     </Stack.Navigator>

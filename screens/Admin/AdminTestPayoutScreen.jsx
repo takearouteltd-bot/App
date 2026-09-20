@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { getFirestore, collection, query, where, onSnapshot, doc, getDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getAuth } from 'firebase/auth';
+import { currencySymbol } from '../../utils/appConfig';
 
 export default function AdminPayoutTestScreen() {
   const db = getFirestore();
@@ -121,7 +122,7 @@ export default function AdminPayoutTestScreen() {
       <View style={styles.payoutCard}>
         <View style={styles.payoutHeader}>
           <Text style={styles.driverId}>Driver: {item.driverId.slice(-6)}</Text>
-          <Text style={styles.amount}>£{item.amount.toFixed(2)}</Text>
+          <Text style={styles.amount}>{currencySymbol()}{item.amount.toFixed(2)}</Text>
         </View>
 
         <View style={styles.bankDetails}>

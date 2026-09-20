@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import { currencySymbol } from '../../../utils/appConfig';
 
 const PRIMARY = '#79B531';
 const SECONDARY = '#235594';
@@ -37,7 +38,7 @@ export default function TripCard({ item }) {
 
   // ✅ Get fare from nested structure
   const fareTotal = item.fare?.total ?? 0;
-  const currency = item.fare?.currency === 'GBP' ? '£' : item.fare?.currency || '£';
+  const currency = currencySymbol(item.fare?.currency);
 
   // ✅ Pickup & dropoff from correct nested fields
   const pickupAddress = item.pickupLocation?.address || 'Unknown pickup';

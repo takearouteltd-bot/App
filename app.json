@@ -36,7 +36,11 @@
         "googleMaps": {
           "apiKey": "AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ"
         }
-      }
+      },
+      "permissions": [
+        "POST_NOTIFICATIONS",
+        "VIBRATE"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -68,6 +72,15 @@
         {
           "cameraPermission": "TakeARoute uses the camera so drivers can take a live verification selfie.",
           "photosPermission": "TakeARoute uses your photos so you can upload documents and a profile picture."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#79B531",
+          "sounds": [
+            "./assets/sounds/job_alert.wav"
+          ]
         }
       ]
     ]

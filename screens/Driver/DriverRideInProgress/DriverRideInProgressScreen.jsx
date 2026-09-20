@@ -13,6 +13,7 @@ import {
   Platform,
   Alert,
   Linking,
+  ScrollView,
 } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 import MapViewDirections from 'react-native-maps-directions';
@@ -20,6 +21,10 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { doc, onSnapshot, updateDoc, serverTimestamp, getDoc, arrayUnion } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
+import { currencySymbol } from '../../../utils/appConfig';
+import SafetyButton from '../../../components/SafetyButton';
+import { confirmMaskedCall } from '../../../utils/calling';
+import { useWaitingClock } from '../../../utils/useWaitingClock';
 
 const { width, height } = Dimensions.get('window');
 const PRIMARY = '#79B531';
@@ -50,6 +55,7 @@ const heightAnim = useRef(new Animated.Value(height * 0.7)).current;
   const [distance, setDistance] = useState(null);
   const [loadingAction, setLoadingAction] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
+  const waiting = useWaitingClock(ride);
   // Guards against leaving this screen twice (handler + listener both fire).
   const hasLeftScreen = useRef(false);
   const driverIdRef = useRef(null);
@@ -248,6 +254,42 @@ const toggleMinimize = useCallback(() => {
     );
   }, [rideId]);
 
+  // After arriving, the driver can end the job if the passenger doesn't show.
+  // The ride is cancelled outright (not re-offered), the card hold is
+  // released by the cancelRidePayment function, and the passenger is told.
+  const handleNoShow = useCallback(() => {
+    Alert.alert(
+      'Cancel this ride?',
+      'Only do this if the passenger has not turned up. The ride will be cancelled and the passenger told.',
+      [
+        { text: 'Keep waiting', style: 'cancel' },
+        {
+          text: 'Cancel ride',
+          style: 'destructive',
+          onPress: async () => {
+            setLoadingAction(true);
+            try {
+              hasLeftScreen.current = true;
+              await updateDoc(doc(db, 'rides', rideId), {
+                status: 'cancelled',
+                cancelledBy: 'driver',
+                cancelReason: 'passenger_no_show',
+                cancelledAt: serverTimestamp(),
+              });
+              await releaseDriver();
+              goHome();
+            } catch (error) {
+              hasLeftScreen.current = false;
+              console.error('Error cancelling ride:', error);
+              Alert.alert('Error', 'Could not cancel the ride. Please try again.');
+              setLoadingAction(false);
+            }
+          },
+        },
+      ]
+    );
+  }, [rideId]);
+
   // Opens turn-by-turn directions to the pickup point in the phone's maps app.
   const handleNavigate = useCallback(() => {
     const point = ride?.pickupLocation;
@@ -377,9 +419,9 @@ const toggleMinimize = useCallback(() => {
           <Text style={styles.etaText}>{eta ? `${eta} min` : '...'}</Text>
         </View>
 
-        <TouchableOpacity style={styles.moreBtn} activeOpacity={0.8}>
-          <Ionicons name="ellipsis-vertical" size={22} color="#fff" />
-        </TouchableOpacity>
+        {/* Safety: 999, 101 and the driver's emergency contact. Replaces an
+            unused menu button. */}
+        <SafetyButton role="driver" rideId={rideId} />
       </SafeAreaView>
 
       {/* ================= FLOATING STATS ================= */}
@@ -390,7 +432,7 @@ const toggleMinimize = useCallback(() => {
         </View>
         <View style={styles.statPill}>
           <Ionicons name="cash-outline" size={14} color={PRIMARY} />
-          <Text style={styles.statPillText}>£{fare?.total?.toFixed(2) || '0.00'}</Text>
+          <Text style={styles.statPillText}>{currencySymbol()}{fare?.total?.toFixed(2) || '0.00'}</Text>
         </View>
       </View>
 
@@ -424,6 +466,11 @@ const toggleMinimize = useCallback(() => {
             {!isMinimized && (
               <Text style={styles.statusSubtitle}>{statusConfig.subtitle}</Text>
             )}
+            {waiting && (
+              <Text style={[styles.statusSubtitle, { color: waiting.inFreeTime ? SECONDARY : '#D97706', fontWeight: '700' }]}>
+                {waiting.label}
+              </Text>
+            )}
           </View>
         </View>
 
@@ -437,8 +484,14 @@ const toggleMinimize = useCallback(() => {
         )}
 
         {/* Expanded Content - Hidden when minimized */}
+        {/* Scrollable so the Navigate and Cancel buttons at the bottom are
+            never cut off by the fixed-height sheet on smaller phones. */}
         {!isMinimized && (
-          <>
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{ paddingBottom: 16 }}
+            showsVerticalScrollIndicator={false}
+          >
             {/* Progress Steps */}
             <View style={styles.progressContainer}>
               <View style={styles.progressStep}>
@@ -531,12 +584,7 @@ const toggleMinimize = useCallback(() => {
                   </TouchableOpacity>
                   <TouchableOpacity 
                     style={[styles.actionBtn, styles.actionBtnSecondary]}
-                    onPress={() => {
-                      if (riderData.phoneNumber || riderData.phone) {
-                        // Linking.openURL(`tel:${riderData.phoneNumber || riderData.phone}`);
-                        console.log('Call:', riderData.phoneNumber || riderData.phone);
-                      }
-                    }}
+                    onPress={() => confirmMaskedCall(rideId, 'your passenger')}
                   >
                     <Ionicons name="call" size={18} color={SECONDARY} />
                   </TouchableOpacity>
@@ -579,7 +627,12 @@ const toggleMinimize = useCallback(() => {
                 <Text style={styles.cancelText}>Can't make it? Cancel ride</Text>
               </TouchableOpacity>
             )}
-          </>
+            {status === 'arrived' && (
+              <TouchableOpacity style={styles.cancelBtn} onPress={handleNoShow}>
+                <Text style={styles.cancelText}>Passenger not here? Cancel ride</Text>
+              </TouchableOpacity>
+            )}
+          </ScrollView>
         )}
       </Animated.View>
     </View>

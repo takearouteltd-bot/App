@@ -12,6 +12,7 @@ import { useNavigation } from '@react-navigation/native';
 import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { currencySymbol, money, useAppConfig } from '../../../utils/appConfig';
 
 export default function WithdrawScreen() {
   const navigation = useNavigation();
@@ -19,6 +20,7 @@ export default function WithdrawScreen() {
   const auth = getAuth();
   const functions = getFunctions();
 
+  const appConfig = useAppConfig();
   const [wallet, setWallet] = useState(null);
   const [driver, setDriver] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -53,6 +55,9 @@ export default function WithdrawScreen() {
   }, [driverId]);
 
   const availableBalance = wallet ? wallet.availableBalance : 0;
+  // Minimum set on the dashboard (Settings, Drivers). Also enforced server-side.
+  const minimumPayout = appConfig.drivers.minimumPayout;
+  const belowMinimum = availableBalance < minimumPayout;
   const withdrawAmount = availableBalance; // Default to full balance
 
   const accountDetails = driver && driver.accountDetails ? driver.accountDetails : {};
@@ -99,6 +104,11 @@ export default function WithdrawScreen() {
   const handleWithdraw = async () => {
     if (availableBalance <= 0) {
       Alert.alert('Error', 'You have no balance to withdraw');
+      return;
+    }
+
+    if (belowMinimum) {
+      Alert.alert('Not enough to withdraw', `The minimum withdrawal is ${money(minimumPayout)}.`);
       return;
     }
 
@@ -160,7 +170,7 @@ export default function WithdrawScreen() {
         <View style={styles.balanceCard}>
           <Text style={styles.balanceLabel}>AVAILABLE BALANCE</Text>
           <Text style={styles.balanceValue}>
-            £{availableBalance.toFixed(2)}
+            {currencySymbol()}{availableBalance.toFixed(2)}
           </Text>
         </View>
       </View>
@@ -179,7 +189,7 @@ export default function WithdrawScreen() {
           </View>
 
           <Text style={styles.amount}>
-            £{withdrawAmount.toFixed(2)}
+            {currencySymbol()}{withdrawAmount.toFixed(2)}
           </Text>
         </View>
 
@@ -210,7 +220,7 @@ export default function WithdrawScreen() {
         {/* Transaction Fee */}
         <View style={styles.card}>
           <Text style={styles.label}>Transaction Fee</Text>
-          <Text style={styles.freeText}>£0.00</Text>
+          <Text style={styles.freeText}>{money(0)}</Text>
           <Text style={styles.subNote}>
             Free withdrawal
           </Text>
@@ -221,10 +231,10 @@ export default function WithdrawScreen() {
       <View style={styles.footer}>
         <TouchableOpacity
           onPress={handleWithdraw}
-          disabled={requesting || availableBalance <= 0}
+          disabled={requesting || availableBalance <= 0 || belowMinimum}
           style={[
             styles.confirmBtn,
-            (requesting || availableBalance <= 0) && { opacity: 0.5 }
+            (requesting || availableBalance <= 0 || belowMinimum) && { opacity: 0.5 }
           ]}
         >
           {requesting ? (

@@ -15,6 +15,7 @@ import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "../../../config/firebase";
+import { currencySymbol } from '../../../utils/appConfig';
 
 const PRIMARY = "#79B531";
 const SECONDARY = "#235594";
@@ -255,7 +256,7 @@ const fetchRiderData = useCallback(async () => {
         {/* Stats Dashboard */}
         <View style={styles.statsContainer}>
           <StatCard icon="car-outline" value={stats.totalRides} label="Rides" color={PRIMARY} />
-          <StatCard icon="wallet-outline" value={`£${stats.totalSpent}`} label="Spent" color={SECONDARY} />
+          <StatCard icon="wallet-outline" value={`${currencySymbol()}stats.totalSpent}`} label="Spent" color={SECONDARY} />
         </View>
 
         {/* Menu Sections */}
@@ -296,6 +297,22 @@ const fetchRiderData = useCallback(async () => {
             title="Messages"
             subtitle="Updates & offers from TakeARoute"
             onPress={() => navigation.navigate("Inbox", { role: "rider" })}
+          />
+
+          <SectionHeader title="Help & safety" />
+
+          <MenuItem
+            icon="chatbubbles-outline"
+            title="My Reports"
+            subtitle="Issues, lost property & replies from support"
+            onPress={() => navigation.navigate("MyReports", { role: "rider" })}
+          />
+
+          <MenuItem
+            icon="shield-checkmark-outline"
+            title="Safety"
+            subtitle={riderData?.emergencyContact?.name ? `Emergency contact: ${riderData.emergencyContact.name}` : "Add an emergency contact"}
+            onPress={() => navigation.navigate("EmergencyContact", { role: "rider" })}
           />
           <SectionHeader title="Account Actions" />
 

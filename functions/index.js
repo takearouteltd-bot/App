@@ -16,6 +16,108 @@ const db = admin.firestore();
 ====================================== */
 // Recommended: set via firebase config or env variable
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+
+/* ======================================
+   ADMIN SETTINGS (config/app)
+   Edited on the dashboard Settings page. Every value falls back to the
+   number used before settings existed.
+====================================== */
+const CONFIG_DEFAULTS = {
+  currency: "GBP",
+  waiting: {freeMinutes: 5, ratePerMinute: 0.25, maxCharge: 10},
+  subscription: {monthlyPrice: 99.99},
+  drivers: {minimumPayout: 10},
+  dispatch: {searchRadiusKm: 50, requestTimeoutSeconds: 20},
+};
+
+/**
+ * Reads one numeric setting with a fallback.
+ * @param {Object} section The stored section, may be missing.
+ * @param {string} key Field name.
+ * @param {number} fallback Default value.
+ * @return {number} The setting.
+ */
+function numSetting(section, key, fallback) {
+  const value = section ? Number(section[key]) : NaN;
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+/**
+ * Loads config/app with defaults filled in.
+ * @return {Promise<Object>} Settings.
+ */
+async function loadAppConfig() {
+  let data = {};
+  try {
+    const snap = await db.collection("config").doc("app").get();
+    if (snap.exists) data = snap.data() || {};
+  } catch (error) {
+    console.error("Could not read config/app:", error);
+  }
+  const d = CONFIG_DEFAULTS;
+  return {
+    currency: typeof data.currency === "string" && data.currency ?
+      data.currency.toUpperCase() : d.currency,
+    waiting: {
+      freeMinutes: numSetting(data.waiting, "freeMinutes",
+          d.waiting.freeMinutes),
+      ratePerMinute: numSetting(data.waiting, "ratePerMinute",
+          d.waiting.ratePerMinute),
+      maxCharge: numSetting(data.waiting, "maxCharge", d.waiting.maxCharge),
+    },
+    subscription: {
+      monthlyPrice: numSetting(data.subscription, "monthlyPrice",
+          d.subscription.monthlyPrice),
+    },
+    drivers: {
+      minimumPayout: numSetting(data.drivers, "minimumPayout",
+          d.drivers.minimumPayout),
+    },
+    dispatch: {
+      searchRadiusKm: numSetting(data.dispatch, "searchRadiusKm",
+          d.dispatch.searchRadiusKm),
+      requestTimeoutSeconds: numSetting(data.dispatch,
+          "requestTimeoutSeconds", d.dispatch.requestTimeoutSeconds),
+    },
+  };
+}
+
+/**
+ * Stripe currency for a ride: the one it was booked in, else GBP.
+ * @param {Object} ride Ride document.
+ * @return {string} Lowercase ISO code.
+ */
+function rideCurrency(ride) {
+  const fareCurrency = ride && ride.fare ? ride.fare.currency : null;
+  const code = (ride && ride.currency) || fareCurrency || "gbp";
+  return String(code).toLowerCase();
+}
+
+/**
+ * Waiting charge between the driver arriving and the ride starting.
+ * Same maths as waitingCharge() in the app's utils/appConfig.js.
+ * @param {Object} ride Ride document with arrivedAt and startedAt.
+ * @param {Object} fallback Waiting settings used if the ride has none.
+ * @return {number} Charge in major units, e.g. 1.25.
+ */
+function computeWaitingCharge(ride, fallback) {
+  if (!ride || !ride.arrivedAt || !ride.startedAt) return 0;
+  const arrived = ride.arrivedAt.toMillis ?
+    ride.arrivedAt.toMillis() : Number(ride.arrivedAt);
+  const started = ride.startedAt.toMillis ?
+    ride.startedAt.toMillis() : Number(ride.startedAt);
+  if (!Number.isFinite(arrived) || !Number.isFinite(started)) return 0;
+
+  const p = ride.waitingPolicy || {};
+  const free = numSetting(p, "freeMinutes", fallback.freeMinutes);
+  const rate = numSetting(p, "ratePerMinute", fallback.ratePerMinute);
+  const max = numSetting(p, "maxCharge", fallback.maxCharge);
+
+  const minutes = Math.max(0, started - arrived) / 60000;
+  const chargeable = Math.max(0, Math.ceil(minutes - free));
+  const charge = Math.min(chargeable * rate, max);
+  return Math.round(charge * 100) / 100;
+}
 /* ======================================
    CREATE STRIPE CUSTOMER
 ====================================== */
@@ -304,7 +406,7 @@ exports.authorizePaymentOnRideAccept = functions.firestore
         const paymentIntent = await stripe.paymentIntents.create(
             {
               amount: estimatedAmount,
-              currency: "gbp",
+              currency: rideCurrency(after),
               customer: stripeCustomerId,
               payment_method: defaultPaymentMethodId,
               capture_method: "manual",
@@ -334,7 +436,7 @@ exports.authorizePaymentOnRideAccept = functions.firestore
           stripePaymentIntentId: paymentIntentId,
 
           amount: estimatedAmount,
-          currency: "gbp",
+          currency: rideCurrency(after),
 
           status: "authorized",
 
@@ -397,9 +499,16 @@ exports.chargeOnRideCompletion = functions.firestore
         });
 
         let finalAmount = 0;
+        const baseTotal = after.fare && after.fare.total ?
+          Number(after.fare.total) : 0;
 
-        if (after.fare && after.fare.total) {
-          finalAmount = Math.round(after.fare.total * 100);
+        // Waiting time at pickup, charged per the ride's booking terms.
+        const appConfig = await loadAppConfig();
+        const waitingFee = computeWaitingCharge(after, appConfig.waiting);
+        const finalTotal = Math.round((baseTotal + waitingFee) * 100) / 100;
+
+        if (baseTotal > 0) {
+          finalAmount = Math.round(finalTotal * 100);
         }
 
         if (finalAmount <= 0) {
@@ -441,7 +550,7 @@ exports.chargeOnRideCompletion = functions.firestore
           capturedIntent = await stripe.paymentIntents.create(
               {
                 amount: extraAmount,
-                currency: "gbp",
+                currency: rideCurrency(after),
                 customer: paymentIntent.customer,
                 payment_method: paymentIntent.payment_method,
                 confirm: true,
@@ -471,7 +580,9 @@ exports.chargeOnRideCompletion = functions.firestore
         // UPDATE RIDE (UI ONLY)
         // =========================
         await db.collection("rides").doc(rideId).update({
-          paymentStatus: "captured",
+          "paymentStatus": "captured",
+          "fare.waitingCharge": waitingFee,
+          "fare.finalTotal": finalTotal,
         });
 
         console.log("✅ PAYMENT CAPTURED:", rideId);
@@ -803,8 +914,9 @@ exports.creditDriverWalletOnRideCompletion = functions.firestore
         return null;
       }
 
-      const driverEarning = after && after.fare &&
-      after.fare.total ? Number(after.fare.total) : 0;
+      // Final total includes any waiting charge; older rides only have total.
+      const driverEarning = after && after.fare ?
+        Number(after.fare.finalTotal || after.fare.total || 0) : 0;
       if (driverEarning <= 0) {
         console.error("❌ Invalid fare amount:", driverEarning);
         return null;
@@ -894,10 +1006,11 @@ exports.requestDriverPayout = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError("invalid-argument", "Invalid amount");
   }
 
-  const MIN_PAYOUT = 0.01; // Set your minimum, e.g., 10.00 for production
+  // Minimum set on the dashboard (Settings, Drivers).
+  const MIN_PAYOUT = (await loadAppConfig()).drivers.minimumPayout;
   if (requestedAmount < MIN_PAYOUT) {
     throw new functions.https.HttpsError("failed-precondition",
-        "Minimum payout is £" + MIN_PAYOUT);
+        "Minimum payout is " + MIN_PAYOUT.toFixed(2));
   }
 
   const walletRef = db.collection("driverWallets").doc(driverId);
@@ -1174,8 +1287,6 @@ exports.detachPaymentMethod = functions.https.onCall(async (data, context) => {
 });
 
 
-const MONTHLY_PRICE = 99.99;
-
 exports.autoDeductSubscription = functions
     .region("europe-west2")
     .firestore.document("driverWallets/{driverId}")
@@ -1197,6 +1308,9 @@ exports.autoDeductSubscription = functions
 
       const driverData = driverSnap.data();
       const sub = driverData.subscription || {};
+
+      // Price set on the dashboard (Settings, Subscription).
+      const MONTHLY_PRICE = (await loadAppConfig()).subscription.monthlyPrice;
 
       if (sub.status !== "active" || sub.paymentMethod !== "wallet_deduction") {
         return null;
@@ -1298,3 +1412,728 @@ exports.autoDeductSubscription = functions
 
       return null;
     });
+
+
+/* ======================================
+   PUSH NOTIFICATIONS
+   Phones save their FCM token to pushTokens/{uid} (see the app's
+   utils/notifications.js). Android channels decide sound and importance:
+   job-alerts, trip-updates, messages, general.
+====================================== */
+
+/**
+ * Sends one notification to every saved phone for the given users and
+ * removes tokens Firebase says are no longer valid.
+ * @param {Array<string>} uids User ids.
+ * @param {Object} msg {title, body, channelId, data, ttlSeconds}.
+ * @return {Promise<number>} Number of phones reached.
+ */
+async function sendPush(uids, msg) {
+  const unique = [...new Set((uids || []).filter(Boolean))];
+  if (!unique.length) return 0;
+
+  const tokenOwners = [];
+  const snaps = await Promise.all(
+      unique.map((uid) => db.collection("pushTokens").doc(uid).get()),
+  );
+  snaps.forEach((snap, i) => {
+    const tokens = snap.exists ? snap.data().tokens || [] : [];
+    tokens.forEach((token) => tokenOwners.push({uid: unique[i], token}));
+  });
+  if (!tokenOwners.length) return 0;
+
+  const data = {};
+  Object.entries(msg.data || {}).forEach(([k, v]) => {
+    if (v !== undefined && v !== null) data[k] = String(v);
+  });
+
+  let reached = 0;
+  for (let i = 0; i < tokenOwners.length; i += 500) {
+    const batch = tokenOwners.slice(i, i + 500);
+    const res = await admin.messaging().sendEachForMulticast({
+      tokens: batch.map((t) => t.token),
+      notification: {title: msg.title, body: msg.body},
+      data,
+      android: {
+        priority: "high",
+        ttl: (msg.ttlSeconds || 3600) * 1000,
+        notification: {channelId: msg.channelId || "general"},
+      },
+      apns: {payload: {aps: {sound: "default"}}},
+    });
+    reached += res.successCount;
+
+    const dead = [];
+    res.responses.forEach((r, j) => {
+      const code = r.error && r.error.code;
+      if (code === "messaging/registration-token-not-registered" ||
+          code === "messaging/invalid-registration-token" ||
+          code === "messaging/invalid-argument") {
+        dead.push(batch[j]);
+      }
+    });
+    await Promise.all(dead.map((d) =>
+      db.collection("pushTokens").doc(d.uid).update({
+        tokens: admin.firestore.FieldValue.arrayRemove(d.token),
+      }).catch(() => null),
+    ));
+  }
+  return reached;
+}
+
+/**
+ * Straight-line distance in km.
+ * @param {Object} a {latitude, longitude}.
+ * @param {Object} b {latitude, longitude}.
+ * @return {number} Kilometres, or Infinity if a point is missing.
+ */
+function distanceKm(a, b) {
+  if (!a || !b || typeof a.latitude !== "number" ||
+      typeof b.latitude !== "number") {
+    return Infinity;
+  }
+  const toRad = (d) => d * Math.PI / 180;
+  const dLat = toRad(b.latitude - a.latitude);
+  const dLon = toRad(b.longitude - a.longitude);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.latitude)) *
+    Math.cos(toRad(b.latitude)) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(h));
+}
+
+/**
+ * Rings every eligible online driver near the pickup.
+ * @param {string} rideId Ride id.
+ * @param {Object} ride Ride document.
+ * @return {Promise<null>} Nothing.
+ */
+async function offerRideToDrivers(rideId, ride) {
+  const cfg = await loadAppConfig();
+  const skip = new Set([
+    ...(ride.declinedBy || []),
+    ...(ride.blockedDriverIds || []),
+  ]);
+  const online = await db.collection("drivers")
+      .where("status", "==", "online").get();
+
+  const nearby = [];
+  online.forEach((snap) => {
+    const d = snap.data();
+    if (skip.has(snap.id) || d.blocked === true || d.approved !== true ||
+        d.isOnRide === true) {
+      return;
+    }
+    const km = distanceKm(d.location, ride.pickupLocation);
+    if (km <= cfg.dispatch.searchRadiusKm) nearby.push(snap.id);
+  });
+
+  const pickup = ride.pickupLocation && ride.pickupLocation.address ?
+    ride.pickupLocation.address : "a nearby pickup";
+  await sendPush(nearby, {
+    title: "New job offer",
+    body: `Pickup at ${pickup}. Open TakeARoute to accept.`,
+    channelId: "job-alerts",
+    ttlSeconds: Math.max(10, cfg.dispatch.requestTimeoutSeconds || 20),
+    data: {type: "job_offer", rideId},
+  });
+  console.log(`Job ${rideId} offered to ${nearby.length} driver(s)`);
+  return null;
+}
+
+exports.notifyDriversOfNewRide = functions.firestore
+    .document("rides/{rideId}")
+    .onCreate(async (snap, context) => {
+      const ride = snap.data();
+      if (ride.status !== "searching") return null;
+      return offerRideToDrivers(context.params.rideId, ride);
+    });
+
+exports.notifyRideUpdates = functions.firestore
+    .document("rides/{rideId}")
+    .onUpdate(async (change, context) => {
+      const before = change.before.data();
+      const after = change.after.data();
+      const rideId = context.params.rideId;
+      if (before.status === after.status) return null;
+
+      const cancelled = ["cancelled", "canceled"];
+      const trip = {channelId: "trip-updates", data: {type: "trip", rideId}};
+
+      // Driver gave the job back: offer it again.
+      if (after.status === "searching" && before.status !== "searching") {
+        await sendPush([after.riderId], {...trip,
+          title: "Finding you another driver",
+          body: "Your driver had to cancel. We are looking for a new one."});
+        return offerRideToDrivers(rideId, after);
+      }
+      if (after.status === "accepted") {
+        return sendPush([after.riderId], {...trip,
+          title: "Driver on the way",
+          body: "Your driver has accepted and is heading to your pickup."});
+      }
+      if (after.status === "arrived") {
+        return sendPush([after.riderId], {...trip,
+          title: "Your driver has arrived",
+          body: "Please meet your driver at the pickup point."});
+      }
+      if (cancelled.includes(after.status)) {
+        if (after.cancelledBy === "driver") {
+          return sendPush([after.riderId], {...trip,
+            title: "Ride cancelled",
+            body: "Your driver cancelled this ride. " +
+              "You have not been charged."});
+        }
+        if (before.driverId || after.driverId) {
+          return sendPush([after.driverId || before.driverId], {...trip,
+            title: "Job cancelled",
+            body: "The passenger cancelled this job. " +
+              "You are free for the next one."});
+        }
+      }
+      return null;
+    });
+
+exports.notifyChatMessage = functions.firestore
+    .document("rides/{rideId}/messages/{messageId}")
+    .onCreate(async (snap, context) => {
+      const msg = snap.data();
+      const rideSnap = await db.collection("rides")
+          .doc(context.params.rideId).get();
+      if (!rideSnap.exists) return null;
+      const ride = rideSnap.data();
+      const toDriver = msg.senderType !== "driver";
+      const to = toDriver ? ride.driverId : ride.riderId;
+      const text = String(msg.text || "");
+      return sendPush([to], {
+        title: toDriver ? "Message from your passenger" :
+          "Message from your driver",
+        body: text.length > 120 ? text.slice(0, 117) + "..." : text,
+        channelId: "messages",
+        data: {type: "chat", rideId: context.params.rideId},
+      });
+    });
+
+exports.notifySupportReply = functions.firestore
+    .document("reports/{reportId}/messages/{messageId}")
+    .onCreate(async (snap, context) => {
+      if (snap.data().senderRole !== "admin") return null;
+      const reportSnap = await db.collection("reports")
+          .doc(context.params.reportId).get();
+      if (!reportSnap.exists) return null;
+      return sendPush([reportSnap.data().reporterId], {
+        title: "Reply from TakeARoute support",
+        body: "Open My reports to read it.",
+        channelId: "messages",
+        data: {type: "report", reportId: context.params.reportId},
+      });
+    });
+
+exports.notifyAnnouncement = functions.firestore
+    .document("announcements/{id}")
+    .onCreate(async (snap) => {
+      const a = snap.data();
+      let uids = [];
+      if (a.audience === "user") {
+        uids = [a.userId];
+      } else {
+        const wantDrivers = a.audience === "drivers" || a.audience === "all";
+        const wantRiders = a.audience === "riders" || a.audience === "all";
+        const all = await db.collection("pushTokens").get();
+        const users = await Promise.all(all.docs.map((d) =>
+          db.collection("users").doc(d.id).get()));
+        users.forEach((u, i) => {
+          const role = u.exists ? u.data().role : null;
+          if ((role === "driver" && wantDrivers) ||
+              (role === "rider" && wantRiders)) {
+            uids.push(all.docs[i].id);
+          }
+        });
+      }
+      return sendPush(uids, {
+        title: a.title || "TakeARoute",
+        body: a.body || "",
+        channelId: "general",
+        data: {type: "announcement"},
+      });
+    });
+
+exports.notifyChangeRequestDecision = functions.firestore
+    .document("changeRequests/{id}")
+    .onUpdate(async (change) => {
+      const before = change.before.data();
+      const after = change.after.data();
+      if (before.status === after.status || after.status === "pending") {
+        return null;
+      }
+      const ok = after.status === "approved";
+      return sendPush([after.driverId], {
+        title: ok ? "Change approved" : "Change not approved",
+        body: ok ?
+          `Your ${String(after.fieldLabel || "details").toLowerCase()} ` +
+            "has been updated." :
+          (after.adminNote || "Open Personal details to see why."),
+        channelId: "general",
+        data: {type: "change_request"},
+      });
+    });
+
+
+/* ======================================
+   RIDE RECEIPTS BY EMAIL
+   Sent through Resend once payment is captured, and on request from the app.
+   Set the key first:  firebase functions:secrets:set RESEND_API_KEY
+   Optional sender override: RECEIPT_FROM (default receipts@takearoute.ltd).
+====================================== */
+const RECEIPT_SECRETS = ["RESEND_API_KEY"];
+
+/**
+ * Money for emails, e.g. 12.5 -> "£12.50".
+ * @param {number} amount Amount in major units.
+ * @param {string} code Currency code.
+ * @return {string} Formatted amount.
+ */
+function emailMoney(amount, code) {
+  const symbols = {
+    GBP: "£", EUR: "€", USD: "$", CAD: "CA$", AUD: "A$",
+    AED: "AED ", PKR: "Rs ", SAR: "SAR ",
+  };
+  const c = String(code || "GBP").toUpperCase();
+  const n = Number(amount);
+  return (symbols[c] || `${c} `) + (Number.isFinite(n) ? n.toFixed(2) : "0.00");
+}
+
+/**
+ * Escapes text placed into the email HTML.
+ * @param {string} value Raw text.
+ * @return {string} Safe text.
+ */
+function escapeHtml(value) {
+  return String(value === undefined || value === null ? "" : value)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+}
+
+/**
+ * Builds the receipt email.
+ * @param {Object} ride Ride document.
+ * @param {string} rideId Ride id.
+ * @param {Object} extra {driverName, vehicle, riderName}.
+ * @return {Object} {subject, html, text}.
+ */
+function buildReceipt(ride, rideId, extra) {
+  const currency = ride.currency ||
+    (ride.fare && ride.fare.currency) || "GBP";
+  const fare = ride.fare || {};
+  const total = Number(fare.finalTotal || fare.total || ride.fareEstimate || 0);
+  const when = ride.completedAt && ride.completedAt.toDate ?
+    ride.completedAt.toDate() : new Date();
+  const date = when.toLocaleDateString("en-GB",
+      {weekday: "long", day: "numeric", month: "long", year: "numeric"});
+  const time = when.toLocaleTimeString("en-GB",
+      {hour: "2-digit", minute: "2-digit"});
+
+  const lines = [];
+  const add = (label, value, opts) => {
+    if (value === null || value === undefined) return;
+    lines.push({label, value, muted: opts && opts.muted});
+  };
+  add("Base fare", emailMoney(fare.baseFare, currency));
+  add("Distance", fare.distanceFare !== undefined ?
+    emailMoney(fare.distanceFare, currency) : null);
+  add("Time", fare.timeFare !== undefined ?
+    emailMoney(fare.timeFare, currency) : null);
+  if (Number(fare.discountAmount) > 0) {
+    add("Promo discount", "-" + emailMoney(fare.discountAmount, currency));
+  }
+  if (fare.vat !== undefined) {
+    add(`VAT (${fare.vatPercent || 20}%)`, emailMoney(fare.vat, currency));
+  }
+  if (Number(fare.waitingCharge) > 0) {
+    add("Waiting time", emailMoney(fare.waitingCharge, currency));
+  }
+
+  const rowsHtml = lines.map((l) => `
+      <tr>
+        <td style="padding:6px 0;color:#4B5563;font-size:14px;">
+          ${escapeHtml(l.label)}</td>
+        <td style="padding:6px 0;text-align:right;color:#1F2937;
+          font-size:14px;">${escapeHtml(l.value)}</td>
+      </tr>`).join("");
+
+  const pickup = (ride.pickupLocation && ride.pickupLocation.address) || "";
+  const dropoff = (ride.dropoffLocation && ride.dropoffLocation.address) || "";
+  const distance = ride.route && ride.route.distanceKm ?
+    `${ride.route.distanceKm} km` : "";
+  const duration = ride.route && ride.route.durationMinutes ?
+    `${Math.ceil(ride.route.durationMinutes)} min` : "";
+
+  const html = `<!doctype html>
+<html><body style="margin:0;background:#F5F7FA;
+  font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
+  <div style="max-width:560px;margin:0 auto;padding:24px 16px;">
+    <div style="background:#17375E;border-radius:18px;padding:24px;">
+      <div style="color:#C9D6EA;font-size:14px;">TakeARoute receipt</div>
+      <div style="color:#fff;font-size:34px;font-weight:800;margin-top:6px;">
+        ${escapeHtml(emailMoney(total, currency))}</div>
+      <div style="color:#C9D6EA;font-size:13px;margin-top:4px;">
+        ${escapeHtml(date)}, ${escapeHtml(time)}</div>
+    </div>
+
+    <div style="background:#fff;border:1px solid #E5E7EB;border-radius:18px;
+      padding:20px;margin-top:14px;">
+      <div style="font-size:15px;color:#1F2937;font-weight:600;">
+        ${escapeHtml(pickup)}</div>
+      <div style="color:#9CA3AF;font-size:12px;margin:6px 0;">to</div>
+      <div style="font-size:15px;color:#1F2937;font-weight:600;">
+        ${escapeHtml(dropoff)}</div>
+      <div style="color:#6B7280;font-size:13px;margin-top:12px;">
+        ${escapeHtml([distance, duration].filter(Boolean).join(", "))}</div>
+    </div>
+
+    <div style="background:#fff;border:1px solid #E5E7EB;border-radius:18px;
+      padding:20px;margin-top:14px;">
+      <table style="width:100%;border-collapse:collapse;">${rowsHtml}
+        <tr><td colspan="2" style="border-top:1px solid #E5E7EB;
+          padding-top:10px;"></td></tr>
+        <tr>
+          <td style="color:#17375E;font-size:16px;font-weight:700;">
+            Total paid</td>
+          <td style="text-align:right;color:#17375E;font-size:16px;
+            font-weight:800;">${escapeHtml(emailMoney(total, currency))}</td>
+        </tr>
+      </table>
+      <div style="color:#6B7280;font-size:13px;margin-top:12px;">
+        Paid by card ending ${escapeHtml(ride.cardLast4 || "on file")}.
+      </div>
+    </div>
+
+    <div style="background:#fff;border:1px solid #E5E7EB;border-radius:18px;
+      padding:20px;margin-top:14px;">
+      <div style="color:#6B7280;font-size:12px;font-weight:700;
+        text-transform:uppercase;">Your driver</div>
+      <div style="font-size:15px;color:#1F2937;margin-top:6px;">
+        ${escapeHtml(extra.driverName || "TakeARoute driver")}
+        ${extra.vehicle ? ", " + escapeHtml(extra.vehicle) : ""}</div>
+    </div>
+
+    <div style="color:#6B7280;font-size:12px;line-height:18px;
+      margin:18px 4px 0;">
+      Trip reference ${escapeHtml(String(rideId).slice(0, 8).toUpperCase())}.
+      Something wrong with this trip? Report it in the app under My reports and
+      support will reply.
+    </div>
+  </div>
+</body></html>`;
+
+  const text = [
+    `TakeARoute receipt, ${date} ${time}`,
+    `${pickup} to ${dropoff}`,
+    ...lines.map((l) => `${l.label}: ${l.value}`),
+    `Total paid: ${emailMoney(total, currency)}`,
+    `Driver: ${extra.driverName || "TakeARoute driver"}`,
+    `Trip reference ${String(rideId).slice(0, 8).toUpperCase()}`,
+  ].join("\n");
+
+  return {
+    subject: `Your TakeARoute receipt, ${emailMoney(total, currency)}`,
+    html,
+    text,
+  };
+}
+
+/**
+ * Finds the passenger's email: the ride, their record, then their login.
+ * @param {Object} ride Ride document.
+ * @return {Promise<string|null>} Email address.
+ */
+async function riderEmail(ride) {
+  if (ride.riderEmail) return ride.riderEmail;
+  if (!ride.riderId) return null;
+  const snap = await db.collection("riders").doc(ride.riderId).get();
+  if (snap.exists && snap.data().email) return snap.data().email;
+  try {
+    const user = await admin.auth().getUser(ride.riderId);
+    return user.email || null;
+  } catch (error) {
+    return null;
+  }
+}
+
+/**
+ * Sends the receipt for one ride.
+ * @param {string} rideId Ride id.
+ * @param {Object} ride Ride document.
+ * @param {string} to Optional address to send to instead.
+ * @return {Promise<Object>} {sent: boolean, reason?: string}.
+ */
+async function emailRideReceipt(rideId, ride, to) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.log("No RESEND_API_KEY set, skipping receipt");
+    return {sent: false, reason: "not_configured"};
+  }
+  const address = to || await riderEmail(ride);
+  if (!address) return {sent: false, reason: "no_email"};
+
+  const [driverSnap, riderSnap] = await Promise.all([
+    ride.driverId ?
+      db.collection("drivers").doc(ride.driverId).get() : null,
+    ride.riderId ? db.collection("riders").doc(ride.riderId).get() : null,
+  ]);
+  const driver = driverSnap && driverSnap.exists ? driverSnap.data() : {};
+  const rider = riderSnap && riderSnap.exists ? riderSnap.data() : {};
+  const vehicle = [driver.makeModel, driver.registrationNumber]
+      .filter(Boolean).join(", ");
+
+  const mail = buildReceipt(ride, rideId, {
+    driverName: driver.fullName ||
+      [driver.firstName, driver.lastName].filter(Boolean).join(" "),
+    vehicle,
+    riderName: rider.fullName || "",
+  });
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: process.env.RECEIPT_FROM ||
+        "TakeARoute <receipts@takearoute.ltd>",
+      to: [address],
+      subject: mail.subject,
+      html: mail.html,
+      text: mail.text,
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    console.error(`Receipt send failed (${response.status}): ${detail}`);
+    return {sent: false, reason: "send_failed"};
+  }
+
+  await db.collection("rides").doc(rideId).update({
+    receiptSentAt: admin.firestore.FieldValue.serverTimestamp(),
+    receiptSentTo: address,
+  }).catch(() => null);
+  return {sent: true, to: address};
+}
+
+/* Sends the receipt once the payment has been captured. */
+exports.sendReceiptOnPaymentCaptured = functions
+    .runWith({secrets: RECEIPT_SECRETS})
+    .firestore.document("rides/{rideId}")
+    .onUpdate(async (change, context) => {
+      const before = change.before.data();
+      const after = change.after.data();
+      const captured = after.paymentStatus === "captured" ||
+        after.paymentStatus === "paid";
+      if (!captured || before.paymentStatus === after.paymentStatus) {
+        return null;
+      }
+      if (after.receiptSentAt) return null;
+      const result = await emailRideReceipt(context.params.rideId, after);
+      console.log(`Receipt for ${context.params.rideId}:`,
+          JSON.stringify(result));
+      return null;
+    });
+
+/* Passenger taps "Email receipt", optionally to a different address. */
+exports.resendRideReceipt = functions
+    .runWith({secrets: RECEIPT_SECRETS})
+    .https.onCall(async (data, context) => {
+      if (!context.auth) {
+        throw new functions.https.HttpsError("unauthenticated",
+            "Please sign in.");
+      }
+      const rideId = data && data.rideId;
+      if (!rideId) {
+        throw new functions.https.HttpsError("invalid-argument",
+            "Missing rideId");
+      }
+      const snap = await db.collection("rides").doc(rideId).get();
+      if (!snap.exists) {
+        throw new functions.https.HttpsError("not-found", "Ride not found");
+      }
+      const ride = snap.data();
+      if (ride.riderId !== context.auth.uid) {
+        throw new functions.https.HttpsError("permission-denied",
+            "This is not your trip.");
+      }
+
+      let to = null;
+      if (data.email) {
+        to = String(data.email).trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+          throw new functions.https.HttpsError("invalid-argument",
+              "That email address does not look right.");
+        }
+      }
+
+      const result = await emailRideReceipt(rideId, ride, to);
+      if (!result.sent) {
+        const messages = {
+          not_configured: "Receipts are not switched on yet.",
+          no_email: "We do not have an email address for you. " +
+            "Enter one and try again.",
+          send_failed: "The receipt could not be sent. Please try again.",
+        };
+        throw new functions.https.HttpsError("failed-precondition",
+            messages[result.reason] || "The receipt could not be sent.");
+      }
+      return result;
+    });
+
+
+/* ======================================
+   MASKED CALLING (Twilio)
+   Neither side sees the other's number. Twilio rings the person who tapped
+   Call, then rings the other party and bridges them. Only works while a trip
+   is live (accepted, arrived or ongoing).
+   Secrets: TWILIO_SID (Account SID), TWILIO_TOKEN (Auth Token),
+   TWILIO_NUMBER (the purchased UK number, e.g. +447700900123).
+====================================== */
+const TWILIO_SECRETS = ["TWILIO_SID", "TWILIO_TOKEN", "TWILIO_NUMBER"];
+const CALLABLE_RIDE_STATUSES = ["accepted", "arrived", "ongoing"];
+
+/**
+ * Puts a number into international form. UK numbers default to +44.
+ * @param {string} raw Number as stored.
+ * @return {string|null} E.164 number, or null if it cannot be read.
+ */
+function toE164(raw) {
+  if (!raw) return null;
+  let value = String(raw).replace(/[^\d+]/g, "");
+  if (value.startsWith("+")) return value.length >= 8 ? value : null;
+  if (value.startsWith("00")) value = "+" + value.slice(2);
+  else if (value.startsWith("0")) value = "+44" + value.slice(1);
+  else if (value.startsWith("44")) value = "+" + value;
+  else return null;
+  return value.length >= 8 ? value : null;
+}
+
+/**
+ * Phone number held for a driver or passenger.
+ * @param {string} collection "drivers" or "riders".
+ * @param {string} uid User id.
+ * @return {Promise<string|null>} E.164 number.
+ */
+async function phoneFor(collection, uid) {
+  if (!uid) return null;
+  const snap = await db.collection(collection).doc(uid).get();
+  const data = snap.exists ? snap.data() : {};
+  const stored = data.phoneNumber || data.phone;
+  if (stored) return toE164(stored);
+  try {
+    const user = await admin.auth().getUser(uid);
+    return toE164(user.phoneNumber);
+  } catch (error) {
+    return null;
+  }
+}
+
+/* Passenger or driver taps Call during a live trip. */
+exports.startMaskedCall = functions
+    .runWith({secrets: TWILIO_SECRETS})
+    .https.onCall(async (data, context) => {
+      if (!context.auth) {
+        throw new functions.https.HttpsError("unauthenticated",
+            "Please sign in.");
+      }
+      const sid = process.env.TWILIO_SID;
+      const token = process.env.TWILIO_TOKEN;
+      const from = process.env.TWILIO_NUMBER;
+      if (!sid || !token || !from) {
+        throw new functions.https.HttpsError("failed-precondition",
+            "Calling is not switched on yet.");
+      }
+
+      const rideId = data && data.rideId;
+      if (!rideId) {
+        throw new functions.https.HttpsError("invalid-argument",
+            "Missing rideId");
+      }
+
+      const snap = await db.collection("rides").doc(rideId).get();
+      if (!snap.exists) {
+        throw new functions.https.HttpsError("not-found", "Ride not found");
+      }
+      const ride = snap.data();
+      const uid = context.auth.uid;
+      const isDriver = ride.driverId === uid;
+      const isRider = ride.riderId === uid;
+      if (!isDriver && !isRider) {
+        throw new functions.https.HttpsError("permission-denied",
+            "This is not your trip.");
+      }
+      if (!CALLABLE_RIDE_STATUSES.includes(ride.status)) {
+        throw new functions.https.HttpsError("failed-precondition",
+            "Calling is only available during a trip. " +
+            "Use My reports if you need help after a trip.");
+      }
+
+      const callerNumber = isDriver ?
+        await phoneFor("drivers", ride.driverId) :
+        await phoneFor("riders", ride.riderId);
+      const otherNumber = isDriver ?
+        await phoneFor("riders", ride.riderId) :
+        await phoneFor("drivers", ride.driverId);
+
+      if (!callerNumber) {
+        throw new functions.https.HttpsError("failed-precondition",
+            "We do not have your phone number. Add it in your profile.");
+      }
+      if (!otherNumber) {
+        throw new functions.https.HttpsError("failed-precondition",
+            isDriver ?
+              "The passenger has no phone number on file." :
+              "Your driver has no phone number on file.");
+      }
+
+      // Ring the caller first, then bridge to the other party. The caller ID
+      // on both legs is the TakeARoute number, so neither sees the other.
+      const twiml = "<Response><Say voice=\"alice\">" +
+        "Connecting you to your TakeARoute trip. Please hold." +
+        "</Say><Dial callerId=\"" + from + "\" timeout=\"30\">" +
+        otherNumber + "</Dial></Response>";
+
+      const body = new URLSearchParams({
+        To: callerNumber,
+        From: from,
+        Twiml: twiml,
+        TimeLimit: "900",
+      });
+
+      const response = await fetch(
+          `https://api.twilio.com/2010-04-01/Accounts/${sid}/Calls.json`,
+          {
+            method: "POST",
+            headers: {
+              "Authorization": "Basic " +
+                Buffer.from(`${sid}:${token}`).toString("base64"),
+              "Content-Type": "application/x-www-form-urlencoded",
+            },
+            body: body.toString(),
+          },
+      );
+
+      const result = await response.json();
+      if (!response.ok) {
+        console.error("Twilio call failed:", JSON.stringify(result));
+        throw new functions.https.HttpsError("internal",
+            "The call could not be connected. Please try again.");
+      }
+
+      // Logged for disputes. Numbers are not stored.
+      await db.collection("rides").doc(rideId).collection("calls").add({
+        callSid: result.sid || null,
+        startedBy: isDriver ? "driver" : "rider",
+        startedById: uid,
+        rideStatus: ride.status,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      }).catch(() => null);
+
+      return {connecting: true, callSid: result.sid || null};
+    });
+

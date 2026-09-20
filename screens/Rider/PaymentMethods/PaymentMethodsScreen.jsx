@@ -22,6 +22,7 @@ import {
 } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import { db } from "../../../config/firebase";
+import { currencySymbol } from '../../../utils/appConfig';
 
 const PRIMARY = "#79B531";
 const SECONDARY = "#235594";
@@ -137,7 +138,7 @@ export default function PaymentsMethodScreen({ navigation }) {
   };
 
   const formatAmount = (amount, currency = "gbp") => {
-    const symbol = currency.toLowerCase() === "gbp" ? "£" : currency.toUpperCase();
+    const symbol = currencySymbol(currency);
     // Amount is stored in pence (e.g., 720 = £7.20)
     return `${symbol}${(amount / 100).toFixed(2)}`;
   };
