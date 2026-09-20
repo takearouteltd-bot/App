@@ -14,8 +14,36 @@ const db = admin.firestore();
 /* ======================================
    STRIPE INIT
 ====================================== */
-// Recommended: set via firebase config or env variable
-const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+// Stripe's key lives in Google Secret Manager, like the Resend and Twilio
+// ones. Every function that touches Stripe declares it below.
+const STRIPE_SECRETS = ["STRIPE_SECRET_KEY"];
+
+// The Stripe client is created on first use, not at load time, so the file
+// can be analysed and deployed even when the key is only present at run time.
+// The key comes from the STRIPE_SECRET_KEY secret, declared by each function
+// that needs it.
+let stripeClient = null;
+
+/**
+ * Returns the Stripe client, creating it on first use.
+ * @return {Object} Stripe client.
+ */
+function getStripe() {
+  if (!stripeClient) {
+    const key = process.env.STRIPE_SECRET_KEY;
+    if (!key) {
+      throw new functions.https.HttpsError("failed-precondition",
+          "Payments are not configured. STRIPE_SECRET_KEY is missing.");
+    }
+    stripeClient = require("stripe")(key);
+  }
+  return stripeClient;
+}
+
+// Existing code calls stripe.xxx directly; this forwards each call lazily.
+const stripe = new Proxy({}, {
+  get: (target, prop) => getStripe()[prop],
+});
 
 /* ======================================
    ADMIN SETTINGS (config/app)
@@ -121,42 +149,43 @@ function computeWaitingCharge(ride, fallback) {
 /* ======================================
    CREATE STRIPE CUSTOMER
 ====================================== */
-exports.createStripeCustomer = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError(
-        "unauthenticated",
-        "User not logged in",
-    );
-  }
+exports.createStripeCustomer = functions
+    .runWith({secrets: STRIPE_SECRETS}).https.onCall(async (data, context) => {
+      if (!context.auth) {
+        throw new functions.https.HttpsError(
+            "unauthenticated",
+            "User not logged in",
+        );
+      }
 
 
-  const uid = context.auth.uid;
-  const email = data.email;
+      const uid = context.auth.uid;
+      const email = data.email;
 
-  if (!email) {
-    throw new functions.https.HttpsError(
-        "invalid-argument",
-        "Missing email",
-    );
-  }
+      if (!email) {
+        throw new functions.https.HttpsError(
+            "invalid-argument",
+            "Missing email",
+        );
+      }
 
-  try {
-    const customer = await stripe.customers.create({
-      email,
-      metadata: {uid},
+      try {
+        const customer = await stripe.customers.create({
+          email,
+          metadata: {uid},
+        });
+
+        await db.collection("riders").doc(uid).set(
+            {stripeCustomerId: customer.id},
+            {merge: true},
+        );
+
+        return {success: true, customerId: customer.id};
+      } catch (error) {
+        console.error("createStripeCustomer error:", error);
+        throw new functions.https.HttpsError("internal", error.message);
+      }
     });
-
-    await db.collection("riders").doc(uid).set(
-        {stripeCustomerId: customer.id},
-        {merge: true},
-    );
-
-    return {success: true, customerId: customer.id};
-  } catch (error) {
-    console.error("createStripeCustomer error:", error);
-    throw new functions.https.HttpsError("internal", error.message);
-  }
-});
 
 /* ======================================
    EXCHANGE PHONE AUTH -> CUSTOM TOKEN
@@ -213,147 +242,151 @@ exports.exchangePhoneAuthToken = functions.https.onCall(
 /* ======================================
    CREATE SETUP INTENT
 ====================================== */
-exports.createSetupIntent = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError(
-        "unauthenticated",
-        "User not logged in",
-    );
-  }
+exports.createSetupIntent = functions
+    .runWith({secrets: STRIPE_SECRETS}).https.onCall(async (data, context) => {
+      if (!context.auth) {
+        throw new functions.https.HttpsError(
+            "unauthenticated",
+            "User not logged in",
+        );
+      }
 
-  const uid = context.auth.uid;
+      const uid = context.auth.uid;
 
-  try {
-    const userDoc = await db.collection("riders").doc(uid).get();
+      try {
+        const userDoc = await db.collection("riders").doc(uid).get();
 
-    if (!userDoc.exists) {
-      throw new functions.https.HttpsError("not-found", "User not found");
-    }
+        if (!userDoc.exists) {
+          throw new functions.https.HttpsError("not-found", "User not found");
+        }
 
-    const stripeCustomerId = userDoc.data().stripeCustomerId;
+        const stripeCustomerId = userDoc.data().stripeCustomerId;
 
-    if (!stripeCustomerId) {
-      throw new functions.https.HttpsError(
-          "failed-precondition",
-          "Stripe customer missing",
-      );
-    }
+        if (!stripeCustomerId) {
+          throw new functions.https.HttpsError(
+              "failed-precondition",
+              "Stripe customer missing",
+          );
+        }
 
-    const setupIntent = await stripe.setupIntents.create({
-      customer: stripeCustomerId,
-      payment_method_types: ["card"],
+        const setupIntent = await stripe.setupIntents.create({
+          customer: stripeCustomerId,
+          payment_method_types: ["card"],
+        });
+
+        return {clientSecret: setupIntent.client_secret};
+      } catch (error) {
+        console.error("createSetupIntent error:", error);
+        throw new functions.https.HttpsError("internal", error.message);
+      }
     });
-
-    return {clientSecret: setupIntent.client_secret};
-  } catch (error) {
-    console.error("createSetupIntent error:", error);
-    throw new functions.https.HttpsError("internal", error.message);
-  }
-});
 
 /* ======================================
    SAVE CARD
 ====================================== */
-exports.saveCard = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError(
-        "unauthenticated",
-        "User not logged in",
-    );
-  }
+exports.saveCard = functions
+    .runWith({secrets: STRIPE_SECRETS}).https.onCall(async (data, context) => {
+      if (!context.auth) {
+        throw new functions.https.HttpsError(
+            "unauthenticated",
+            "User not logged in",
+        );
+      }
 
-  const uid = context.auth.uid;
-  const {paymentMethodId, cardholderName} = data;
+      const uid = context.auth.uid;
+      const {paymentMethodId, cardholderName} = data;
 
-  if (!paymentMethodId) {
-    throw new functions.https.HttpsError(
-        "invalid-argument",
-        "Missing paymentMethodId",
-    );
-  }
+      if (!paymentMethodId) {
+        throw new functions.https.HttpsError(
+            "invalid-argument",
+            "Missing paymentMethodId",
+        );
+      }
 
-  try {
-    const riderRef = db.collection("riders").doc(uid);
-    const riderDoc = await riderRef.get();
+      try {
+        const riderRef = db.collection("riders").doc(uid);
+        const riderDoc = await riderRef.get();
 
-    if (!riderDoc.exists) {
-      throw new functions.https.HttpsError("not-found", "Rider not found");
-    }
+        if (!riderDoc.exists) {
+          throw new functions.https.HttpsError("not-found", "Rider not found");
+        }
 
-    const stripeCustomerId = riderDoc.data().stripeCustomerId;
+        const stripeCustomerId = riderDoc.data().stripeCustomerId;
 
-    if (!stripeCustomerId) {
-      throw new functions.https.HttpsError(
-          "failed-precondition",
-          "Stripe customer missing",
-      );
-    }
+        if (!stripeCustomerId) {
+          throw new functions.https.HttpsError(
+              "failed-precondition",
+              "Stripe customer missing",
+          );
+        }
 
-    // =================================================
-    // 1. Retrieve + attach payment method
-    // =================================================
-    const paymentMethod = await stripe.paymentMethods.retrieve(paymentMethodId);
+        // =================================================
+        // 1. Retrieve + attach payment method
+        // =================================================
+        const paymentMethod =
+          await stripe.paymentMethods.retrieve(paymentMethodId);
 
-    await stripe.paymentMethods.attach(paymentMethodId, {
-      customer: stripeCustomerId,
-    });
+        await stripe.paymentMethods.attach(paymentMethodId, {
+          customer: stripeCustomerId,
+        });
 
-    // =================================================
-    // 2. Set default payment method
-    // =================================================
-    await stripe.customers.update(stripeCustomerId, {
-      invoice_settings: {
-        default_payment_method: paymentMethodId,
-      },
-    });
+        // =================================================
+        // 2. Set default payment method
+        // =================================================
+        await stripe.customers.update(stripeCustomerId, {
+          invoice_settings: {
+            default_payment_method: paymentMethodId,
+          },
+        });
 
-    // =================================================
-    // 3. STORE CARD IN FIRESTORE
-    // =================================================
-    await riderRef
-        .collection("cards")
-        .doc(paymentMethodId)
-        .set({
-          paymentMethodId,
-          brand: paymentMethod.card.brand,
-          last4: paymentMethod.card.last4,
-          exp_month: paymentMethod.card.exp_month,
-          exp_year: paymentMethod.card.exp_year,
+        // =================================================
+        // 3. STORE CARD IN FIRESTORE
+        // =================================================
+        await riderRef
+            .collection("cards")
+            .doc(paymentMethodId)
+            .set({
+              paymentMethodId,
+              brand: paymentMethod.card.brand,
+              last4: paymentMethod.card.last4,
+              exp_month: paymentMethod.card.exp_month,
+              exp_year: paymentMethod.card.exp_year,
 
-          // 👇 IMPORTANT FIX
-          cardholderName:
+              // 👇 IMPORTANT FIX
+              cardholderName:
          cardholderName ||
 (paymentMethod.billing_details &&
   paymentMethod.billing_details.name) ||
 null,
-        });
+            });
 
-    // =================================================
-    // 4. STORE DEFAULT CARD
-    // =================================================
-    await riderRef.set(
-        {
-          defaultPaymentMethodId: paymentMethodId,
-        },
-        {merge: true},
-    );
+        // =================================================
+        // 4. STORE DEFAULT CARD
+        // =================================================
+        await riderRef.set(
+            {
+              defaultPaymentMethodId: paymentMethodId,
+            },
+            {merge: true},
+        );
 
-    return {success: true};
-  } catch (error) {
-    console.error("saveCard error:", error);
+        return {success: true};
+      } catch (error) {
+        console.error("saveCard error:", error);
 
-    throw new functions.https.HttpsError(
-        "internal",
-        error.message || "Failed to save card",
-    );
-  }
-});
+        throw new functions.https.HttpsError(
+            "internal",
+            error.message || "Failed to save card",
+        );
+      }
+    });
 
 /* ======================================
    HOLD ON RIDE ACCEPTANCE
 ====================================== */
 
-exports.authorizePaymentOnRideAccept = functions.firestore
+exports.authorizePaymentOnRideAccept = functions
+    .runWith({secrets: STRIPE_SECRETS}).firestore
     .document("rides/{rideId}")
     .onUpdate(async (change, context) => {
       const before = change.before.data();
@@ -470,7 +503,8 @@ exports.authorizePaymentOnRideAccept = functions.firestore
    CHARGE ON RIDE COMPLETION
 ====================================== */
 
-exports.chargeOnRideCompletion = functions.firestore
+exports.chargeOnRideCompletion = functions
+    .runWith({secrets: STRIPE_SECRETS}).firestore
     .document("rides/{rideId}")
     .onUpdate(async (change, context) => {
       const before = change.before.data();
@@ -605,113 +639,115 @@ exports.chargeOnRideCompletion = functions.firestore
     });
 
 
-exports.stripeWebhook = functions.https.onRequest(async (req, res) => {
-  const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
-  const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+exports.stripeWebhook = functions
+    .runWith({secrets: STRIPE_SECRETS.concat(["STRIPE_WEBHOOK_SECRET"])})
+    .https.onRequest(async (req, res) => {
+      const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
-  let event;
+      let event;
 
-  try {
-    const sig = req.headers["stripe-signature"];
+      try {
+        const sig = req.headers["stripe-signature"];
 
-    event = stripe.webhooks.constructEvent(
-        req.rawBody,
-        sig,
-        endpointSecret,
-    );
-  } catch (err) {
-    console.log("❌ Signature verification failed:", err.message);
-    return res.status(400).send("Webhook Error");
-  }
-
-  try {
-    const type = event.type;
-    const data = event.data;
-    const object = data.object;
-
-    // Safely extract rideId WITHOUT optional chaining
-    let rideId = null;
-
-    if (object.metadata && object.metadata.rideId) {
-      rideId = object.metadata.rideId;
-    }
-
-    switch (type) {
-      // ===========================
-      // PAYMENT SUCCESS
-      // ===========================
-      case "payment_intent.succeeded": {
-        if (!rideId) break;
-
-        await db.collection("rides").doc(rideId).update({
-          "payment.status": "paid",
-          "payment.transactionId": object.id,
-          "walletProcessed": true,
-        });
-
-        console.log("✅ Payment succeeded:", rideId);
-        break;
+        event = stripe.webhooks.constructEvent(
+            req.rawBody,
+            sig,
+            endpointSecret,
+        );
+      } catch (err) {
+        console.log("❌ Signature verification failed:", err.message);
+        return res.status(400).send("Webhook Error");
       }
 
-      // ===========================
-      // PAYMENT FAILED
-      // ===========================
-      case "payment_intent.payment_failed": {
-        if (!rideId) break;
+      try {
+        const type = event.type;
+        const data = event.data;
+        const object = data.object;
 
-        let errorMessage = "Payment failed";
+        // Safely extract rideId WITHOUT optional chaining
+        let rideId = null;
 
-        if (
-          object.last_payment_error &&
-          object.last_payment_error.message
-        ) {
-          errorMessage = object.last_payment_error.message;
+        if (object.metadata && object.metadata.rideId) {
+          rideId = object.metadata.rideId;
         }
 
-        await db.collection("rides").doc(rideId).update({
-          "payment.status": "failed",
-          "payment.error": errorMessage,
-        });
+        switch (type) {
+          // ===========================
+          // PAYMENT SUCCESS
+          // ===========================
+          case "payment_intent.succeeded": {
+            if (!rideId) break;
 
-        console.log("❌ Payment failed:", rideId);
-        break;
+            await db.collection("rides").doc(rideId).update({
+              "payment.status": "paid",
+              "payment.transactionId": object.id,
+              "walletProcessed": true,
+            });
+
+            console.log("✅ Payment succeeded:", rideId);
+            break;
+          }
+
+          // ===========================
+          // PAYMENT FAILED
+          // ===========================
+          case "payment_intent.payment_failed": {
+            if (!rideId) break;
+
+            let errorMessage = "Payment failed";
+
+            if (
+              object.last_payment_error &&
+          object.last_payment_error.message
+            ) {
+              errorMessage = object.last_payment_error.message;
+            }
+
+            await db.collection("rides").doc(rideId).update({
+              "payment.status": "failed",
+              "payment.error": errorMessage,
+            });
+
+            console.log("❌ Payment failed:", rideId);
+            break;
+          }
+
+          // ===========================
+          // PAYMENT CANCELED
+          // ===========================
+          case "payment_intent.canceled": {
+            if (!rideId) break;
+
+            await db.collection("rides").doc(rideId).update({
+              "payment.status": "canceled",
+            });
+
+            console.log("🧯 Payment canceled:", rideId);
+            break;
+          }
+
+          // ===========================
+          // CAPTURABLE UPDATED
+          // ===========================
+          case "payment_intent.amount_capturable_updated": {
+            console.log("📌 Capturable updated:", object.id);
+            break;
+          }
+
+          default:
+            console.log("Unhandled event:", type);
+        }
+
+        return res.json({received: true});
+      } catch (error) {
+        console.error("❌ Webhook error:", error);
+        return res.status(500).send("Webhook failed");
       }
-
-      // ===========================
-      // PAYMENT CANCELED
-      // ===========================
-      case "payment_intent.canceled": {
-        if (!rideId) break;
-
-        await db.collection("rides").doc(rideId).update({
-          "payment.status": "canceled",
-        });
-
-        console.log("🧯 Payment canceled:", rideId);
-        break;
-      }
-
-      // ===========================
-      // CAPTURABLE UPDATED
-      // ===========================
-      case "payment_intent.amount_capturable_updated": {
-        console.log("📌 Capturable updated:", object.id);
-        break;
-      }
-
-      default:
-        console.log("Unhandled event:", type);
-    }
-
-    return res.json({received: true});
-  } catch (error) {
-    console.error("❌ Webhook error:", error);
-    return res.status(500).send("Webhook failed");
-  }
-});
+    });
 
 
-exports.cancelRidePayment = functions.firestore
+exports.cancelRidePayment = functions
+    .runWith({secrets: STRIPE_SECRETS}).firestore
     .document("rides/{rideId}")
     .onUpdate(async (change, context) => {
       const before = change.before.data();
@@ -746,99 +782,100 @@ exports.cancelRidePayment = functions.firestore
       }
     });
 
-exports.createStripeAccountLink = functions.https.onRequest(
-    async (req, res) => {
-      try {
-        res.set("Content-Type", "application/json");
+exports.createStripeAccountLink = functions
+    .runWith({secrets: STRIPE_SECRETS}).https.onRequest(
+        async (req, res) => {
+          try {
+            res.set("Content-Type", "application/json");
 
-        // -----------------------------
-        // AUTH CHECK
-        // -----------------------------
-        const authHeader = req.headers.authorization;
+            // -----------------------------
+            // AUTH CHECK
+            // -----------------------------
+            const authHeader = req.headers.authorization;
 
-        if (!authHeader) {
-          return res.status(401).json({
-            error: "Missing Authorization header",
-          });
-        }
+            if (!authHeader) {
+              return res.status(401).json({
+                error: "Missing Authorization header",
+              });
+            }
 
-        const idToken = authHeader.split("Bearer ")[1];
+            const idToken = authHeader.split("Bearer ")[1];
 
-        const decoded = await admin.auth().verifyIdToken(idToken);
-        const uid = decoded.uid;
+            const decoded = await admin.auth().verifyIdToken(idToken);
+            const uid = decoded.uid;
 
-        // -----------------------------
-        // GET DRIVER DATA
-        // -----------------------------
-        const driverRef = admin.firestore().collection("drivers").doc(uid);
-        const driverSnap = await driverRef.get();
+            // -----------------------------
+            // GET DRIVER DATA
+            // -----------------------------
+            const driverRef = admin.firestore().collection("drivers").doc(uid);
+            const driverSnap = await driverRef.get();
 
-        const data = driverSnap.data() || {};
-        let stripeAccountId = data.stripeAccountId || null;
+            const data = driverSnap.data() || {};
+            let stripeAccountId = data.stripeAccountId || null;
 
-        // -----------------------------
-        // CREATE STRIPE ACCOUNT (FIXED FOR 400 ERROR)
-        // -----------------------------
-        if (!stripeAccountId) {
-          console.log("Creating Stripe account...");
+            // -----------------------------
+            // CREATE STRIPE ACCOUNT (FIXED FOR 400 ERROR)
+            // -----------------------------
+            if (!stripeAccountId) {
+              console.log("Creating Stripe account...");
 
-          const account = await stripe.accounts.create({
-            type: "express",
-            country: "GB", // REQUIRED for Stripe Connect
-            email: decoded.email || undefined,
-            capabilities: {
-              transfers: {requested: true},
-            },
-          });
+              const account = await stripe.accounts.create({
+                type: "express",
+                country: "GB", // REQUIRED for Stripe Connect
+                email: decoded.email || undefined,
+                capabilities: {
+                  transfers: {requested: true},
+                },
+              });
 
-          stripeAccountId = account.id;
+              stripeAccountId = account.id;
 
-          await driverRef.set(
-              {
-                stripeAccountId,
-              },
-              {merge: true},
-          );
+              await driverRef.set(
+                  {
+                    stripeAccountId,
+                  },
+                  {merge: true},
+              );
 
-          console.log("Stripe account created:", stripeAccountId);
-        }
+              console.log("Stripe account created:", stripeAccountId);
+            }
 
-        // -----------------------------
-        // VALIDATE ACCOUNT ID
-        // -----------------------------
-        if (!stripeAccountId || typeof stripeAccountId !== "string") {
-          throw new Error("Invalid Stripe account ID");
-        }
+            // -----------------------------
+            // VALIDATE ACCOUNT ID
+            // -----------------------------
+            if (!stripeAccountId || typeof stripeAccountId !== "string") {
+              throw new Error("Invalid Stripe account ID");
+            }
 
-        // -----------------------------
-        // CREATE ONBOARDING LINK
-        // -----------------------------
-        const accountLink = await stripe.accountLinks.create({
-          account: stripeAccountId,
-          refresh_url: "https://takearoute-719df.web.app/stripe/refresh.html",
-          return_url: "https://takearoute-719df.web.app/stripe/success.html",
-          type: "account_onboarding",
-        });
+            // -----------------------------
+            // CREATE ONBOARDING LINK
+            // -----------------------------
+            const accountLink = await stripe.accountLinks.create({
+              account: stripeAccountId,
+              refresh_url: "https://takearoute-719df.web.app/stripe/refresh.html",
+              return_url: "https://takearoute-719df.web.app/stripe/success.html",
+              type: "account_onboarding",
+            });
 
-        if (!accountLink || !accountLink.url) {
-          throw new Error("Stripe did not return onboarding URL");
-        }
+            if (!accountLink || !accountLink.url) {
+              throw new Error("Stripe did not return onboarding URL");
+            }
 
-        // -----------------------------
-        // SUCCESS RESPONSE
-        // -----------------------------
-        return res.status(200).json({
-          url: accountLink.url,
-        });
-      } catch (error) {
-        console.error("Stripe onboarding error:", error);
+            // -----------------------------
+            // SUCCESS RESPONSE
+            // -----------------------------
+            return res.status(200).json({
+              url: accountLink.url,
+            });
+          } catch (error) {
+            console.error("Stripe onboarding error:", error);
 
-        return res.status(500).json({
-          error: error.message || "Internal Server Error",
-        });
-      }
-    },
-);
+            return res.status(500).json({
+              error: error.message || "Internal Server Error",
+            });
+          }
+        },
+    );
 
 exports.createWalletOnOnboardingComplete = functions.firestore
     .document("drivers/{driverId}")
@@ -1258,33 +1295,35 @@ exports.rejectDriverPayout = functions.https.onCall(async (data, context) => {
 });
 
 
-exports.detachPaymentMethod = functions.https.onCall(async (data, context) => {
-  const {paymentMethodId} = data;
+exports.detachPaymentMethod = functions
+    .runWith({secrets: STRIPE_SECRETS}).https.onCall(async (data, context) => {
+      const {paymentMethodId} = data;
 
-  // Verify auth
-  if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "Login required");
-  }
+      // Verify auth
+      if (!context.auth) {
+        throw new functions.https.HttpsError("unauthenticated",
+            "Login required");
+      }
 
-  try {
-    // Verify this payment method belongs to the user
-    const pm = await stripe.paymentMethods.retrieve(paymentMethodId);
+      try {
+        // Verify this payment method belongs to the user
+        const pm = await stripe.paymentMethods.retrieve(paymentMethodId);
 
-    if (!pm || !pm.customer) {
-      throw new functions.https.HttpsError("not-found",
-          "Payment method not found");
-    }
+        if (!pm || !pm.customer) {
+          throw new functions.https.HttpsError("not-found",
+              "Payment method not found");
+        }
 
-    // Optional: check pm.customer matches the user's Stripe customer ID
+        // Optional: check pm.customer matches the user's Stripe customer ID
 
-    await stripe.paymentMethods.detach(paymentMethodId);
+        await stripe.paymentMethods.detach(paymentMethodId);
 
-    return {success: true};
-  } catch (error) {
-    console.error("Stripe detach error:", error);
-    throw new functions.https.HttpsError("internal", error.message);
-  }
-});
+        return {success: true};
+      } catch (error) {
+        console.error("Stripe detach error:", error);
+        throw new functions.https.HttpsError("internal", error.message);
+      }
+    });
 
 
 exports.autoDeductSubscription = functions
