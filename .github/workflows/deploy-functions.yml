@@ -6,8 +6,8 @@
 # One repository secret is required:
 #   FIREBASE_SERVICE_ACCOUNT  the whole service account JSON file
 #
-# Keys used by the functions (Stripe, Resend, Twilio) are NOT kept here.
-# They live in Google Secret Manager and are read at run time.
+# Every key the functions use (Stripe, Resend, Twilio) lives in Google
+# Secret Manager and is read at run time. None of them are kept here.
 name: Deploy Cloud Functions
 
 on:
