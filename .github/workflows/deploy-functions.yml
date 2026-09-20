@@ -1,0 +1,41 @@
+# Deploys the Cloud Functions (payments, notifications, receipts, calling).
+#
+# Runs when functions code is pushed to main, or when you press Run workflow
+# on the Actions tab. No terminal needed.
+#
+# One repository secret is required:
+#   FIREBASE_SERVICE_ACCOUNT  the whole service account JSON file
+#
+# Keys used by the functions (Stripe, Resend, Twilio) are NOT kept here.
+# They live in Google Secret Manager and are read at run time.
+name: Deploy Cloud Functions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'functions/**'
+      - '.github/workflows/deploy-functions.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Write the service account key
+        run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > "$RUNNER_TEMP/key.json"
+
+      - name: Install function dependencies
+        working-directory: functions
+        run: npm ci || npm install
+
+      - name: Deploy
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/key.json
+        run: npx --yes firebase-tools@13 deploy --only functions --project takearoute-719df --non-interactive --force
