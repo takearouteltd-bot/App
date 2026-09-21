@@ -11,7 +11,7 @@ import {
 import { auth, db } from "../../config/firebase";
 import { doc, getDoc, updateDoc, Timestamp } from "firebase/firestore";
 import { useNavigation } from "@react-navigation/native";
-import { currencySymbol, useAppConfig } from '../../utils/appConfig';
+import { currencySymbol, money, useAppConfig } from '../../utils/appConfig';
 
 const PRIMARY = "#79B531";
 export default function SubscriptionScreen({ setOnboardingStatus }) {
@@ -91,7 +91,7 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
 
         Alert.alert(
           "Activated",
-          `You're active! ${currencySymbol()}MONTHLY_PRICE} will be deducted from your earnings as soon as your wallet reaches that amount.`
+          `You're active! ${money(MONTHLY_PRICE)} will be deducted from your earnings as soon as your wallet reaches that amount.`
         );
       }
 

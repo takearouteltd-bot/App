@@ -226,7 +226,7 @@ const ChatScreen = ({ route }) => {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={0}
     >
-      <StatusBar barStyle="light-content" backgroundColor={SECONDARY} />
+      <StatusBar barStyle="light-content" backgroundColor="#17375E" />
 
       {/* ========== HEADER ========== */}
       <View style={styles.header}>
@@ -326,20 +326,20 @@ const ChatScreen = ({ route }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F6F8',
+    backgroundColor: '#F5F7FA',
   },
   center: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F5F6F8',
+    backgroundColor: '#F5F7FA',
   },
 
   /* ========== HEADER ========== */
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: SECONDARY,
+    backgroundColor: '#17375E',
     paddingTop: Platform.OS === 'ios' ? 50 : StatusBar.currentHeight + 10,
     paddingBottom: 14,
     paddingHorizontal: 16,
@@ -442,21 +442,18 @@ const styles = StyleSheet.create({
   bubble: {
     paddingHorizontal: 14,
     paddingVertical: 10,
-    borderRadius: 20,
+    borderRadius: 18,
     maxWidth: '100%',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 2,
-    elevation: 2,
   },
   myBubble: {
-    backgroundColor: PRIMARY,
-    borderBottomRightRadius: 6,
+    backgroundColor: SECONDARY,
+    borderBottomRightRadius: 4,
   },
   theirBubble: {
     backgroundColor: '#fff',
-    borderBottomLeftRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderBottomLeftRadius: 4,
   },
   messageText: {
     fontSize: 15,
@@ -507,26 +504,29 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    maxHeight: 100,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: '#F1F3F4',
-    borderRadius: 24,
+    maxHeight: 120,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    paddingTop: 11,
+    paddingBottom: 11,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 14,
     fontSize: 15,
-    color: '#1a1a1a',
-    marginRight: 8,
-    paddingTop: 12,
+    color: '#1F2937',
+    marginRight: 10,
   },
   sendBtn: {
     width: 44,
     height: 44,
-    borderRadius: 22,
-    backgroundColor: SECONDARY,
+    borderRadius: 14,
+    backgroundColor: PRIMARY,
     justifyContent: 'center',
     alignItems: 'center',
   },
   sendBtnDisabled: {
-    backgroundColor: '#F1F3F4',
+    backgroundColor: '#E5E7EB',
   },
 });
 

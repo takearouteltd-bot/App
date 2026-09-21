@@ -2176,3 +2176,44 @@ exports.startMaskedCall = functions
       return {connecting: true, callSid: result.sid || null};
     });
 
+
+/* ======================================
+   RATINGS
+   The app writes driverRating / riderRating onto the ride. This keeps a
+   running average on the person being rated.
+====================================== */
+exports.updateAverageRating = functions.firestore
+    .document("rides/{rideId}")
+    .onUpdate(async (change) => {
+      const before = change.before.data();
+      const after = change.after.data();
+      const jobs = [];
+
+      const apply = (collection, uid, ratingObj) => {
+        if (!uid || !ratingObj || !(ratingObj.stars >= 1)) return;
+        const ref = db.collection(collection).doc(uid);
+        jobs.push(db.runTransaction(async (t) => {
+          const snap = await t.get(ref);
+          if (!snap.exists) return;
+          const d = snap.data();
+          const count = Number(d.ratingCount) || 0;
+          const avg = Number(d.rating) || 0;
+          const newCount = count + 1;
+          const newAvg = (avg * count + ratingObj.stars) / newCount;
+          t.update(ref, {
+            rating: Math.round(newAvg * 100) / 100,
+            ratingCount: newCount,
+          });
+        }));
+      };
+
+      if (!before.driverRating && after.driverRating) {
+        apply("drivers", after.driverId, after.driverRating);
+      }
+      if (!before.riderRating && after.riderRating) {
+        apply("riders", after.riderId, after.riderRating);
+      }
+      await Promise.all(jobs);
+      return null;
+    });
+

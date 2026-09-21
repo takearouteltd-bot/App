@@ -24,7 +24,9 @@ import {
   getDocs,
   onSnapshot,
 } from "firebase/firestore";
-import { currencySymbol } from '../../../utils/appConfig';
+import { money } from '../../../utils/appConfig';
+import { COLORS, TYPE, Card, ListRow, StatusPill, Button, Loading } from '../../../components/ui/kit';
+import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocuments';
 
 const PRIMARY = "#79B531";
 const SECONDARY = "#235594";
@@ -130,13 +132,11 @@ export default function DriverProfileScreen() {
     ]);
   };
 
+  // Year they joined, e.g. "2026". Used in the facts row.
   const formatMemberSince = (timestamp) => {
-    if (!timestamp) return "New Driver";
+    if (!timestamp) return "2026";
     const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-    const now = new Date();
-    const diffYears = now.getFullYear() - date.getFullYear();
-    if (diffYears < 1) return "< 1 Year";
-    return `${diffYears} Year${diffYears > 1 ? "s" : ""}`;
+    return String(date.getFullYear());
   };
 
   const isOnline = driver?.status === "online";
@@ -145,674 +145,146 @@ export default function DriverProfileScreen() {
   const availableBalance = wallet?.availableBalance || 0;
   const totalEarned = wallet?.totalEarned || 0;
 
-  const documents = [
-    {
-      title: "Driving License (Front)",
-      icon: "card-account-details",
-      url: driver?.driverLicenseFrontUrl || driver?.driverLicenseUrl,
-      verified: isApproved,
-    },
-    {
-      title: "Driving License (Back)",
-      icon: "card-account-details-outline",
-      url: driver?.driverLicenseBackUrl || driver?.driverLicenseUrl,
-      verified: isApproved,
-    },
-    {
-      title: "PHV Insurance",
-      icon: "shield-check",
-      url: driver?.insuranceUrl,
-      verified: isApproved,
-    },
-    {
-      title: "MOT Certificate",
-      icon: "file-certificate",
-      url: driver?.motUrl,
-      verified: isApproved,
-    },
-    {
-      title: "PCO License",
-      icon: "badge-account",
-      url: driver?.pcoLicenseUrl,
-      verified: isApproved,
-    },
-    {
-      title: "V5 Logbook",
-      icon: "car-info",
-      url: driver?.v5Url,
-      verified: isApproved,
-    },
-  ];
+  const rating = driver?.rating ? Number(driver.rating).toFixed(1) : null;
+  const documentAlerts = driver ? expiryAlertsFor(driver) : [];
+  const vehicle = [driver?.vehicleColor, driver?.makeModel].filter(Boolean).join(" ");
 
   if (loading) {
     return (
-      <SafeAreaView style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={PRIMARY} />
+      <SafeAreaView style={styles.safe}>
+        <Loading />
       </SafeAreaView>
     );
   }
 
+  const group = (items) => (
+    <Card style={{ paddingVertical: 0 }}>
+      {items.map((item, i) => (
+        <ListRow key={item.title} {...item} last={i === items.length - 1} />
+      ))}
+    </Card>
+  );
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.safe}>
       <ScrollView
+        contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[PRIMARY]} />
-        }
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.green} />}
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={{ width: 24 }} />
-          <Text style={styles.headerTitle}>Driver Account</Text>
-          <TouchableOpacity
-            onPress={() => navigation.navigate("DriverPersonalInformation")}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          >
-            <Ionicons name="settings-outline" size={24} color={SECONDARY} />
-          </TouchableOpacity>
-        </View>
-
-        {/* Profile Card */}
-        <View style={styles.profileCard}>
-          <Image
-            source={{
-              uri: driver?.selfieUrl || "https://i.pravatar.cc/150?img=3",
-            }}
-            style={styles.avatar}
-          />
-          <Text style={styles.name}>{driver?.fullName || "Driver"}</Text>
-
-          <View style={styles.badgeRow}>
-            <View
-              style={[
-                styles.statusBadge,
-                { backgroundColor: isOnline ? PRIMARY : "#9E9E9E" },
-              ]}
-            >
-              <View style={[styles.dot, { backgroundColor: "#fff" }]} />
-              <Text style={styles.badgeText}>
-                {isOnline ? "Online" : "Offline"}
-              </Text>
-            </View>
-
-            {driver?.accountDetails?.subscription === "premium" && (
-              <View style={styles.premiumBadge}>
-                <MaterialCommunityIcons name="crown" size={13} color="#fff" />
-                <Text style={styles.badgeText}>Premium</Text>
-              </View>
-            )}
-          </View>
-        </View>
-
-        {/* Stats Row */}
-        <View style={styles.statsContainer}>
-          <View style={[styles.statItem, styles.hiddenStat]}>
-            <Text style={styles.statNumber}>4.9</Text>
-            <View style={styles.ratingRow}>
-              <Ionicons name="star" size={14} color="#F5B300" />
-              <Text style={styles.statLabel}>Rating</Text>
-            </View>
-          </View>
-
-          <View style={[styles.divider, styles.hiddenStat]} />
-
-          <View style={styles.statItem}>
-            <Text style={styles.statNumber}>{tripCount}</Text>
-            <Text style={styles.statLabel}>Trips</Text>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.statItem}>
-            <Text style={styles.statNumber}>
-              {formatMemberSince(driver?.createdAt)}
-            </Text>
-            <Text style={styles.statLabel}>Member</Text>
-          </View>
-        </View>
-
-        {/* Earnings Card */}
-         {/* Earnings Card */}
-        <TouchableOpacity
-          style={styles.earningsCard}
-          onPress={() => navigation.navigate("EarningsScreen")}
-          activeOpacity={0.9}
-        >
+        {/* Identity */}
+        <View style={styles.identity}>
           <View>
-            <Text style={styles.earningsLabel}>Total Earnings</Text>
-            <Text style={styles.earningsValue}>
-              {currencySymbol()}{totalEarned.toFixed(2)}
-            </Text>
-            <Text style={styles.earningsSubtext}>
-              Available: {currencySymbol()}{availableBalance.toFixed(2)}
-            </Text>
-          </View>
-          <View style={styles.earningsButton}>
-            <Text style={styles.earningsButtonText}>View</Text>
-            <Ionicons name="arrow-forward" size={16} color={PRIMARY} />
-          </View>
-        </TouchableOpacity>
-        {/* Vehicle Information */}
-        <Text style={styles.sectionTitle}>Vehicle Information</Text>
-        <TouchableOpacity
-          style={styles.card}
-          activeOpacity={0.85}
-          onPress={() => navigation.navigate("VehicleInformation")}
-        >
-          <View style={styles.cardIconWrap}>
-            <MaterialCommunityIcons name="car" size={24} color={SECONDARY} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.cardTitle}>
-              {driver?.makeModel || "Vehicle not set"}
-            </Text>
-            <Text style={styles.cardSubText}>
-              {driver?.registrationNumber || "No registration"}
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color="#C5C5C7" />
-        </TouchableOpacity>
-
-        {/* Messages from TakeARoute */}
-        <Text style={styles.sectionTitle}>Messages</Text>
-        <TouchableOpacity
-          style={styles.card}
-          activeOpacity={0.85}
-          onPress={() => navigation.navigate("Inbox", { role: "driver" })}
-        >
-          <View style={styles.cardIconWrap}>
-            <Ionicons name="mail-outline" size={24} color={SECONDARY} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.cardTitle}>Inbox</Text>
-            <Text style={styles.cardSubText}>Updates & offers from TakeARoute</Text>
-          </View>
-          <Ionicons name="chevron-forward" size={20} color="#C5C5C7" />
-        </TouchableOpacity>
-
-        {/* Help & safety */}
-        <Text style={styles.sectionTitle}>Help & Safety</Text>
-        {[
-          {
-            icon: "chatbubbles-outline",
-            title: "My Reports",
-            sub: "Issues, lost property & replies from support",
-            go: () => navigation.navigate("MyReports", { role: "driver" }),
-          },
-          {
-            icon: "shield-checkmark-outline",
-            title: "Safety",
-            sub: driver?.emergencyContact?.name
-              ? `Emergency contact: ${driver.emergencyContact.name}`
-              : "Add your next of kin",
-            go: () => navigation.navigate("EmergencyContact", { role: "driver" }),
-          },
-          {
-            icon: "folder-open-outline",
-            title: "My Documents",
-            sub: "Expiry dates & replacement uploads",
-            go: () => navigation.navigate("DriverDocuments"),
-          },
-        ].map((item) => (
-          <TouchableOpacity key={item.title} style={styles.card} activeOpacity={0.85} onPress={item.go}>
-            <View style={styles.cardIconWrap}>
-              <Ionicons name={item.icon} size={24} color={SECONDARY} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.cardTitle}>{item.title}</Text>
-              <Text style={styles.cardSubText}>{item.sub}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#C5C5C7" />
-          </TouchableOpacity>
-        ))}
-
-        {/* Compliance Section */}
-        <Text style={styles.sectionTitle}>Compliance & Documents</Text>
-        {documents.map((docItem, index) => (
-          <View key={index} style={styles.documentCard}>
-            <View style={styles.documentLeft}>
-              <View style={styles.docIconWrap}>
-                <MaterialCommunityIcons
-                  name={docItem.icon}
-                  size={20}
-                  color={SECONDARY}
-                />
-              </View>
-              <View>
-                <Text style={styles.documentTitle}>{docItem.title}</Text>
-                <Text style={styles.documentMeta}>
-                  {docItem.url ? "Uploaded" : "Not uploaded"}
-                </Text>
-              </View>
-            </View>
-
-            <View
-              style={[
-                styles.verifiedBadge,
-                { backgroundColor: docItem.verified ? PRIMARY : "#E0E0E0" },
-              ]}
-            >
-              <Ionicons
-                name={docItem.verified ? "checkmark-circle" : "time-outline"}
-                size={14}
-                color="#fff"
-              />
-              <Text style={styles.verifiedText}>
-                {docItem.verified ? "Verified" : "Pending"}
-              </Text>
-            </View>
-          </View>
-        ))}
-
-        {/* Account Section */}
-        <Text style={styles.sectionTitle}>Account</Text>
-        <View style={styles.menuCard}>
-          <TouchableOpacity
-            style={styles.menuRow}
-            onPress={() => navigation.navigate("SubscriptionDetails")}
-
-          >
-            <View style={styles.menuLeft}>
-              <View style={styles.menuIconWrap}>
-                <MaterialCommunityIcons
-                  name="diamond-outline"
-                  size={20}
-                  color={SECONDARY}
-                />
-              </View>
-              <Text style={styles.menuText}>Subscription Details</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={20} color="#C5C5C7" />
-          </TouchableOpacity>
-
-          <View style={styles.menuDivider} />
-
-          <TouchableOpacity
-            style={styles.logoutRow}
-            onPress={handleLogout}
-            disabled={loggingOut}
-          >
-            {loggingOut ? (
-              <ActivityIndicator color={DANGER} />
+            {driver?.selfieUrl ? (
+              <Image source={{ uri: driver.selfieUrl }} style={styles.avatar} />
             ) : (
-              <>
-                <Ionicons name="log-out-outline" size={22} color={DANGER} />
-                <Text style={styles.logoutText}>Sign Out</Text>
-              </>
+              <View style={[styles.avatar, styles.avatarEmpty]}>
+                <Text style={styles.initial}>{(driver?.fullName || driver?.firstName || "D").charAt(0).toUpperCase()}</Text>
+              </View>
             )}
-          </TouchableOpacity>
+            <View style={[styles.presence, { backgroundColor: isOnline ? COLORS.green : "#9CA3AF" }]} />
+          </View>
+          <Text style={styles.name}>{driver?.fullName || [driver?.firstName, driver?.lastName].filter(Boolean).join(" ") || "Driver"}</Text>
+          <View style={{ marginTop: 8 }}>
+            {isApproved ? (
+              <StatusPill status="approved" label={isOnline ? "Online" : "Approved, offline"} />
+            ) : (
+              <StatusPill status="pending" label="Application under review" />
+            )}
+          </View>
         </View>
 
-        <View style={{ height: 40 }} />
+        {/* Three facts */}
+        <View style={styles.facts}>
+          <View style={styles.fact}>
+            <Text style={styles.factValue}>{tripCount}</Text>
+            <Text style={TYPE.small}>{tripCount === 1 ? "trip" : "trips"}</Text>
+          </View>
+          <View style={styles.factRule} />
+          <View style={styles.fact}>
+            <Text style={styles.factValue}>{rating || "New"}</Text>
+            <Text style={TYPE.small}>rating</Text>
+          </View>
+          <View style={styles.factRule} />
+          <View style={styles.fact}>
+            <Text style={styles.factValue}>{driver?.createdAt ? formatMemberSince(driver.createdAt) : "2026"}</Text>
+            <Text style={TYPE.small}>joined</Text>
+          </View>
+        </View>
+
+        {/* Earnings: the one bold element. */}
+        <TouchableOpacity activeOpacity={0.9} style={styles.earnings} onPress={() => navigation.navigate("EarningsScreen")}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.earningsLabel}>Available to withdraw</Text>
+            <Text style={styles.earningsValue}>{money(availableBalance)}</Text>
+            <Text style={styles.earningsSub}>{money(totalEarned)} earned in total</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={22} color="#C9D6EA" />
+        </TouchableOpacity>
+
+        {documentAlerts.length ? (
+          <Card tone={documentAlerts[0].status === "expired" ? "danger" : "warning"} style={{ marginTop: 12 }} onPress={() => navigation.navigate("DriverDocuments")}>
+            <Text style={[TYPE.body, { fontWeight: "700" }]}>
+              {documentAlerts[0].label}: {describeExpiry(documentAlerts[0]).toLowerCase()}
+            </Text>
+            <Text style={TYPE.small}>
+              {documentAlerts.length > 1 ? `and ${documentAlerts.length - 1} more. ` : ""}Tap to upload a replacement.
+            </Text>
+          </Card>
+        ) : null}
+
+        <Text style={styles.groupTitle}>Driving</Text>
+        {group([
+          { icon: "car-outline", title: vehicle || "Vehicle", detail: driver?.registrationNumber ? driver.registrationNumber.toUpperCase() : "Add your vehicle details", onPress: () => navigation.navigate("VehicleInformation") },
+          { icon: "folder-open-outline", title: "My documents", detail: documentAlerts.length ? `${documentAlerts.length} need${documentAlerts.length === 1 ? "s" : ""} updating` : "Licence, insurance, MOT and more", onPress: () => navigation.navigate("DriverDocuments") },
+          { icon: "ribbon-outline", title: "Subscription", detail: driver?.subscription?.status === "active" ? "Active" : driver?.subscription?.status === "suspended" ? "Suspended, top up your wallet" : "Not set up", onPress: () => navigation.navigate("SubscriptionDetails") },
+        ])}
+
+        <Text style={styles.groupTitle}>Account</Text>
+        {group([
+          { icon: "person-outline", title: "Personal details", detail: "Name, phone, email and address", onPress: () => navigation.navigate("DriverPersonalInformation") },
+          { icon: "mail-outline", title: "Messages", detail: "Updates from TakeARoute", onPress: () => navigation.navigate("Inbox", { role: "driver" }) },
+        ])}
+
+        <Text style={styles.groupTitle}>Help and safety</Text>
+        {group([
+          { icon: "chatbubbles-outline", title: "My reports", detail: "Issues, lost property and replies from support", onPress: () => navigation.navigate("MyReports", { role: "driver" }) },
+          { icon: "shield-checkmark-outline", iconColor: COLORS.red, title: "Safety", detail: driver?.emergencyContact?.name ? `Emergency contact: ${driver.emergencyContact.name}` : "Add your next of kin", onPress: () => navigation.navigate("EmergencyContact", { role: "driver" }) },
+        ])}
+
+        <Button title="Sign out" variant="secondary" style={{ marginTop: 28 }} loading={loggingOut} onPress={handleLogout} />
+
+        <View style={styles.footer}>
+          <Text style={TYPE.small}>TakeARoute Driver 1.0</Text>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: BG,
+  safe: { flex: 1, backgroundColor: COLORS.surface },
+  content: { padding: 20, paddingBottom: 40 },
+  identity: { alignItems: "center", paddingTop: 20, paddingBottom: 6 },
+  avatar: { width: 108, height: 108, borderRadius: 36 },
+  avatarEmpty: { backgroundColor: COLORS.navy, alignItems: "center", justifyContent: "center" },
+  initial: { fontSize: 44, fontWeight: "800", color: COLORS.white },
+  presence: {
+    position: "absolute", right: -2, bottom: -2, width: 22, height: 22, borderRadius: 11,
+    borderWidth: 3, borderColor: COLORS.surface,
   },
-
-  centered: {
-    justifyContent: "center",
-    alignItems: "center",
+  name: { fontSize: 26, fontWeight: "800", color: COLORS.navy, letterSpacing: -0.4, marginTop: 14 },
+  facts: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginTop: 20, marginBottom: 18 },
+  fact: { alignItems: "center", paddingHorizontal: 22, minWidth: 90 },
+  factValue: { fontSize: 22, fontWeight: "800", color: COLORS.navy, letterSpacing: -0.3 },
+  factRule: { width: 1, height: 36, backgroundColor: COLORS.line },
+  earnings: {
+    flexDirection: "row", alignItems: "center", backgroundColor: COLORS.navy,
+    borderRadius: 22, padding: 22,
   },
-
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 10,
-  },
-
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: SECONDARY,
-    letterSpacing: -0.3,
-  },
-
-  profileCard: {
-    alignItems: "center",
-    marginTop: 10,
-    marginHorizontal: 20,
-    backgroundColor: "#fff",
-    borderRadius: 20,
-    paddingVertical: 28,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    elevation: 3,
-  },
-
-  avatar: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    borderWidth: 3,
-    borderColor: PRIMARY + "20",
-  },
-
-  name: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#1A1A1A",
-    marginTop: 14,
-  },
-
-  badgeRow: {
-    flexDirection: "row",
-    marginTop: 14,
-    gap: 10,
-  },
-
-  statusBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    borderRadius: 20,
-    gap: 6,
-  },
-
-  dot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-  },
-
-  premiumBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: SECONDARY,
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    borderRadius: 20,
-    gap: 6,
-  },
-
-  badgeText: {
-    color: "#fff",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-
-  statsContainer: {
-    flexDirection: "row",
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    marginHorizontal: 20,
-    paddingVertical: 20,
-    marginTop: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    elevation: 3,
-    alignItems: "center",
-  },
-
-  statItem: {
-    alignItems: "center",
-    flex: 1,
-  },
-
-  statLabel: {
-    fontSize: 12,
-    color: "#8E8E93",
-    marginTop: 6,
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-
-  statNumber: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: "#1A1A1A",
-  },
-
-  ratingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-
-  hiddenStat: {
-    display: "none",
-  },
-
-  divider: {
-    width: 1,
-    height: 36,
-    backgroundColor: "#E5E5EA",
-  },
-
-  earningsCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: SECONDARY,
-    marginHorizontal: 20,
-    marginTop: 16,
-    borderRadius: 16,
-    paddingHorizontal: 20,
-    paddingVertical: 18,
-    shadowColor: SECONDARY,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    elevation: 4,
-  },
-
-  earningsLabel: {
-    fontSize: 12,
-    color: "rgba(255,255,255,0.8)",
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-
-  earningsValue: {
-    fontSize: 24,
-    fontWeight: "800",
-    color: "#fff",
-    marginTop: 4,
-  },
-
-  earningsSubtext: {
-    fontSize: 12,
-    color: "rgba(255,255,255,0.7)",
-    marginTop: 4,
-    fontWeight: "500",
-  },
-
-  earningsButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff",
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 12,
-    gap: 6,
-  },
-
-  earningsButtonText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: PRIMARY,
-  },
-
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: "#1A1A1A",
-    marginTop: 28,
-    marginHorizontal: 20,
-    marginBottom: 12,
-  },
-
-  card: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    padding: 16,
-    marginHorizontal: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-
-  cardIconWrap: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: SECONDARY + "10",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 14,
-  },
-
-  cardTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#1A1A1A",
-  },
-
-  cardSubText: {
-    fontSize: 13,
-    color: "#8E8E93",
-    marginTop: 3,
-    fontWeight: "500",
-  },
-
-  documentCard: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    backgroundColor: "#fff",
-    borderRadius: 14,
-    padding: 16,
-    marginHorizontal: 20,
-    marginBottom: 10,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 1,
-  },
-
-  documentLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-  },
-
-  docIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: SECONDARY + "10",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-
-  documentTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#1A1A1A",
-  },
-
-  documentMeta: {
-    fontSize: 12,
-    color: "#8E8E93",
-    marginTop: 2,
-    fontWeight: "500",
-  },
-
-  verifiedBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    borderRadius: 20,
-    gap: 4,
-  },
-
-  verifiedText: {
-    color: "#fff",
-    fontSize: 11,
-    fontWeight: "700",
-  },
-
-  menuCard: {
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    marginHorizontal: 20,
-    paddingVertical: 8,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 1,
-  },
-
-  menuRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-  },
-
-  menuLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-
-  menuIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: SECONDARY + "10",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-
-  menuText: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#1A1A1A",
-  },
-
-  menuDivider: {
-    height: 1,
-    backgroundColor: "#F2F2F7",
-    marginHorizontal: 16,
-    marginVertical: 4,
-  },
-
-  logoutRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-    gap: 12,
-  },
-
-  logoutText: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: DANGER,
-  },
+  earningsLabel: { fontSize: 14, fontWeight: "600", color: "#C9D6EA" },
+  earningsValue: { fontSize: 36, fontWeight: "800", color: COLORS.white, letterSpacing: -1, marginTop: 2 },
+  earningsSub: { fontSize: 13, color: "#C9D6EA", marginTop: 2 },
+  groupTitle: { ...TYPE.heading, marginTop: 26, marginBottom: 10 },
+  footer: { alignItems: "center", marginTop: 36 },
 });
