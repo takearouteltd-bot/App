@@ -1,4 +1,49 @@
-# Firestore and Storage rules for the 20 Sept 2026 changes
+# Firestore and Storage rules
+
+## Vehicle classes: a driver may only accept jobs their vehicle qualifies for
+
+Accepting a job is a client-side transaction, so filtering the job list in the
+app is presentation, not enforcement. This rule is what actually stops a Mini
+being sent on an Executive booking. Add it to the `rides/{rideId}` update rule.
+
+```
+// A vehicle may take its own class and anything it comfortably exceeds.
+// Keep in step with constants/vehicleClasses.js and functions/index.js.
+function serves(vehicleType) {
+  return {
+    'RouteMini':      ['RouteMini'],
+    'RoutePlus':      ['RoutePlus', 'RouteMini'],
+    'RouteXL':        ['RouteXL', 'RoutePlus', 'RouteMini'],
+    'RouteEco':       ['RouteEco', 'RouteMini'],
+    'RouteExecutive': ['RouteExecutive', 'RoutePlus', 'RouteMini'],
+  }.get(vehicleType, ['RouteMini']);
+}
+
+function driverVehicleClass() {
+  return get(/databases/$(database)/documents/drivers/$(request.auth.uid))
+    .data.get('vehicleType', 'RouteMini');
+}
+
+// On the update that claims a job (status searching -> accepted), the ride's
+// class must be one this driver's vehicle can serve.
+match /rides/{rideId} {
+  allow update: if request.auth != null
+    && resource.data.status == 'searching'
+    && request.resource.data.status == 'accepted'
+    && request.resource.data.driverId == request.auth.uid
+    && resource.data.get('rideType', 'RouteMini') in serves(driverVehicleClass())
+    // ... your existing conditions for other kinds of update
+}
+```
+
+Note: drivers approved before classes were matched have no `vehicleType`, so
+both the app and this rule treat them as `RouteMini`. They keep receiving
+ordinary work but stop being offered Executive and XL jobs until an admin sets
+a class on their record.
+
+---
+
+# Rules for the 20 Sept 2026 changes
 
 Merge these into the existing rules in Firebase console. They assume admins
 are identified the same way your current rules already do; `isAdmin()` below

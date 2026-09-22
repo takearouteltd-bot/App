@@ -552,7 +552,16 @@ exports.chargeOnRideCompletion = functions
 
         const paymentIntent = await stripe.paymentIntents.retrieve(
             paymentIntentId,
+            {expand: ["payment_method"]},
         );
+
+        // The card actually charged, so the app and the emailed receipt can
+        // both name it instead of guessing at the rider's current default.
+        const chargedCard = paymentIntent.payment_method &&
+          paymentIntent.payment_method.card ?
+          paymentIntent.payment_method.card : null;
+        const cardLast4 = chargedCard ? chargedCard.last4 : null;
+        const cardBrand = chargedCard ? chargedCard.brand : null;
 
         let capturedIntent;
 
@@ -617,6 +626,8 @@ exports.chargeOnRideCompletion = functions
           "paymentStatus": "captured",
           "fare.waitingCharge": waitingFee,
           "fare.finalTotal": finalTotal,
+          "cardLast4": cardLast4,
+          "cardBrand": cardBrand,
         });
 
         console.log("✅ PAYMENT CAPTURED:", rideId);
@@ -1539,6 +1550,39 @@ function distanceKm(a, b) {
   return 2 * 6371 * Math.asin(Math.sqrt(h));
 }
 
+/* ======================================
+   VEHICLE CLASSES
+   A passenger who books and pays for Executive must not be sent a Mini. The
+   ride carries the class they paid for as rideType, the driver carries the
+   class their vehicle was approved as as vehicleType, and both use the same
+   ids. Keep this table in step with the app's constants/vehicleClasses.js.
+====================================== */
+// A vehicle may take its own class and anything it comfortably exceeds, never
+// anything above it. Only an XL has six seats, so only an XL is sent XL work.
+const SERVES = {
+  RouteMini: ["RouteMini"],
+  RoutePlus: ["RoutePlus", "RouteMini"],
+  RouteXL: ["RouteXL", "RoutePlus", "RouteMini"],
+  RouteEco: ["RouteEco", "RouteMini"],
+  RouteExecutive: ["RouteExecutive", "RoutePlus", "RouteMini"],
+};
+const DEFAULT_CLASS = "RouteMini";
+
+/**
+ * Whether a vehicle of this class may be offered this ride.
+ * Drivers approved before classes were matched have no vehicleType and are
+ * treated as the entry class, so they keep getting ordinary work but stop
+ * being sent Executive and XL jobs.
+ * @param {string} vehicleType Driver's approved class.
+ * @param {string} rideType Class the passenger paid for.
+ * @return {boolean} True when the vehicle qualifies.
+ */
+function canServe(vehicleType, rideType) {
+  const vehicle = SERVES[vehicleType] ? vehicleType : DEFAULT_CLASS;
+  const ride = SERVES[rideType] ? rideType : DEFAULT_CLASS;
+  return SERVES[vehicle].includes(ride);
+}
+
 /**
  * Rings every eligible online driver near the pickup.
  * @param {string} rideId Ride id.
@@ -1561,6 +1605,7 @@ async function offerRideToDrivers(rideId, ride) {
         d.isOnRide === true) {
       return;
     }
+    if (!canServe(d.vehicleType, ride.rideType)) return;
     const km = distanceKm(d.location, ride.pickupLocation);
     if (km <= cfg.dispatch.searchRadiusKm) nearby.push(snap.id);
   });
