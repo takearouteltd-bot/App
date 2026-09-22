@@ -5,34 +5,59 @@ import {
   StyleSheet,
   TouchableOpacity,
   SafeAreaView,
-  FlatList,
-  Dimensions,
   Alert,
   ActivityIndicator,
-  Animated,
   ScrollView,
   TextInput,
 } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import MapViewDirections from 'react-native-maps-directions';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { db } from '../../config/firebase';
-import { addDoc, collection, serverTimestamp, doc, updateDoc, getDoc, onSnapshot, getDocs } from 'firebase/firestore';
+import {
+  addDoc,
+  collection,
+  serverTimestamp,
+  doc,
+  updateDoc,
+  getDoc,
+  onSnapshot,
+  getDocs,
+  setDoc,
+} from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { useAppConfig, currencySymbol } from '../../utils/appConfig';
+import {
+  COLORS,
+  TYPE,
+  SPACE,
+  RADIUS,
+  SHADOW,
+  IconButton,
+  RouteLine,
+  MapUnavailable,
+  isCoord,
+  regionCovering,
+} from '../../components/ui/kit';
 
-const { width, height } = Dimensions.get('window');
-const PRIMARY = '#79B531';
-const SECONDARY = '#235594';
-const DANGER = '#D32F2F';
-const BG = '#F8F9FA';
+const GOOGLE_MAPS_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ';
+
+// Vehicle classes. `multiplier` scales the fare; `passengers` is the real seat
+// count. No arrival estimates are shown here because nothing measures them —
+// the driver's distance is only known once a job has been offered.
+const RIDE_OPTIONS = [
+  { id: 'RouteMini', label: 'Mini', multiplier: 1.0, icon: 'car-hatchback', description: 'Everyday rides', passengers: 4 },
+  { id: 'RoutePlus', label: 'Plus', multiplier: 1.2, icon: 'car', description: 'Comfortable saloons', passengers: 4 },
+  { id: 'RouteXL', label: 'XL', multiplier: 1.5, icon: 'car-estate', description: 'Room for luggage', passengers: 6 },
+  { id: 'RouteEco', label: 'Eco', multiplier: 0.9, icon: 'leaf', description: 'Hybrid and electric', passengers: 4 },
+  { id: 'RouteExecutive', label: 'Executive', multiplier: 2.0, icon: 'car-sports', description: 'Premium vehicles', passengers: 4 },
+];
 
 export default function FareEstimationScreen({ route }) {
   const navigation = useNavigation();
   const { origin, destination } = route.params;
   const mapRef = useRef(null);
-  const scrollY = useRef(new Animated.Value(0)).current;
   const auth = getAuth();
   const currentUser = auth.currentUser;
 
@@ -41,168 +66,64 @@ export default function FareEstimationScreen({ route }) {
   const [duration, setDuration] = useState(0);
   const [selectedRide, setSelectedRide] = useState('RouteMini');
   const [loading, setLoading] = useState(false);
-  const [routeReady, setRouteReady] = useState(false);
+  const [routeCalculated, setRouteCalculated] = useState(false);
   const [promoCode, setPromoCode] = useState('');
   const [promoApplied, setPromoApplied] = useState(false);
   const [discount, setDiscount] = useState(0);
-  const [savedPlaces, setSavedPlaces] = useState([]);
-  const [paymentMethod, setPaymentMethod] = useState('card');
-  const [routeCalculated, setRouteCalculated] = useState(false);
-
-  const GOOGLE_MAPS_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ'; // replace with your key
-
-
-  const [savedCards, setSavedCards] = useState([]);
-const [defaultCard, setDefaultCard] = useState(null);
-
-// Add to your existing useEffect or create a new one
-useEffect(() => {
-  if (!currentUser) return;
-
-  const cardsRef = collection(db, 'riders', currentUser.uid, 'cards');
-  
-  const unsubscribe = onSnapshot(cardsRef, (snapshot) => {
-    const cards = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    setSavedCards(cards);
-    
-    // Find default card, or use first card as fallback
-    const defaultCard = cards.find(c => c.isDefault) || cards[0] || null;
-    setDefaultCard(defaultCard);
-  });
-
-  return unsubscribe;
-}, [currentUser]);
+  const [paymentMethod] = useState('card');
+  const [defaultCard, setDefaultCard] = useState(null);
+  const [showBreakdown, setShowBreakdown] = useState(false);
 
   useEffect(() => {
-  const checkPaymentMethod = async () => {
-    if (!currentUser) return;
-    
+    if (!currentUser) return undefined;
     const cardsRef = collection(db, 'riders', currentUser.uid, 'cards');
-    const cardsSnap = await getDocs(cardsRef);
-    
-    if (cardsSnap.empty) {
-      Alert.alert(
-        "Payment Required",
-        "Please add a payment method to continue.",
-        [
-          { 
-            text: "Add Card", 
-            onPress: () => navigation.replace('AddPayment') 
-          }
-        ]
-      );
-    }
-  };
-  
-  checkPaymentMethod();
-}, [currentUser]);
-  
-  // Fetch saved places for quick destination swap
-  React.useEffect(() => {
-    if (!currentUser) return;
-    const placesRef = collection(db, 'riders', currentUser.uid, 'savedPlaces');
-    const unsubscribe = onSnapshot(
-      placesRef,
-      (snapshot) => {
-        const places = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setSavedPlaces(places);
-      },
-      (error) => { if (error.code !== 'permission-denied') console.error(error); }
-    );
-    return unsubscribe;
+    return onSnapshot(cardsRef, (snapshot) => {
+      const cards = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setDefaultCard(cards.find((c) => c.isDefault) || cards[0] || null);
+    });
   }, [currentUser]);
 
-  const rideOptions = [
-    { 
-      id: 'RouteMini', 
-      label: 'RouteMini', 
-      multiplier: 1.0,
-      icon: 'car',
-      description: 'Affordable everyday rides',
-      passengers: 4,
-      eta: '3 min',
+  /* ================= FARE =================
+     Rates come from the admin dashboard (config/app), with the original values
+     as fallback. */
+  const calculateFareDetails = useCallback(
+    (multiplier = 1) => {
+      const { baseFare, ratePerMile, ratePerMinute, minimumFare, vatPercent } = appConfig.fares;
+      const surge = 1;
+      const vatRate = vatPercent / 100;
+
+      const distanceInMiles = distance * 0.621371;
+      const distanceFare = distanceInMiles * ratePerMile;
+      const timeFare = duration * ratePerMinute;
+
+      const subtotal = (baseFare + distanceFare + timeFare) * multiplier * surge;
+      const fareBeforeVAT = Math.max(subtotal, minimumFare);
+
+      const discountedFare = promoApplied ? fareBeforeVAT * (1 - discount) : fareBeforeVAT;
+      const vatAmount = discountedFare * vatRate;
+      const total = discountedFare + vatAmount;
+
+      return {
+        currency: appConfig.currency,
+        vatPercent,
+        discountAmount: Number((fareBeforeVAT - discountedFare).toFixed(2)),
+        baseFare: Number(baseFare.toFixed(2)),
+        distanceFare: Number(distanceFare.toFixed(2)),
+        timeFare: Number(timeFare.toFixed(2)),
+        surgeMultiplier: surge,
+        rideMultiplier: multiplier,
+        vat: Number(vatAmount.toFixed(2)),
+        total: Number(total.toFixed(2)),
+        distanceInMiles: Number(distanceInMiles.toFixed(2)),
+        subtotal: Number(discountedFare.toFixed(2)),
+      };
     },
-    { 
-      id: 'RoutePlus', 
-      label: 'RoutePlus', 
-      multiplier: 1.2,
-      icon: 'car',
-      description: 'Comfortable sedans',
-      passengers: 4,
-      eta: '5 min',
-    },
-    { 
-      id: 'RouteXL', 
-      label: 'RouteXL', 
-      multiplier: 1.5,
-      icon: 'car-estate',
-      description: 'Spacious SUVs for groups',
-      passengers: 6,
-      eta: '7 min',
-    },
-    { 
-      id: 'RouteEco', 
-      label: 'RouteEco', 
-      multiplier: 0.9,
-      icon: 'leaf',
-      description: 'Eco-friendly hybrid rides',
-      passengers: 4,
-      eta: '4 min',
-    },
-    { 
-      id: 'RouteExecutive', 
-      label: 'Executive', 
-      multiplier: 2.0,
-      icon: 'car-wash',
-      description: 'Premium luxury experience',
-      passengers: 4,
-      eta: '8 min',
-    },
-  ];
+    [distance, duration, promoApplied, discount, appConfig]
+  );
 
-  const calculateFareDetails = useCallback((multiplier = 1) => {
-    // Rates come from the admin dashboard (config/app), with the original
-    // values as fallback.
-    const baseFare = appConfig.fares.baseFare;
-    const ratePerMile = appConfig.fares.ratePerMile;
-    const ratePerMin = appConfig.fares.ratePerMinute;
-    const minFare = appConfig.fares.minimumFare;
-    const surge = 1;
-    const vatRate = appConfig.fares.vatPercent / 100;
-
-    const distanceInMiles = distance * 0.621371;
-
-    const distanceFare = distanceInMiles * ratePerMile;
-    const timeFare = duration * ratePerMin;
-
-    const subtotal = (baseFare + distanceFare + timeFare) * multiplier * surge;
-    const fareBeforeVAT = Math.max(subtotal, minFare);
-    
-    // Apply promo discount
-    const discountedFare = promoApplied ? fareBeforeVAT * (1 - discount) : fareBeforeVAT;
-    
-    const vatAmount = discountedFare * vatRate;
-    const total = discountedFare + vatAmount;
-
-    return {
-      currency: appConfig.currency,
-      vatPercent: appConfig.fares.vatPercent,
-      discountAmount: Number((fareBeforeVAT - discountedFare).toFixed(2)),
-      baseFare: Number(baseFare.toFixed(2)),
-      distanceFare: Number(distanceFare.toFixed(2)),
-      timeFare: Number(timeFare.toFixed(2)),
-      surgeMultiplier: surge,
-      rideMultiplier: multiplier,
-      vat: Number(vatAmount.toFixed(2)),
-      total: Number(total.toFixed(2)),
-      distanceInMiles: Number(distanceInMiles.toFixed(2)),
-      subtotal: Number(discountedFare.toFixed(2)),
-    };
-  }, [distance, duration, promoApplied, discount, appConfig]);
-
-  /* ================= PROMO CODE =================
-     Codes are created in the admin dashboard (promoCodes/{CODE}) as a
-     percentage off the fare before VAT. */
+  /* ================= PROMO =================
+     Codes live in the admin dashboard (promoCodes/{CODE}) as a percentage off
+     the fare before VAT. */
   const [promoInput, setPromoInput] = useState('');
   const [promoChecking, setPromoChecking] = useState(false);
 
@@ -243,39 +164,34 @@ useEffect(() => {
     setPromoInput('');
   };
 
+  /* ================= BOOK ================= */
   const handleConfirmRide = async () => {
     if (!currentUser) {
-      Alert.alert("Error", "Please sign in to book a ride");
+      Alert.alert('Not signed in', 'Please sign in to book a ride.');
       return;
     }
 
-    // ✅ Check if user has a saved card
-  try {
-    const cardsRef = collection(db, 'riders', currentUser.uid, 'cards');
-    const cardsSnap = await getDocs(cardsRef);
-    
-    if (cardsSnap.empty) {
-      Alert.alert(
-        "Payment Required",
-        "You need to add a payment method before booking a ride.",
-        [
-          { text: "Cancel", style: "cancel" },
-          { 
-            text: "Add Card", 
-            onPress: () => navigation.navigate('AddPaymentMethod') 
-          }
-        ]
-      );
-      return;
+    try {
+      const cardsSnap = await getDocs(collection(db, 'riders', currentUser.uid, 'cards'));
+      if (cardsSnap.empty) {
+        Alert.alert(
+          'Add a payment method',
+          'You need a card on file before booking a ride.',
+          [
+            { text: 'Not now', style: 'cancel' },
+            { text: 'Add card', onPress: () => navigation.navigate('AddPayment') },
+          ]
+        );
+        return;
+      }
+    } catch (error) {
+      console.error('Error checking cards:', error);
     }
-  } catch (err) {
-    console.error("Error checking cards:", err);
-  }
 
     setLoading(true);
 
     try {
-      const selectedOption = rideOptions.find(r => r.id === selectedRide);
+      const selectedOption = RIDE_OPTIONS.find((r) => r.id === selectedRide);
       const fareDetails = calculateFareDetails(selectedOption.multiplier);
 
       // Drivers this passenger asked not to be matched with again.
@@ -284,26 +200,26 @@ useEffect(() => {
         const riderSnap = await getDoc(doc(db, 'riders', currentUser.uid));
         const list = riderSnap.exists() ? riderSnap.data().blockedDrivers : null;
         if (Array.isArray(list)) blockedDriverIds = list;
-      } catch (e) {
-        console.log('Could not load blocked drivers:', e);
+      } catch (error) {
+        console.log('Could not load blocked drivers:', error);
       }
 
       const rideData = {
         riderId: currentUser.uid,
         driverId: null,
-        status: "searching",
+        status: 'searching',
         rideType: selectedRide,
 
         pickupLocation: {
           latitude: origin.latitude,
           longitude: origin.longitude,
-          address: origin.address || "Pickup location",
+          address: origin.address || 'Pickup location',
         },
 
         dropoffLocation: {
           latitude: destination.latitude,
           longitude: destination.longitude,
-          address: destination.description || destination.address || "Dropoff location",
+          address: destination.description || destination.address || 'Dropoff location',
         },
 
         route: {
@@ -318,20 +234,16 @@ useEffect(() => {
           promoCode: promoApplied ? promoCode : null,
           discount: promoApplied ? discount : 0,
         },
-        
+
         fareEstimate: fareDetails.total,
         currency: appConfig.currency,
         blockedDriverIds,
 
-        // Waiting terms at the time of booking. The completion function
-        // charges from these, and both apps show the waiting timer from them.
+        // Waiting terms at the time of booking. The completion function charges
+        // from these, and both apps show the waiting timer from them.
         waitingPolicy: { ...appConfig.waiting },
 
-        payment: {
-          method: paymentMethod,
-          status: "pending",
-          transactionId: null,
-        },
+        payment: { method: paymentMethod, status: 'pending', transactionId: null },
 
         timestamps: {
           createdAt: serverTimestamp(),
@@ -340,247 +252,194 @@ useEffect(() => {
           completedAt: null,
         },
 
-        cancellation: {
-          by: null,
-          reason: null,
-          at: null,
-        },
-
-        rating: {
-          riderToDriver: null,
-          driverToRider: null,
-          feedback: null,
-        },
+        cancellation: { by: null, reason: null, at: null },
+        rating: { riderToDriver: null, driverToRider: null, feedback: null },
 
         expiresAt: new Date(Date.now() + 60 * 1000),
       };
 
       const rideRef = await addDoc(collection(db, 'rides'), rideData);
 
-      await updateDoc(doc(db, 'riders', currentUser.uid), {
-        currentRideId: rideRef.id
-      });
+      await updateDoc(doc(db, 'riders', currentUser.uid), { currentRideId: rideRef.id });
 
-      // Save to recent searches
-      const recentRef = collection(db, 'riders', currentUser.uid, 'recentSearches');
-      await addDoc(recentRef, {
-        description: destination.description || destination.address,
-        address: destination.address || destination.description,
-        latitude: destination.latitude,
-        longitude: destination.longitude,
-        placeId: destination.placeId || null,
-        searchedAt: serverTimestamp(),
-      });
+      // Keyed by place id so booking the same destination twice moves it up the
+      // recent list rather than adding a duplicate.
+      const key =
+        destination.placeId ||
+        `${destination.latitude.toFixed(5)},${destination.longitude.toFixed(5)}`;
+      await setDoc(
+        doc(db, 'riders', currentUser.uid, 'recentSearches', key),
+        {
+          description: destination.description || destination.address,
+          address: destination.address || destination.description,
+          latitude: destination.latitude,
+          longitude: destination.longitude,
+          placeId: destination.placeId || null,
+          searchedAt: serverTimestamp(),
+        },
+        { merge: true }
+      ).catch(() => null);
 
       setLoading(false);
       navigation.navigate('RideRequest', { rideId: rideRef.id });
-
-    } catch (err) {
-      console.error(err);
+    } catch (error) {
+      console.error(error);
       setLoading(false);
-      Alert.alert("Error", "Failed to request ride. Please try again.");
+      Alert.alert('Could not book', 'Failed to request your ride. Please try again.');
     }
   };
 
-  const selectedOption = rideOptions.find(r => r.id === selectedRide);
+  const selectedOption = RIDE_OPTIONS.find((r) => r.id === selectedRide);
   const fare = calculateFareDetails(selectedOption.multiplier);
+  const money = (n) => `${currencySymbol()}${Number(n).toFixed(2)}`;
 
-  // Header animation
-  const headerOpacity = scrollY.interpolate({
-    inputRange: [0, 100],
-    outputRange: [0, 1],
-    extrapolate: 'clamp',
-  });
+  // Averaging a missing coordinate gives NaN, and the map opens on 0,0.
+  const initialRegion = regionCovering([origin, destination], 0.05);
 
   return (
     <SafeAreaView style={styles.container}>
-
-      {/* Animated Header */}
-      <Animated.View style={[styles.animatedHeader, { opacity: headerOpacity }]}>
-        <Text style={styles.animatedHeaderText}>Choose Your Ride</Text>
-      </Animated.View>
-
-      {/* MAP */}
-      <View style={styles.mapContainer}>
+      <View style={styles.mapWrap}>
+        {initialRegion ? (
         <MapView
           ref={mapRef}
-          style={styles.map}
-          initialRegion={{
-            latitude: (origin.latitude + destination.latitude) / 2,
-            longitude: (origin.longitude + destination.longitude) / 2,
-            latitudeDelta: 0.05,
-            longitudeDelta: 0.05,
-          }}
+          provider={PROVIDER_GOOGLE}
+          style={StyleSheet.absoluteFill}
+          initialRegion={initialRegion}
+          showsCompass={false}
+          toolbarEnabled={false}
         >
-          <Marker coordinate={origin}>
-            <View style={styles.originMarker}>
-              <View style={styles.originDot} />
-              <View style={styles.originRing} />
-            </View>
-          </Marker>
-          
-          <Marker coordinate={destination}>
-            <View style={styles.destMarker}>
-              <Ionicons name="location" size={28} color={SECONDARY} />
-            </View>
-          </Marker>
+          {isCoord(origin) ? (
+            <Marker coordinate={origin} anchor={{ x: 0.5, y: 0.5 }}>
+              <View style={styles.originMarker} />
+            </Marker>
+          ) : null}
 
-            <MapViewDirections
-              origin={origin}
-              destination={destination}
-              apikey={GOOGLE_MAPS_API_KEY}
-              strokeWidth={5}
-              strokeColor={PRIMARY}
-              onReady={result => {
-                  setDistance(result.distance);
-                  setDuration(result.duration);
-                  setRouteCalculated(true);   // use this for UI state
-                  setRouteReady(true);        // keep if needed for button enable
+          {isCoord(destination) ? (
+            <Marker coordinate={destination} anchor={{ x: 0.5, y: 1 }}>
+              <Ionicons name="location" size={30} color={COLORS.navy} />
+            </Marker>
+          ) : null}
 
-                 
-                }}
-              
-            />
-       
+          {isCoord(origin) && isCoord(destination) ? (
+          <MapViewDirections
+            origin={origin}
+            destination={destination}
+            apikey={GOOGLE_MAPS_API_KEY}
+            strokeWidth={4}
+            strokeColor={COLORS.green}
+            onReady={(result) => {
+              setDistance(result.distance);
+              setDuration(result.duration);
+              setRouteCalculated(true);
+              mapRef.current?.fitToCoordinates(result.coordinates, {
+                edgePadding: { top: 80, right: 60, bottom: 60, left: 60 },
+                animated: true,
+              });
+            }}
+          />
+          ) : null}
         </MapView>
+        ) : (
+          <MapUnavailable note="We could not place this journey on a map." />
+        )}
 
-        {/* Top Bar */}
         <View style={styles.topBar}>
-          <TouchableOpacity style={styles.iconButton} onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={22} color={DARK} />
-          </TouchableOpacity>
-          
-          <View style={styles.routeInfoPill}>
-            <Ionicons name="time-outline" size={14} color={PRIMARY} />
-            <Text style={styles.routeInfoText}>{Math.ceil(duration)} min</Text>
-            <View style={styles.dotSeparator} />
-            <Ionicons name="navigate-outline" size={14} color={SECONDARY} />
-            <Text style={styles.routeInfoText}>{fare.distanceInMiles} mi</Text>
-          </View>
-
-          <TouchableOpacity style={styles.iconButton}>
-            <Ionicons name="share-outline" size={22} color={DARK} />
-          </TouchableOpacity>
+          <IconButton icon="chevron-back" onPress={() => navigation.goBack()} accessibilityLabel="Go back" />
+          {routeCalculated ? (
+            <View style={styles.tripPill}>
+              <Text style={styles.tripPillText}>{Math.ceil(duration)} min</Text>
+              <View style={styles.pillDivider} />
+              <Text style={styles.tripPillText}>{fare.distanceInMiles} mi</Text>
+            </View>
+          ) : null}
+          <View style={{ width: 44 }} />
         </View>
       </View>
 
-      {/* BOTTOM SHEET */}
-      <Animated.View style={styles.bottomSheet}>
-        <View style={styles.sheetHandle} />
+      <View style={styles.sheet}>
+        <View style={styles.grabber} />
 
-        {/* Route Summary */}
-        <View style={styles.routeSummary}>
-          <View style={styles.routePoint}>
-            <View style={[styles.routeDot, { backgroundColor: PRIMARY }]} />
-            <Text style={styles.routeAddress} numberOfLines={1}>{origin.address}</Text>
-          </View>
-          <View style={styles.routeLine} />
-          <View style={styles.routePoint}>
-            <View style={[styles.routeDot, { backgroundColor: SECONDARY }]} />
-            <Text style={styles.routeAddress} numberOfLines={1}>{destination.description || destination.address}</Text>
-          </View>
+        <View style={styles.journey}>
+          <RouteLine
+            compact
+            pickup={origin.address}
+            dropoff={destination.description || destination.address}
+          />
         </View>
 
-        <ScrollView
-          showsVerticalScrollIndicator={false}
-          onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}
-        >
-          {/* Ride Selection */}
-          <Text style={styles.sectionTitle}>Select Ride Type</Text>
-          
-          <FlatList
-            data={rideOptions}
+        <ScrollView showsVerticalScrollIndicator={false} style={{ flexGrow: 0 }}>
+          {/* Vehicle class. Price updates with the selection. */}
+          <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
-            keyExtractor={item => item.id}
-            contentContainerStyle={styles.rideList}
-            renderItem={({ item }) => {
+            contentContainerStyle={styles.classRow}
+          >
+            {RIDE_OPTIONS.map((item) => {
               const itemFare = calculateFareDetails(item.multiplier);
-              const isSelected = item.id === selectedRide;
-
+              const active = item.id === selectedRide;
               return (
                 <TouchableOpacity
-                  style={[
-                    styles.rideCard,
-                    isSelected && styles.rideCardSelected,
-                  ]}
+                  key={item.id}
+                  style={[styles.classCard, active && styles.classCardActive]}
                   onPress={() => setSelectedRide(item.id)}
-                  activeOpacity={0.8}
+                  activeOpacity={0.85}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: active }}
                 >
-                  <View style={[styles.rideIconContainer, isSelected && { backgroundColor: 'rgba(121,180,49,0.15)' }]}>
-                    <MaterialCommunityIcons name={item.icon} size={28} color={isSelected ? PRIMARY : '#888'} />
-                  </View>
-                  
-                  <Text style={[styles.rideLabel, isSelected && { color: PRIMARY }]}>{item.label}</Text>
-                  <Text style={styles.rideDescription}>{item.description}</Text>
-                  
-                  <View style={styles.rideMeta}>
-                    <Ionicons name="person-outline" size={12} color="#999" />
-                    <Text style={styles.rideMetaText}>{item.passengers}</Text>
-                    <View style={styles.dotSeparator} />
-                    <Text style={styles.rideEta}>{item.eta}</Text>
-                  </View>
-
-                  <View style={styles.ridePriceRow}>
-                    <Text style={[styles.rideFare, isSelected && { color: PRIMARY }]}>{currencySymbol()}{itemFare.total}</Text>
-                    {isSelected && <Ionicons name="checkmark-circle" size={20} color={PRIMARY} />}
-                  </View>
+                  <MaterialCommunityIcons
+                    name={item.icon}
+                    size={26}
+                    color={active ? COLORS.green : COLORS.muted}
+                  />
+                  <Text style={[styles.className, active && { color: COLORS.navy }]}>
+                    {item.label}
+                  </Text>
+                  <Text style={styles.classSeats}>{item.passengers} seats</Text>
+                  <Text style={[styles.classFare, active && { color: COLORS.navy }]}>
+                    {routeCalculated ? money(itemFare.total) : '—'}
+                  </Text>
                 </TouchableOpacity>
               );
-            }}
-          />
+            })}
+          </ScrollView>
 
-          {/* Payment Method */}
+          <Text style={styles.classDescription}>{selectedOption.description}</Text>
 
-         <View style={styles.paymentSection}>
-            <Text style={styles.sectionTitle}>Payment</Text>
-            
-            <TouchableOpacity 
-              style={styles.paymentRow}
-              onPress={() => navigation.navigate('PaymentsMethod')}
-            >
-              <View style={styles.paymentIcon}>
-                <Ionicons name="card-outline" size={20} color={SECONDARY} />
-              </View>
-              
-              <View style={styles.paymentText}>
-                {defaultCard ? (
-                  <>
-                    <Text style={styles.paymentLabel}>
-                      {defaultCard.brand?.toUpperCase() || 'Card'} •••• {defaultCard.last4}
-                    </Text>
-                    <Text style={styles.paymentSub}>
-                      Expires {defaultCard.exp_month}/{defaultCard.exp_year}
-                    </Text>
-                  </>
-                ) : (
-                  <>
-                    <Text style={styles.paymentLabel}>No payment method</Text>
-                    <Text style={styles.paymentSub}>Tap to add a card</Text>
-                  </>
-                )}
-              </View>
-              
-              <Ionicons name="chevron-forward" size={18} color="#ccc" />
-            </TouchableOpacity>
-          </View>
+          {/* Payment */}
+          <TouchableOpacity
+            style={styles.payRow}
+            onPress={() => navigation.navigate('AddPayment')}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="card-outline" size={20} color={COLORS.navy} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.payLabel}>
+                {defaultCard
+                  ? `${(defaultCard.brand || 'Card').toUpperCase()} ···· ${defaultCard.last4}`
+                  : 'No card added'}
+              </Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={COLORS.lineStrong} />
+          </TouchableOpacity>
 
-          {/* Promo code */}
+          {/* Promo */}
           {promoApplied ? (
             <View style={styles.promoRow}>
-              <Ionicons name="pricetag" size={18} color={PRIMARY} />
-              <Text style={styles.promoText}>{promoCode} applied, {Math.round(discount * 100)}% off</Text>
+              <Ionicons name="pricetag" size={18} color={COLORS.green} />
+              <Text style={styles.promoApplied}>
+                {promoCode} · {Math.round(discount * 100)}% off
+              </Text>
               <TouchableOpacity onPress={removePromo}>
-                <Text style={[styles.promoText, { flex: 0, color: DANGER }]}>Remove</Text>
+                <Text style={styles.promoRemove}>Remove</Text>
               </TouchableOpacity>
             </View>
           ) : (
             <View style={styles.promoRow}>
-              <Ionicons name="pricetag-outline" size={18} color={PRIMARY} />
+              <Ionicons name="pricetag-outline" size={18} color={COLORS.muted} />
               <TextInput
-                style={[styles.promoText, { paddingVertical: 0 }]}
+                style={styles.promoInput}
                 placeholder="Promo code"
-                placeholderTextColor="#9CB87A"
+                placeholderTextColor={COLORS.faint}
                 autoCapitalize="characters"
                 autoCorrect={false}
                 value={promoInput}
@@ -590,500 +449,180 @@ useEffect(() => {
               />
               <TouchableOpacity onPress={applyPromo} disabled={promoChecking || !promoInput.trim()}>
                 {promoChecking ? (
-                  <ActivityIndicator size="small" color={PRIMARY} />
+                  <ActivityIndicator size="small" color={COLORS.green} />
                 ) : (
-                  <Text style={[styles.promoText, { flex: 0, color: SECONDARY }]}>Apply</Text>
+                  <Text
+                    style={[styles.promoApply, !promoInput.trim() && { color: COLORS.faint }]}
+                  >
+                    Apply
+                  </Text>
                 )}
               </TouchableOpacity>
             </View>
           )}
 
-          {/* Fare Breakdown */}
-          <View style={styles.breakdownCard}>
-            <Text style={styles.sectionTitle}>Fare Breakdown</Text>
-            
-            <View style={styles.breakdownRow}>
-              <Text style={styles.breakdownLabel}>Base fare</Text>
-              <Text style={styles.breakdownValue}>{currencySymbol()}{fare.baseFare}</Text>
-            </View>
-            <View style={styles.breakdownRow}>
-              <Text style={styles.breakdownLabel}>Distance ({fare.distanceInMiles} mi)</Text>
-              <Text style={styles.breakdownValue}>{currencySymbol()}{fare.distanceFare}</Text>
-            </View>
-            <View style={styles.breakdownRow}>
-              <Text style={styles.breakdownLabel}>Time ({Math.ceil(duration)} min)</Text>
-              <Text style={styles.breakdownValue}>{currencySymbol()}{fare.timeFare}</Text>
-            </View>
-            
-            {promoApplied && (
-              <View style={styles.breakdownRow}>
-                <Text style={[styles.breakdownLabel, { color: PRIMARY }]}>Promo {promoCode} ({Math.round(discount * 100)}%)</Text>
-                <Text style={[styles.breakdownValue, { color: PRIMARY }]}>-{currencySymbol()}{fare.discountAmount.toFixed(2)}</Text>
-              </View>
-            )}
+          {/* Breakdown, folded away until asked for. */}
+          <TouchableOpacity
+            style={styles.breakdownToggle}
+            onPress={() => setShowBreakdown((v) => !v)}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.breakdownToggleText}>
+              {showBreakdown ? 'Hide fare breakdown' : 'Fare breakdown'}
+            </Text>
+            <Ionicons
+              name={showBreakdown ? 'chevron-up' : 'chevron-down'}
+              size={16}
+              color={COLORS.blue}
+            />
+          </TouchableOpacity>
 
-            <View style={styles.breakdownDivider} />
-            
-            <View style={styles.breakdownRow}>
-              <Text style={styles.breakdownLabel}>Subtotal</Text>
-              <Text style={styles.breakdownValue}>{currencySymbol()}{fare.subtotal}</Text>
+          {showBreakdown ? (
+            <View style={styles.breakdown}>
+              <Row label="Base fare" value={money(fare.baseFare)} />
+              <Row label={`Distance · ${fare.distanceInMiles} mi`} value={money(fare.distanceFare)} />
+              <Row label={`Time · ${Math.ceil(duration)} min`} value={money(fare.timeFare)} />
+              {promoApplied ? (
+                <Row
+                  label={`Promo ${promoCode}`}
+                  value={`-${money(fare.discountAmount)}`}
+                  tone={COLORS.green}
+                />
+              ) : null}
+              <View style={styles.breakdownLine} />
+              <Row label="Subtotal" value={money(fare.subtotal)} />
+              <Row label={`VAT ${fare.vatPercent}%`} value={money(fare.vat)} />
+              <View style={styles.breakdownLine} />
+              <Row label="Total" value={money(fare.total)} strong />
             </View>
-            <View style={styles.breakdownRow}>
-              <Text style={styles.breakdownLabel}>VAT ({fare.vatPercent}%)</Text>
-              <Text style={styles.breakdownValue}>{currencySymbol()}{fare.vat}</Text>
-            </View>
-
-            <View style={styles.breakdownDivider} />
-            
-            <View style={styles.totalRow}>
-              <Text style={styles.totalLabel}>Total</Text>
-              <Text style={styles.totalValue}>{currencySymbol()}{fare.total}</Text>
-            </View>
-          </View>
-
-
-          {/* Safety Note */}
-          <View style={styles.safetyNote}>
-            <Ionicons name="shield-checkmark-outline" size={16} color={SECONDARY} />
-            <Text style={styles.safetyText}>Your ride is insured and tracked in real-time</Text>
-          </View>
+          ) : null}
         </ScrollView>
 
-        {/* Confirm Button */}
-        <View style={styles.buttonContainer}>
-          <TouchableOpacity
-            style={[styles.confirmButton, loading && styles.confirmButtonDisabled]}
-            onPress={handleConfirmRide}
-            disabled={loading || !routeCalculated}
-          >
-            {loading ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <>
-                <Text style={styles.confirmText}>Confirm {selectedOption.label}</Text>
-                <View style={styles.confirmPricePill}>
-                  <Text style={styles.confirmPrice}>{currencySymbol()}{fare.total}</Text>
-                </View>
-              </>
-            )}
-          </TouchableOpacity>
-        </View>
-      </Animated.View>
+        <TouchableOpacity
+          style={[styles.confirm, (loading || !routeCalculated) && { opacity: 0.5 }]}
+          onPress={handleConfirmRide}
+          disabled={loading || !routeCalculated}
+          activeOpacity={0.9}
+          accessibilityRole="button"
+        >
+          {loading ? (
+            <ActivityIndicator color={COLORS.white} />
+          ) : (
+            <>
+              <Text style={styles.confirmText}>
+                {routeCalculated ? `Book ${selectedOption.label}` : 'Working out your route…'}
+              </Text>
+              {routeCalculated ? (
+                <Text style={styles.confirmPrice}>{money(fare.total)}</Text>
+              ) : null}
+            </>
+          )}
+        </TouchableOpacity>
+      </View>
     </SafeAreaView>
   );
 }
 
-const DARK = '#1a1a1a';
+function Row({ label, value, strong, tone }) {
+  return (
+    <View style={styles.row}>
+      <Text style={[styles.rowLabel, strong && styles.rowStrong, tone && { color: tone }]}>
+        {label}
+      </Text>
+      <Text style={[styles.rowValue, strong && styles.rowStrong, tone && { color: tone }]}>
+        {value}
+      </Text>
+    </View>
+  );
+}
 
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
-    backgroundColor: '#fff' 
-  },
+  container: { flex: 1, backgroundColor: COLORS.white },
 
-  // Animated Header
-  animatedHeader: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 100,
-    backgroundColor: '#fff',
-    paddingTop: 50,
-    paddingBottom: 12,
-    paddingHorizontal: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
-  animatedHeaderText: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: DARK,
-    textAlign: 'center',
-  },
-
-  // Map
-  mapContainer: { 
-    flex: 1 
-  },
-  map: { 
-    width: '100%', 
-    height: '100%' 
-  },
-
-  // Markers
+  mapWrap: { flex: 1 },
   originMarker: {
-    alignItems: 'center',
-    justifyContent: 'center',
+    width: 16, height: 16, borderRadius: 8,
+    backgroundColor: COLORS.green, borderWidth: 3, borderColor: COLORS.white,
   },
-  originDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: PRIMARY,
-    borderWidth: 3,
-    borderColor: '#fff',
-  },
-  originRing: {
-    position: 'absolute',
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 2,
-    borderColor: PRIMARY,
-    opacity: 0.3,
-  },
-  destMarker: {
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-
-  // Top Bar
   topBar: {
-    position: 'absolute',
-    top: 50,
-    left: 16,
-    right: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    position: 'absolute', top: SPACE[3], left: SPACE[5], right: SPACE[5],
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },
-  iconButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
+  tripPill: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
+    backgroundColor: COLORS.white, height: 40,
+    paddingHorizontal: SPACE[4], borderRadius: RADIUS.pill,
+    ...SHADOW.float,
   },
-  routeInfoPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
-    gap: 6,
-  },
-  routeInfoText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: DARK,
-  },
-  dotSeparator: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#ccc',
-    marginHorizontal: 4,
-  },
+  tripPillText: { fontSize: 13, fontWeight: '700', color: COLORS.navy },
+  pillDivider: { width: StyleSheet.hairlineWidth, height: 16, backgroundColor: COLORS.line },
 
-  // Bottom Sheet
-  bottomSheet: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    maxHeight: height * 0.65,
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingTop: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    elevation: 20,
+  sheet: {
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: RADIUS.xl,
+    borderTopRightRadius: RADIUS.xl,
+    paddingHorizontal: SPACE[5],
+    paddingTop: SPACE[3],
+    paddingBottom: SPACE[6],
+    maxHeight: '62%',
+    ...SHADOW.sheet,
   },
-  sheetHandle: {
-    alignSelf: 'center',
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#ddd',
-    marginBottom: 12,
+  grabber: {
+    width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.line,
+    alignSelf: 'center', marginBottom: SPACE[4],
   },
+  journey: { paddingBottom: SPACE[4], borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.line },
 
-  // Route Summary
-  routeSummary: {
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+  classRow: { gap: SPACE[3], paddingVertical: SPACE[4], paddingRight: SPACE[4] },
+  classCard: {
+    width: 108, padding: SPACE[3], borderRadius: RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.line,
+    backgroundColor: COLORS.white, gap: 2,
   },
-  routePoint: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 6,
-  },
-  routeDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    marginRight: 12,
-  },
-  routeLine: {
-    width: 2,
-    height: 20,
-    backgroundColor: '#ddd',
-    marginLeft: 4,
-  },
-  routeAddress: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: DARK,
-    flex: 1,
-  },
+  classCardActive: { borderColor: COLORS.green, borderWidth: 1.5, backgroundColor: COLORS.greenSoft },
+  className: { fontSize: 15, fontWeight: '700', color: COLORS.inkSoft, marginTop: SPACE[2] },
+  classSeats: { ...TYPE.caption },
+  classFare: { fontSize: 17, fontWeight: '800', color: COLORS.inkSoft, marginTop: SPACE[1], letterSpacing: -0.3 },
+  classDescription: { ...TYPE.small, marginBottom: SPACE[4] },
 
-  // Section
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: DARK,
-    marginHorizontal: 20,
-    marginTop: 20,
-    marginBottom: 12,
+  payRow: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
+    paddingVertical: SPACE[3],
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
   },
+  payLabel: { ...TYPE.callout },
 
-  // Ride List
-  rideList: {
-    paddingHorizontal: 16,
-    paddingBottom: 8,
-  },
-  rideCard: {
-    width: width * 0.38,
-    marginHorizontal: 4,
-    padding: 14,
-    borderRadius: 16,
-    backgroundColor: '#fff',
-    borderWidth: 2,
-    borderColor: '#f0f0f0',
-  },
-  rideCardSelected: {
-    borderColor: PRIMARY,
-    backgroundColor: 'rgba(121,180,49,0.05)',
-  },
-  rideIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 14,
-    backgroundColor: '#f5f5f5',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  rideLabel: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: DARK,
-    marginBottom: 4,
-  },
-  rideDescription: {
-    fontSize: 11,
-    color: '#888',
-    marginBottom: 8,
-  },
-  rideMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  rideMetaText: {
-    fontSize: 11,
-    color: '#999',
-    marginLeft: 4,
-  },
-  rideEta: {
-    fontSize: 11,
-    color: PRIMARY,
-    fontWeight: '600',
-  },
-  ridePriceRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  rideFare: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: DARK,
-  },
-
-  // Payment
-  paymentSection: {
-    marginTop: 8,
-  },
-  paymentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginHorizontal: 20,
-    padding: 14,
-    backgroundColor: BG,
-    borderRadius: 14,
-  },
-  paymentIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: '#E3F2FD',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  paymentText: {
-    flex: 1,
-  },
-  paymentLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: DARK,
-  },
-  paymentSub: {
-    fontSize: 12,
-    color: '#888',
-    marginTop: 2,
-  },
-
-  // Breakdown
-  breakdownCard: {
-    marginHorizontal: 20,
-    marginTop: 16,
-    padding: 16,
-    backgroundColor: BG,
-    borderRadius: 16,
-  },
-  breakdownRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  breakdownLabel: {
-    fontSize: 14,
-    color: '#666',
-  },
-  breakdownValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: DARK,
-  },
-  breakdownDivider: {
-    height: 1,
-    backgroundColor: '#e0e0e0',
-    marginVertical: 8,
-  },
-  totalRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: 4,
-  },
-  totalLabel: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: DARK,
-  },
-  totalValue: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: PRIMARY,
-  },
-
-  // Promo
   promoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginHorizontal: 20,
-    marginTop: 16,
-    padding: 14,
-    backgroundColor: '#F0F7E6',
-    borderRadius: 14,
-    borderStyle: 'dashed',
-    borderWidth: 1,
-    borderColor: PRIMARY,
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
+    paddingVertical: SPACE[3],
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
   },
-  promoText: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: '600',
-    color: PRIMARY,
-    marginLeft: 10,
-  },
+  promoInput: { flex: 1, fontSize: 15, color: COLORS.ink, paddingVertical: 0 },
+  promoApplied: { flex: 1, ...TYPE.callout, color: COLORS.success },
+  promoApply: { fontSize: 14, fontWeight: '700', color: COLORS.blue },
+  promoRemove: { fontSize: 14, fontWeight: '700', color: COLORS.red },
 
-  // Safety
-  safetyNote: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginHorizontal: 20,
-    marginTop: 16,
-    marginBottom: 100,
-    padding: 12,
-    backgroundColor: '#EBF2FA',
-    borderRadius: 12,
-    gap: 8,
+  breakdownToggle: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[2],
+    paddingVertical: SPACE[4],
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
   },
-  safetyText: {
-    fontSize: 12,
-    color: SECONDARY,
-    fontWeight: '500',
-  },
+  breakdownToggleText: { fontSize: 14, fontWeight: '700', color: COLORS.blue },
+  breakdown: { paddingBottom: SPACE[4] },
+  breakdownLine: { height: StyleSheet.hairlineWidth, backgroundColor: COLORS.line, marginVertical: SPACE[2] },
 
-  // Button
-  buttonContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: '#fff',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    paddingBottom: 30,
-    borderTopWidth: 1,
-    borderTopColor: '#f0f0f0',
+  row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: SPACE[1] },
+  rowLabel: { ...TYPE.body, color: COLORS.inkSoft },
+  rowValue: { ...TYPE.body, color: COLORS.ink },
+  rowStrong: { fontWeight: '800', color: COLORS.navy },
+
+  confirm: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    backgroundColor: COLORS.green,
+    borderRadius: RADIUS.md,
+    minHeight: 56, paddingHorizontal: SPACE[5],
+    marginTop: SPACE[4],
   },
-  confirmButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: PRIMARY,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderRadius: 16,
-  },
-  confirmButtonDisabled: {
-    backgroundColor: '#ccc',
-  },
-  confirmText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  confirmPricePill: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 10,
-  },
-  confirmPrice: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
+  confirmText: { fontSize: 16, fontWeight: '700', color: COLORS.white, letterSpacing: -0.2 },
+  confirmPrice: { fontSize: 17, fontWeight: '800', color: COLORS.white, letterSpacing: -0.3 },
 });

@@ -22,11 +22,12 @@ import {
   addDoc,
   serverTimestamp,
 } from 'firebase/firestore';
+import { COLORS } from '../../components/ui/kit';
 
-const PRIMARY = '#79B531';
-const SECONDARY = '#235594';
-const DANGER = '#DC2626';
-const WARNING = '#F59E0B';
+const PRIMARY = COLORS.green;
+const SECONDARY = COLORS.blue;
+const DANGER = COLORS.red;
+const WARNING = COLORS.amber;
 
 const DRIVER_CATEGORIES = [
   {
@@ -63,7 +64,7 @@ const DRIVER_CATEGORIES = [
     label: 'App / Technical',
     icon: 'bug-report',
     iconSet: 'MaterialIcons',
-    color: '#6B7280',
+    color: COLORS.muted,
     subCategories: [
       { id: 'gps_bug', label: 'GPS / Navigation Wrong', severity: 'medium' },
       { id: 'app_crash', label: 'App Crashed', severity: 'medium' },
@@ -143,7 +144,7 @@ export default function ReportIssueScreen() {
       case 'critical': return DANGER;
       case 'high': return WARNING;
       case 'medium': return SECONDARY;
-      default: return '#6B7280';
+      default: return COLORS.muted;
     }
   };
 
@@ -212,18 +213,26 @@ export default function ReportIssueScreen() {
     }
   };
 
+  // Opens the phone's dialler on 999. It must never claim to have called
+  // anyone: the person has to press dial themselves, and if the handset
+  // cannot place the call we say so rather than leaving them believing help
+  // is on the way.
   const handleEmergencyCall = () => {
     Alert.alert(
-      '🚨 Emergency',
-      'Are you in immediate danger? This will call emergency services.',
+      'Emergency',
+      'Are you in immediate danger? This opens your phone on 999.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Call 999',
           style: 'destructive',
           onPress: () => {
-            // In a real app, use Linking.openURL('tel:999')
-            Alert.alert('Calling 999...', 'Emergency services contacted.');
+            Linking.openURL('tel:999').catch(() =>
+              Alert.alert(
+                'Could not open the dialler',
+                'Please dial 999 from your phone directly.'
+              )
+            );
           },
         },
       ]
@@ -296,7 +305,7 @@ export default function ReportIssueScreen() {
               style={styles.emergencyBanner}
               onPress={handleEmergencyCall}
             >
-              <Ionicons name="call" size={20} color="#fff" />
+              <Ionicons name="call" size={20} color={COLORS.white} />
               <Text style={styles.emergencyBannerText}>
                 EMERGENCY — Tap to Call 999
               </Text>
@@ -403,7 +412,7 @@ export default function ReportIssueScreen() {
                 multiline
                 numberOfLines={5}
                 placeholder="Please provide as much detail as possible..."
-                placeholderTextColor="#999"
+                placeholderTextColor={COLORS.faint}
                 value={description}
                 onChangeText={setDescription}
                 textAlignVertical="top"
@@ -424,13 +433,13 @@ export default function ReportIssueScreen() {
               disabled={submitting}
             >
               {submitting ? (
-                <ActivityIndicator color="#fff" />
+                <ActivityIndicator color={COLORS.white} />
               ) : (
                 <>
                   <Ionicons
                     name={isEmergency ? 'warning' : 'send'}
                     size={18}
-                    color="#fff"
+                    color={COLORS.white}
                   />
                   <Text style={styles.submitButtonText}>
                     {isEmergency ? 'Submit Urgent Report' : 'Submit Report'}
@@ -448,7 +457,7 @@ export default function ReportIssueScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
   },
   header: {
     flexDirection: 'row',
@@ -481,7 +490,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   emergencyBannerText: {
-    color: '#fff',
+    color: COLORS.white,
     fontWeight: '800',
     fontSize: 15,
   },
@@ -490,7 +499,7 @@ const styles = StyleSheet.create({
   tripContext: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8F9FA',
+    backgroundColor: COLORS.surface,
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderRadius: 12,
@@ -499,7 +508,7 @@ const styles = StyleSheet.create({
   },
   tripContextText: {
     fontSize: 13,
-    color: '#666',
+    color: COLORS.muted,
     fontWeight: '500',
     flex: 1,
   },
@@ -508,7 +517,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#1A1A1A',
+    color: COLORS.ink,
     marginBottom: 12,
     marginTop: 8,
   },
@@ -522,7 +531,7 @@ const styles = StyleSheet.create({
   },
   categoryCard: {
     width: '47%',
-    backgroundColor: '#F8F9FA',
+    backgroundColor: COLORS.surface,
     borderRadius: 16,
     padding: 16,
     alignItems: 'center',
@@ -552,7 +561,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#F8F9FA',
+    backgroundColor: COLORS.surface,
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 14,
@@ -566,7 +575,7 @@ const styles = StyleSheet.create({
   subCategoryLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#1A1A1A',
+    color: COLORS.ink,
   },
   severityBadge: {
     paddingHorizontal: 10,
@@ -581,18 +590,18 @@ const styles = StyleSheet.create({
 
   // Description
   descriptionInput: {
-    backgroundColor: '#F8F9FA',
+    backgroundColor: COLORS.surface,
     borderRadius: 16,
     padding: 16,
     fontSize: 15,
-    color: '#1A1A1A',
+    color: COLORS.ink,
     minHeight: 120,
     borderWidth: 1.5,
     borderColor: '#E5E5EA',
   },
   charCount: {
     fontSize: 12,
-    color: '#888',
+    color: COLORS.muted,
     textAlign: 'right',
     marginTop: 6,
     fontWeight: '500',
@@ -610,7 +619,7 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   submitButtonText: {
-    color: '#fff',
+    color: COLORS.white,
     fontWeight: '800',
     fontSize: 16,
   },
@@ -634,12 +643,12 @@ const styles = StyleSheet.create({
   successTitle: {
     fontSize: 24,
     fontWeight: '800',
-    color: '#1A1A1A',
+    color: COLORS.ink,
     marginBottom: 12,
   },
   successText: {
     fontSize: 15,
-    color: '#666',
+    color: COLORS.muted,
     textAlign: 'center',
     lineHeight: 22,
     marginBottom: 24,
@@ -667,7 +676,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
   },
   doneButtonText: {
-    color: '#fff',
+    color: COLORS.white,
     fontWeight: '800',
     fontSize: 16,
   },

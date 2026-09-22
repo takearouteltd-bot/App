@@ -7,7 +7,7 @@ import { useNavigation } from '@react-navigation/native';
 import { collection, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
 import { money } from '../../utils/appConfig';
-import { COLORS, TYPE, ScreenHeader, EmptyState, Loading } from '../ui/kit';
+import { COLORS, TYPE, SPACE, RADIUS, ScreenHeader, EmptyState, Loading, Chip } from '../ui/kit';
 
 const FILTERS = [
   { key: 'all', label: 'All' },
@@ -35,7 +35,7 @@ function whenLabel(date) {
 }
 
 const STATUS = {
-  completed: { label: 'Completed', fg: '#3F6F12', bg: COLORS.greenSoft },
+  completed: { label: 'Completed', fg: COLORS.success, bg: COLORS.greenSoft },
   cancelled: { label: 'Cancelled', fg: COLORS.red, bg: COLORS.redSoft },
   canceled: { label: 'Cancelled', fg: COLORS.red, bg: COLORS.redSoft },
   ongoing: { label: 'On the way', fg: COLORS.blue, bg: COLORS.blueSoft },
@@ -143,18 +143,14 @@ export default function TripsList({ role = 'rider' }) {
           <View style={{ marginBottom: 16 }}>
             <ScreenHeader title="Your trips" />
             <View style={styles.filters}>
-              {FILTERS.map((f) => {
-                const active = filter === f.key;
-                return (
-                  <TouchableOpacity
-                    key={f.key}
-                    onPress={() => setFilter(f.key)}
-                    style={[styles.chip, active && styles.chipActive]}
-                  >
-                    <Text style={[styles.chipText, active && styles.chipTextActive]}>{f.label}</Text>
-                  </TouchableOpacity>
-                );
-              })}
+              {FILTERS.map((f) => (
+                <Chip
+                  key={f.key}
+                  label={f.label}
+                  active={filter === f.key}
+                  onPress={() => setFilter(f.key)}
+                />
+              ))}
             </View>
             {completed.length ? (
               <Text style={[TYPE.small, { marginTop: 12 }]}>
@@ -192,23 +188,23 @@ export default function TripsList({ role = 'rider' }) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.surface },
-  content: { padding: 20, paddingBottom: 48 },
-  filters: { flexDirection: 'row', gap: 8, marginTop: 16 },
-  chip: {
-    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999,
-    borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.white,
-  },
-  chipActive: { backgroundColor: COLORS.navy, borderColor: COLORS.navy },
-  chipText: { fontSize: 14, fontWeight: '600', color: COLORS.ink },
-  chipTextActive: { color: COLORS.white },
+  content: { padding: SPACE[5], paddingBottom: SPACE[12] },
+  filters: { flexDirection: 'row', gap: SPACE[2], marginTop: SPACE[4] },
   card: {
-    backgroundColor: COLORS.white, borderRadius: 16, borderWidth: 1, borderColor: COLORS.line,
-    padding: 16, marginBottom: 12,
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.line,
+    padding: SPACE[4],
+    marginBottom: SPACE[3],
   },
-  top: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  pill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999 },
+  top: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    marginBottom: SPACE[3],
+  },
+  pill: { paddingHorizontal: SPACE[3], paddingVertical: 4, borderRadius: RADIUS.pill },
   pillText: { fontSize: 12, fontWeight: '700' },
-  route: { flexDirection: 'row', gap: 12 },
+  route: { flexDirection: 'row', gap: SPACE[3] },
   rail: { alignItems: 'center', paddingTop: 5 },
   dot: { width: 9, height: 9, borderRadius: 5 },
   square: { borderRadius: 2 },
@@ -216,7 +212,8 @@ const styles = StyleSheet.create({
   place: { fontSize: 15, fontWeight: '600', color: COLORS.ink },
   bottom: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    marginTop: 14, paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
+    marginTop: SPACE[4], paddingTop: SPACE[3],
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
   },
   amount: { fontSize: 17, fontWeight: '800', color: COLORS.navy },
 });

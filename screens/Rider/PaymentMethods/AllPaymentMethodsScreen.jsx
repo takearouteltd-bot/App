@@ -1,350 +1,258 @@
-import React, { useEffect, useState } from "react";
-import {
-  View,
-  Text,
-  FlatList,
-  TouchableOpacity,
-  ActivityIndicator,
-  Alert,
-  StyleSheet,
-} from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import React, { useEffect, useState } from 'react';
+import { View, Text, FlatList, SafeAreaView, ActivityIndicator, Alert, StyleSheet } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import {
   collection,
   onSnapshot,
   doc,
   deleteDoc,
+  getDoc,
+  setDoc,
   updateDoc,
-} from "firebase/firestore";
-import { getAuth } from "firebase/auth";
-import { getFunctions, httpsCallable } from "firebase/functions";
-import { db } from "../../../config/firebase";
-
-const PRIMARY = "#79B531";
-const SECONDARY = "#235594";
-const CARD_DARK = "#1B3F73";
+} from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import { db } from '../../../config/firebase';
+import {
+  COLORS,
+  TYPE,
+  SPACE,
+  RADIUS,
+  Card,
+  Button,
+  EmptyState,
+  ScreenHeader,
+  StatusPill,
+} from '../../../components/ui/kit';
 
 export default function AllPaymentMethodsScreen({ navigation }) {
   const [cards, setCards] = useState([]);
+  const [defaultId, setDefaultId] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [deleting, setDeleting] = useState(false);
+  const [busyId, setBusyId] = useState(null);
 
   const user = getAuth().currentUser;
 
   useEffect(() => {
     if (!user) {
       setLoading(false);
-      return;
+      return undefined;
     }
 
-    const ref = collection(db, "riders", user.uid, "cards");
-
-    const unsubscribe = onSnapshot(
-      ref,
+    const unsubCards = onSnapshot(
+      collection(db, 'riders', user.uid, 'cards'),
       (snapshot) => {
-        const data = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-
-        setCards(data);
+        setCards(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
         setLoading(false);
       },
       (error) => {
-        console.log("Error loading cards:", error);
+        console.log('Error loading cards:', error);
         setLoading(false);
       }
     );
 
-    return () => unsubscribe();
+    // The field the backend actually charges against.
+    const unsubRider = onSnapshot(doc(db, 'riders', user.uid), (snap) => {
+      setDefaultId(snap.exists() ? snap.data().defaultPaymentMethodId || null : null);
+    });
+
+    return () => {
+      unsubCards();
+      unsubRider();
+    };
   }, [user]);
 
-  const maskCard = (last4) => "•••• •••• •••• " + last4;
-
-  const setDefaultCard = async (cardId) => {
+  /* Choosing a default has to write riders/{uid}.defaultPaymentMethodId,
+     because that is the field authorizePaymentOnRideAccept passes to Stripe.
+     This screen used to set only `isDefault` on the card document, so picking
+     a different card changed the badge and nothing else — the old card kept
+     being charged. */
+  const setDefaultCard = async (card) => {
+    if (!card.paymentMethodId) {
+      Alert.alert('Cannot set default', 'This card is missing its payment reference.');
+      return;
+    }
+    setBusyId(card.id);
     try {
-      cards.forEach(async (c) => {
-        const ref = doc(db, "riders", user.uid, "cards", c.id);
-        await updateDoc(ref, {
-          isDefault: c.id === cardId,
-        });
-      });
-    } catch (err) {
-      console.log(err);
-      Alert.alert("Error", "Could not set default card");
+      await setDoc(
+        doc(db, 'riders', user.uid),
+        { defaultPaymentMethodId: card.paymentMethodId },
+        { merge: true }
+      );
+      await Promise.all(
+        cards.map((c) =>
+          updateDoc(doc(db, 'riders', user.uid, 'cards', c.id), {
+            isDefault: c.id === card.id,
+          }).catch(() => null)
+        )
+      );
+    } catch (error) {
+      console.log(error);
+      Alert.alert('Could not set default', 'Please try again.');
+    } finally {
+      setBusyId(null);
     }
   };
 
-  const deleteCard = (cardId) => {
-    Alert.alert("Delete Card", "Are you sure you want to remove this card?", [
-      { text: "Cancel", style: "cancel" },
+  const deleteCard = (card) => {
+    Alert.alert('Remove this card?', 'You can add it again later.', [
+      { text: 'Keep card', style: 'cancel' },
       {
-        text: "Delete",
-        style: "destructive",
+        text: 'Remove',
+        style: 'destructive',
         onPress: async () => {
+          if (!card.paymentMethodId) {
+            Alert.alert('Cannot remove', 'This card is missing its payment reference.');
+            return;
+          }
+          setBusyId(card.id);
           try {
-            setDeleting(true);
-
-            const card = cards.find((c) => c.id === cardId);
-            if (!card?.paymentMethodId) {
-              Alert.alert("Error", "Payment method ID not found");
-              setDeleting(false);
-              return;
+            const detachPaymentMethod = httpsCallable(getFunctions(), 'detachPaymentMethod');
+            const result = await detachPaymentMethod({ paymentMethodId: card.paymentMethodId });
+            if (!result.data?.success) {
+              throw new Error(result.data?.error || 'Could not remove the card from Stripe.');
             }
 
-            // 1. Detach from Stripe via Cloud Function
-            const functions = getFunctions();
-            const detachPaymentMethod = httpsCallable(functions, "detachPaymentMethod");
+            await deleteDoc(doc(db, 'riders', user.uid, 'cards', card.id));
 
-            const result = await detachPaymentMethod({
-              paymentMethodId: card.paymentMethodId,
-            });
-
-            if (!result.data.success) {
-              throw new Error(result.data.error || "Failed to remove from Stripe");
+            /* If this was the card rides are charged to, hand the default to
+               another card, or clear it. Left pointing at a detached card,
+               the next booking fails at the hold with no explanation. */
+            if (defaultId === card.paymentMethodId) {
+              const remaining = cards.filter((c) => c.id !== card.id);
+              const next = remaining.find((c) => c.paymentMethodId) || null;
+              await setDoc(
+                doc(db, 'riders', user.uid),
+                { defaultPaymentMethodId: next ? next.paymentMethodId : null },
+                { merge: true }
+              );
+              if (next) {
+                await updateDoc(doc(db, 'riders', user.uid, 'cards', next.id), {
+                  isDefault: true,
+                }).catch(() => null);
+              }
             }
-
-            // 2. Delete from Firestore only after Stripe success
-            await deleteDoc(doc(db, "riders", user.uid, "cards", cardId));
-
-            Alert.alert("Success", "Card removed successfully");
-          } catch (err) {
-            console.log("Delete card error:", err);
-            Alert.alert(
-              "Error",
-              err.message || "Could not delete card. Please try again."
-            );
+          } catch (error) {
+            console.log('Delete card error:', error);
+            Alert.alert('Could not remove', error.message || 'Please try again.');
           } finally {
-            setDeleting(false);
+            setBusyId(null);
           }
         },
       },
     ]);
   };
 
-  const renderCard = ({ item }) => (
-    <View style={styles.card}>
-      {/* Top row */}
-      <View style={styles.cardHeader}>
-        <Text style={styles.brandText}>
-          {item.brand?.toUpperCase() || "CARD"}
+  const renderCard = ({ item }) => {
+    const isDefault = item.paymentMethodId && item.paymentMethodId === defaultId;
+    const busy = busyId === item.id;
+    const brand = item.brand ? item.brand.replace(/^./, (c) => c.toUpperCase()) : 'Card';
+
+    return (
+      <Card style={{ marginBottom: SPACE[3] }}>
+        <View style={styles.top}>
+          <View style={styles.brandRow}>
+            <Ionicons name="card" size={20} color={COLORS.navy} />
+            <Text style={styles.brand}>{brand}</Text>
+          </View>
+          {isDefault ? <StatusPill status="valid" label="Default" /> : null}
+        </View>
+
+        <Text style={styles.number}>···· ···· ···· {item.last4}</Text>
+
+        <Text style={TYPE.small}>
+          {item.cardholderName ? `${item.cardholderName} · ` : ''}
+          Expires {String(item.exp_month).padStart(2, '0')}/{String(item.exp_year).slice(-2)}
         </Text>
 
-        {item.isDefault && (
-          <View style={styles.defaultBadge}>
-            <Text style={styles.defaultText}>DEFAULT</Text>
-          </View>
-        )}
-      </View>
-
-      {/* Card number */}
-      <Text style={styles.cardNumber}>{maskCard(item.last4)}</Text>
-
-      {/* Details */}
-      <View style={styles.cardDetails}>
-        <View>
-          <Text style={styles.detailLabel}>EXPIRY</Text>
-          <Text style={styles.detailValue}>
-            {item.exp_month}/{item.exp_year}
-          </Text>
+        <View style={styles.actions}>
+          {!isDefault ? (
+            <Button
+              title="Set as default"
+              variant="secondary"
+              size="small"
+              loading={busy}
+              onPress={() => setDefaultCard(item)}
+              style={{ flex: 1 }}
+            />
+          ) : (
+            <View style={{ flex: 1 }} />
+          )}
+          <Button
+            title="Remove"
+            variant="ghost"
+            size="small"
+            disabled={busy}
+            onPress={() => deleteCard(item)}
+          />
         </View>
-
-        <View>
-          <Text style={styles.detailLabel}>PAYMENT ID</Text>
-          <Text style={styles.detailValueSmall}>
-            {item.paymentMethodId?.slice(-8)}
-          </Text>
-        </View>
-      </View>
-
-      {/* Actions */}
-      <View style={styles.cardActions}>
-        <TouchableOpacity onPress={() => setDefaultCard(item.id)}>
-          <Text style={styles.setDefaultText}>Set Default</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          onPress={() => deleteCard(item.id)}
-          disabled={deleting}
-        >
-          <Text style={[styles.removeText, deleting && { opacity: 0.5 }]}>
-            {deleting ? "Removing…" : "Remove"}
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
+      </Card>
+    );
+  };
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator color={SECONDARY} />
-      </View>
+      <SafeAreaView style={[styles.safe, styles.centered]}>
+        <ActivityIndicator color={COLORS.green} size="large" />
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Payment Methods</Text>
-
-        <TouchableOpacity onPress={() => navigation.navigate("AddPaymentMethod")}>
-          <Ionicons name="add-circle" size={28} color={PRIMARY} />
-        </TouchableOpacity>
-      </View>
-
-      {/* Cards list */}
+    <SafeAreaView style={styles.safe}>
       <FlatList
         data={cards}
         keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        ListHeaderComponent={
+          <ScreenHeader
+            title="Your cards"
+            subtitle="The default card is the one your rides are charged to."
+            onBack={() => navigation.goBack()}
+          />
+        }
         renderItem={renderCard}
-        contentContainerStyle={styles.listContent}
         ListEmptyComponent={
-          <View style={styles.emptyState}>
-            <Ionicons name="card-outline" size={48} color="#ccc" />
-            <Text style={styles.emptyText}>No payment methods added</Text>
-            <TouchableOpacity
-              style={styles.addCardBtn}
-              onPress={() => navigation.navigate("AddPaymentMethod")}
-            >
-              <Text style={styles.addCardText}>Add a card</Text>
-            </TouchableOpacity>
-          </View>
+          <EmptyState
+            icon="card-outline"
+            title="No cards yet"
+            body="Add a card so you can book a ride."
+            action={
+              <Button title="Add a card" onPress={() => navigation.navigate('AddPaymentMethod')} />
+            }
+          />
+        }
+        ListFooterComponent={
+          cards.length ? (
+            <Button
+              title="Add another card"
+              variant="secondary"
+              style={{ marginTop: SPACE[3] }}
+              onPress={() => navigation.navigate('AddPaymentMethod')}
+            />
+          ) : null
         }
       />
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#fff",
-    paddingHorizontal: 20,
+  safe: { flex: 1, backgroundColor: COLORS.surface },
+  centered: { alignItems: 'center', justifyContent: 'center' },
+  content: { padding: SPACE[5], paddingBottom: SPACE[12] },
+
+  top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[2] },
+  brand: { fontSize: 15, fontWeight: '700', color: COLORS.navy },
+  number: {
+    fontSize: 18, fontWeight: '700', color: COLORS.ink,
+    letterSpacing: 1.5, marginTop: SPACE[3], marginBottom: SPACE[1],
   },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 20,
-    paddingTop: 60,
-  },
-  headerTitle: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: SECONDARY,
-  },
-  listContent: {
-    paddingBottom: 30,
-  },
-  card: {
-    backgroundColor: CARD_DARK,
-    padding: 18,
-    borderRadius: 16,
-    marginBottom: 15,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 6,
-  },
-  cardHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  brandText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 14,
-    letterSpacing: 1,
-  },
-  defaultBadge: {
-    backgroundColor: PRIMARY,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  defaultText: {
-    color: "#fff",
-    fontSize: 10,
-    fontWeight: "800",
-  },
-  cardNumber: {
-    color: "#fff",
-    fontSize: 20,
-    marginTop: 20,
-    letterSpacing: 2,
-    fontWeight: "600",
-  },
-  cardDetails: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 20,
-  },
-  detailLabel: {
-    color: "#aaa",
-    fontSize: 10,
-    fontWeight: "600",
-    letterSpacing: 0.5,
-    marginBottom: 4,
-  },
-  detailValue: {
-    color: "#fff",
-    fontWeight: "600",
-    fontSize: 14,
-  },
-  detailValueSmall: {
-    color: "#fff",
-    fontSize: 11,
-    fontWeight: "500",
-  },
-  cardActions: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 18,
-    paddingTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: "rgba(255,255,255,0.1)",
-  },
-  setDefaultText: {
-    color: PRIMARY,
-    fontWeight: "700",
-    fontSize: 14,
-  },
-  removeText: {
-    color: "#ff5a5a",
-    fontWeight: "700",
-    fontSize: 14,
-  },
-  emptyState: {
-    alignItems: "center",
-    marginTop: 80,
-    paddingHorizontal: 40,
-  },
-  emptyText: {
-    textAlign: "center",
-    marginTop: 16,
-    color: "#888",
-    fontSize: 16,
-    fontWeight: "500",
-  },
-  addCardBtn: {
-    marginTop: 20,
-    backgroundColor: PRIMARY,
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 12,
-  },
-  addCardText: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 15,
+  actions: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
+    marginTop: SPACE[4], paddingTop: SPACE[4],
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
   },
 });

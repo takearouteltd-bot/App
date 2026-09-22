@@ -21,12 +21,13 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { auth, db } from "../../../config/firebase";
+import { COLORS } from '../../../components/ui/kit';
 
 
-const PRIMARY = "#79B531";
-const SECONDARY = "#235594";
-const BG = "#F8F9FA";
-const DANGER = "#D32F2F";
+const PRIMARY = COLORS.green;
+const SECONDARY = COLORS.blue;
+const BG = COLORS.surface;
+const DANGER = COLORS.red;
 
 const PLACE_TYPES = {
   home: { icon: "home", label: "Home", color: "#E3F2FD", iconColor: SECONDARY },
@@ -211,7 +212,7 @@ export default function SavedPlacesScreen() {
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={24} color="#fff" />
+          <Ionicons name="arrow-back" size={24} color={COLORS.white} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Saved Places</Text>
         <View style={styles.backBtn} />
@@ -236,11 +237,11 @@ export default function SavedPlacesScreen() {
 
         {/* Add Custom Place */}
         <TouchableOpacity style={styles.addCustomBtn} onPress={() => handleAddPlace("other")}>
-          <View style={[styles.placeIcon, { backgroundColor: "#F5F5F5" }]}>
-            <Ionicons name="add" size={22} color="#666" />
+          <View style={[styles.placeIcon, { backgroundColor: COLORS.surface }]}>
+            <Ionicons name="add" size={22} color={COLORS.muted} />
           </View>
           <Text style={styles.addCustomText}>Add a New Place</Text>
-          <Ionicons name="chevron-forward" size={18} color="#999" />
+          <Ionicons name="chevron-forward" size={18} color={COLORS.faint} />
         </TouchableOpacity>
       </ScrollView>
 
@@ -280,7 +281,7 @@ export default function SavedPlacesScreen() {
               value={editName}
               onChangeText={setEditName}
               placeholder="Place name"
-              placeholderTextColor="#bbb"
+              placeholderTextColor={COLORS.faint}
             />
 
             <Text style={styles.inputLabel}>Place Type</Text>
@@ -300,7 +301,7 @@ export default function SavedPlacesScreen() {
                   <Ionicons
                     name={config.icon}
                     size={20}
-                    color={editType === key ? config.iconColor : "#999"}
+                    color={editType === key ? config.iconColor : COLORS.faint}
                   />
                   <Text
                     style={[
@@ -351,7 +352,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 18,
     fontWeight: "700",
-    color: "#fff",
+    color: COLORS.white,
   },
 
   scrollContent: {
@@ -384,7 +385,7 @@ const styles = StyleSheet.create({
   placeCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     padding: 14,
     borderRadius: 14,
     marginBottom: 10,
@@ -408,12 +409,12 @@ const styles = StyleSheet.create({
   placeName: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#1a1a1a",
+    color: COLORS.ink,
     marginBottom: 3,
   },
   placeAddress: {
     fontSize: 13,
-    color: "#888",
+    color: COLORS.muted,
     lineHeight: 18,
   },
   deleteBtn: {
@@ -427,7 +428,7 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 17,
     fontWeight: "600",
-    color: "#888",
+    color: COLORS.muted,
     marginTop: 16,
   },
   emptySubtitle: {
@@ -442,7 +443,7 @@ const styles = StyleSheet.create({
   addCustomBtn: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     padding: 14,
     borderRadius: 14,
     marginTop: 10,
@@ -471,17 +472,17 @@ const styles = StyleSheet.create({
     paddingTop: 50,
     paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#eee",
-    backgroundColor: "#fff",
+    borderBottomColor: COLORS.line,
+    backgroundColor: COLORS.white,
   },
   modalCancel: {
     fontSize: 15,
-    color: "#888",
+    color: COLORS.muted,
   },
   modalTitle: {
     fontSize: 17,
     fontWeight: "700",
-    color: "#1a1a1a",
+    color: COLORS.ink,
   },
   modalSave: {
     fontSize: 15,
@@ -509,18 +510,18 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 12,
     fontWeight: "700",
-    color: "#666",
+    color: COLORS.muted,
     marginBottom: 8,
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
   nameInput: {
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 14,
     fontSize: 16,
-    color: "#1a1a1a",
+    color: COLORS.ink,
     marginBottom: 20,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
@@ -538,12 +539,12 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 12,
     borderWidth: 1.5,
-    borderColor: "#eee",
-    backgroundColor: "#fff",
+    borderColor: COLORS.line,
+    backgroundColor: COLORS.white,
     gap: 6,
   },
   typeLabel: {
     fontSize: 12,
-    color: "#888",
+    color: COLORS.muted,
   },
 });

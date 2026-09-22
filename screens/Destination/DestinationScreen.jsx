@@ -6,30 +6,33 @@ import {
   SafeAreaView,
   Text,
   FlatList,
-  Dimensions,
   Keyboard,
-  TouchableWithoutFeedback,
 } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
 import { Ionicons } from '@expo/vector-icons';
 import {
   collection,
-  addDoc,
-  query,
-  where,
-  orderBy,
+  doc,
   limit,
   onSnapshot,
+  orderBy,
+  query,
   serverTimestamp,
+  setDoc,
 } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
+import { COLORS, TYPE, SPACE, RADIUS, EmptyState } from '../../components/ui/kit';
 
-const { width } = Dimensions.get('window');
+const GOOGLE_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ';
 
-const PRIMARY = '#79B431';
-const SECONDARY = '#235594';
+const PICKUP = {
+  home: { label: 'Home', icon: 'home' },
+  work: { label: 'Work', icon: 'briefcase' },
+  other: { label: 'Saved place', icon: 'bookmark' },
+  current: { label: 'Current location', icon: 'locate' },
+  pinned: { label: 'Your pinned pickup', icon: 'pin' },
+};
 
 export default function DestinationSearchScreen({ navigation, route }) {
   const { origin, pickupType = 'current' } = route.params || {};
@@ -38,38 +41,23 @@ export default function DestinationSearchScreen({ navigation, route }) {
   const [currentAddress, setCurrentAddress] = useState('');
   const [recentSearches, setRecentSearches] = useState([]);
 
-  // Fetch real recent searches from subcollection
   useEffect(() => {
-    if (!auth.currentUser) return;
+    if (!auth.currentUser) return undefined;
 
     const recentRef = collection(db, 'riders', auth.currentUser.uid, 'recentSearches');
-    const q = query(recentRef, orderBy('searchedAt', 'desc'), limit(10));
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const searches = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        setRecentSearches(searches);
-      },
+    return onSnapshot(
+      query(recentRef, orderBy('searchedAt', 'desc'), limit(8)),
+      (snapshot) => setRecentSearches(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))),
       (error) => {
         if (error.code === 'permission-denied') return;
         console.error('Recent searches error:', error);
       }
     );
-
-    return unsubscribe;
   }, []);
 
-  // Set pickup address
   useEffect(() => {
-    if (origin?.address) {
-      setCurrentAddress(origin.address);
-    } else {
-      getAddress();
-    }
+    if (origin?.address) setCurrentAddress(origin.address);
+    else if (origin) getAddress();
   }, [origin]);
 
   const getAddress = async () => {
@@ -78,129 +66,107 @@ export default function DestinationSearchScreen({ navigation, route }) {
         latitude: origin.latitude,
         longitude: origin.longitude,
       });
-      if (result.length > 0) {
-        const place = result[0];
-        const formatted = [place.name, place.street, place.city, place.region]
-          .filter(Boolean)
-          .join(', ');
-        setCurrentAddress(formatted);
-      }
-    } catch (err) {
-      console.log(err);
+      const place = result[0];
+      if (!place) return;
+      setCurrentAddress(
+        [place.name, place.street, place.city, place.region].filter(Boolean).join(', ')
+      );
+    } catch (error) {
+      console.log(error);
     }
   };
 
+  /* One document per place, keyed by its Google place id, so searching the
+     same destination twice moves it up the list instead of adding a second
+     copy. Places without an id fall back to their coordinates. */
   const saveRecentSearch = async (destination) => {
     if (!auth.currentUser) return;
+    const key =
+      destination.placeId ||
+      `${destination.latitude.toFixed(5)},${destination.longitude.toFixed(5)}`;
 
     try {
-      const recentRef = collection(db, 'riders', auth.currentUser.uid, 'recentSearches');
-
-      // Check for duplicates (same placeId or very close lat/lng)
-      const q = query(
-        recentRef,
-        where('placeId', '==', destination.placeId || '')
+      await setDoc(
+        doc(db, 'riders', auth.currentUser.uid, 'recentSearches', key),
+        {
+          description: destination.description || destination.address,
+          address: destination.address,
+          latitude: destination.latitude,
+          longitude: destination.longitude,
+          placeId: destination.placeId || null,
+          searchedAt: serverTimestamp(),
+        },
+        { merge: true }
       );
-
-      // Add new search entry with server timestamp
-      await addDoc(recentRef, {
-        description: destination.description || destination.address,
-        address: destination.address,
-        latitude: destination.latitude,
-        longitude: destination.longitude,
-        placeId: destination.placeId || null,
-        searchedAt: serverTimestamp(),
-      });
     } catch (error) {
       console.error('Save recent search error:', error);
     }
   };
 
+  const goToFare = (destination) => {
+    navigation.navigate('FareEstimation', { origin, destination });
+  };
+
   const handleRecentSearchPress = (item) => {
-    navigation.navigate('FareEstimation', {
-      origin: origin,
-      destination: {
-        latitude: item.latitude,
-        longitude: item.longitude,
-        description: item.description,
-        address: item.address,
-        placeId: item.placeId,
-      },
+    goToFare({
+      latitude: item.latitude,
+      longitude: item.longitude,
+      description: item.description,
+      address: item.address,
+      placeId: item.placeId,
     });
   };
 
-  const getPickupLabel = () => {
-    switch (pickupType) {
-      case 'home': return 'HOME';
-      case 'work': return 'WORK';
-      case 'other': return 'SAVED';
-      default: return 'CURRENT LOCATION';
-    }
-  };
-
-  const getPickupIcon = () => {
-    switch (pickupType) {
-      case 'home': return 'home';
-      case 'work': return 'briefcase';
-      case 'other': return 'location';
-      default: return 'locate';
-    }
-  };
-
-  const dismissKeyboard = () => {
-    Keyboard.dismiss();
-    searchRef.current?.blur();
-  };
+  const pickup = PICKUP[pickupType] || PICKUP.current;
 
   return (
-    <TouchableWithoutFeedback onPress={dismissKeyboard}>
-      <SafeAreaView style={styles.container}>
-        <View style={styles.content}>
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backBtn}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
+          <Ionicons name="chevron-back" size={24} color={COLORS.navy} />
+        </TouchableOpacity>
+        <Text style={TYPE.title}>Where to?</Text>
+      </View>
 
-          {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-              <Ionicons name="arrow-back" size={24} color={SECONDARY} />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>Where to?</Text>
-            <View style={styles.backBtn} />
-          </View>
+      {/* Pickup and destination as one journey, the shape people expect. */}
+      <View style={styles.journey}>
+        <View style={styles.gutter}>
+          <View style={styles.dotGreen} />
+          <View style={styles.stem} />
+          <View style={styles.square} />
+        </View>
 
-          {/* Pickup Indicator */}
-          <View style={styles.pickupCard}>
-            <View style={[
-              styles.pickupIcon,
-              { backgroundColor: pickupType === 'current' ? '#E8F5E9' : '#E3F2FD' }
-            ]}>
-              <Ionicons
-                name={getPickupIcon()}
-                size={18}
-                color={pickupType === 'current' ? PRIMARY : SECONDARY}
-              />
-            </View>
-            <View style={styles.pickupTextContainer}>
-              <Text style={styles.pickupLabel}>{getPickupLabel()}</Text>
-              <Text style={styles.pickupAddress} numberOfLines={2}>
-                {currentAddress || 'Fetching location...'}
+        <View style={{ flex: 1 }}>
+          <TouchableOpacity
+            style={styles.pickup}
+            onPress={() => navigation.goBack()}
+            activeOpacity={0.7}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={TYPE.label}>{pickup.label}</Text>
+              <Text style={styles.pickupAddress} numberOfLines={1}>
+                {currentAddress || 'Finding your location…'}
               </Text>
             </View>
-            <TouchableOpacity onPress={() => navigation.goBack()}>
-              <Text style={styles.changeText}>Change</Text>
-            </TouchableOpacity>
-          </View>
+            <Text style={styles.change}>Change</Text>
+          </TouchableOpacity>
 
-          {/* Search */}
-          <View style={styles.searchContainer}>
+          <View style={styles.searchWrap}>
             <GooglePlacesAutocomplete
               ref={searchRef}
-              placeholder="Search destination"
+              placeholder="Search a destination"
               minLength={2}
-              autoFocus={false}
+              autoFocus
               returnKeyType="search"
-              fetchDetails={true}
+              fetchDetails
               onPress={(data, details = null) => {
                 if (!details) return;
-
                 const destination = {
                   latitude: details.geometry.location.lat,
                   longitude: details.geometry.location.lng,
@@ -208,477 +174,154 @@ export default function DestinationSearchScreen({ navigation, route }) {
                   address: data.description,
                   placeId: data.place_id,
                 };
-
                 saveRecentSearch(destination);
-
-                navigation.navigate('FareEstimation', {
-                  origin: origin,
-                  destination: destination,
-                });
+                Keyboard.dismiss();
+                goToFare(destination);
               }}
-              query={{
-                key: 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ',
-                language: 'en',
-                types: 'geocode|establishment',
-              }}
+              query={{ key: GOOGLE_API_KEY, language: 'en', types: 'geocode|establishment' }}
               styles={{
-                container: styles.autocompleteContainer,
-                textInput: styles.autocompleteInput,
-                textInputContainer: styles.autocompleteInputContainer,
-                listView: styles.autocompleteListView,
-                row: styles.autocompleteRow,
-                separator: styles.autocompleteSeparator,
-                description: styles.autocompleteDescription,
-                predefinedPlacesDescription: styles.autocompletePredefined,
-                loader: styles.autocompleteLoader,
+                container: { flex: 0 },
+                textInputContainer: styles.inputContainer,
+                textInput: styles.input,
+                listView: styles.listView,
+                row: styles.suggestionRow,
+                separator: styles.separator,
               }}
               textInputProps={{
-                placeholderTextColor: '#999',
+                placeholderTextColor: COLORS.faint,
                 returnKeyType: 'search',
                 clearButtonMode: 'while-editing',
               }}
-              listViewDisplayed="auto"
               debounce={300}
               enablePoweredByContainer={false}
-              nearbyPlacesAPI="GooglePlacesSearch"
-              GoogleReverseGeocodingQuery={{}}
-              GooglePlacesSearchQuery={{
-                rankby: 'distance',
-              }}
-              filterReverseGeocodingByTypes={[
-                'locality',
-                'administrative_area_level_3',
-              ]}
-              predefinedPlaces={recentSearches.map((r) => ({
-                description: r.description,
-                geometry: {
-                  location: { lat: r.latitude, lng: r.longitude },
-                },
-              }))}
               renderRow={(rowData) => (
-                <View style={styles.suggestionRow}>
-                  <View style={styles.suggestionIcon}>
-                    <Ionicons
-                      name={rowData.isPredefinedPlace ? 'time-outline' : 'location-outline'}
-                      size={20}
-                      color={rowData.isPredefinedPlace ? PRIMARY : '#999'}
-                    />
-                  </View>
-                  <View style={styles.suggestionTextContainer}>
-                    <Text style={styles.suggestionMainText} numberOfLines={1}>
+                <View style={styles.suggestion}>
+                  <Ionicons name="location-outline" size={20} color={COLORS.muted} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.suggestionMain} numberOfLines={1}>
                       {rowData.structured_formatting?.main_text || rowData.description}
                     </Text>
-                    {rowData.structured_formatting?.secondary_text && (
-                      <Text style={styles.suggestionSubText} numberOfLines={1}>
+                    {rowData.structured_formatting?.secondary_text ? (
+                      <Text style={styles.suggestionSub} numberOfLines={1}>
                         {rowData.structured_formatting.secondary_text}
                       </Text>
-                    )}
+                    ) : null}
                   </View>
                 </View>
               )}
-              renderDescription={(description) => description}
             />
           </View>
+        </View>
+      </View>
 
-          {/* Map Preview */}
-          <View style={styles.mapContainer} pointerEvents="none">
-            <MapView
-              style={styles.map}
-              initialRegion={{
-                latitude: origin.latitude,
-                longitude: origin.longitude,
-                latitudeDelta: 0.01,
-                longitudeDelta: 0.01,
-              }}
-              scrollEnabled={false}
-              zoomEnabled={false}
-              pitchEnabled={false}
-              rotateEnabled={false}
-            >
-              <Marker coordinate={origin}>
-                <View style={styles.markerContainer}>
-                  <View style={styles.markerDot} />
-                  <View style={styles.markerRing} />
-                </View>
-              </Marker>
-            </MapView>
-
-            <View style={styles.mapOverlay} />
-
-            <View style={styles.mapTextContainer}>
-              <View style={styles.mapLabelRow}>
-                <Ionicons name={getPickupIcon()} size={12} color="#ccc" />
-                <Text style={styles.mapLabel}>{getPickupLabel()}</Text>
-              </View>
-              <Text style={styles.mapAddress} numberOfLines={2}>
-                {currentAddress || 'Fetching location...'}
-              </Text>
-            </View>
-          </View>
-
-          {/* Quick Actions */}
-          <View style={styles.quickRow}>
-            <TouchableOpacity style={styles.quickCard}>
-              <View style={[styles.quickIcon, { backgroundColor: '#FFF3E0' }]}>
-                <Ionicons name="calendar-outline" size={22} color="#F57C00" />
-              </View>
-              <Text style={styles.quickTitle}>Schedule</Text>
-              <Text style={styles.quickSub}>Book for later</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.quickCard}>
-              <View style={[styles.quickIcon, { backgroundColor: '#E3F2FD' }]}>
-                <Ionicons name="briefcase-outline" size={22} color={SECONDARY} />
-              </View>
-              <Text style={styles.quickTitle}>Business</Text>
-              <Text style={styles.quickSub}>Expense trip</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.quickCard}>
-              <View style={[styles.quickIcon, { backgroundColor: '#F3E5F5' }]}>
-                <Ionicons name="people-outline" size={22} color="#7B1FA2" />
-              </View>
-              <Text style={styles.quickTitle}>Group</Text>
-              <Text style={styles.quickSub}>Split fare</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Real Recent Searches */}
-          {recentSearches.length > 0 && (
-            <View style={styles.recentContainer}>
-              <Text style={styles.recentTitle}>Recent Destinations</Text>
-              <FlatList
-                data={recentSearches}
-                keyExtractor={(item) => item.id}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={styles.recentItem}
-                    onPress={() => handleRecentSearchPress(item)}
-                  >
-                    <View style={styles.recentIcon}>
-                      <Ionicons name="time-outline" size={18} color={PRIMARY} />
-                    </View>
-                    <View style={styles.recentTextContainer}>
-                      <Text style={styles.recentText} numberOfLines={1}>
-                        {item.description}
-                      </Text>
+      {/* Recents sit under the search and are the fast path for most trips. */}
+      <View style={styles.recents}>
+        {recentSearches.length ? (
+          <>
+            <Text style={[TYPE.label, { marginBottom: SPACE[2] }]}>Recent</Text>
+            <FlatList
+              data={recentSearches}
+              keyExtractor={(item) => item.id}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              ItemSeparatorComponent={() => <View style={styles.rowLine} />}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.recentRow}
+                  onPress={() => handleRecentSearchPress(item)}
+                  activeOpacity={0.6}
+                >
+                  <View style={styles.recentIcon}>
+                    <Ionicons name="time-outline" size={18} color={COLORS.muted} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.recentText} numberOfLines={1}>
+                      {item.description}
+                    </Text>
+                    {item.address && item.address !== item.description ? (
                       <Text style={styles.recentSub} numberOfLines={1}>
                         {item.address}
                       </Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={16} color="#ccc" />
-                  </TouchableOpacity>
-                )}
-                scrollEnabled={false}
-              />
-            </View>
-          )}
-
-        </View>
-      </SafeAreaView>
-    </TouchableWithoutFeedback>
+                    ) : null}
+                  </View>
+                  <Ionicons name="arrow-up-outline" size={16} color={COLORS.lineStrong} style={styles.reuse} />
+                </TouchableOpacity>
+              )}
+            />
+          </>
+        ) : (
+          <EmptyState
+            icon="navigate-outline"
+            title="No recent trips yet"
+            body="Search for a destination above and it will appear here for next time."
+          />
+        )}
+      </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-  },
+  container: { flex: 1, backgroundColor: COLORS.white },
 
-  content: {
-    flex: 1,
-    paddingHorizontal: 20,
-  },
-
-  // Header
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: 10,
-    paddingBottom: 16,
-  },
+  header: { paddingHorizontal: SPACE[5], paddingTop: SPACE[2], paddingBottom: SPACE[4] },
   backBtn: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: SECONDARY,
+    width: 40, height: 40, marginLeft: -SPACE[2], marginBottom: SPACE[2],
+    alignItems: 'center', justifyContent: 'center',
   },
 
-  // Pickup Card
-  pickupCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8F9FA',
-    padding: 14,
-    borderRadius: 14,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#eee',
-  },
-  pickupIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  pickupTextContainer: {
-    flex: 1,
-  },
-  pickupLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#888',
-    letterSpacing: 0.5,
-    marginBottom: 3,
-  },
-  pickupAddress: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1a1a1a',
-    lineHeight: 20,
-  },
-  changeText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: PRIMARY,
-  },
+  journey: { flexDirection: 'row', gap: SPACE[3], paddingHorizontal: SPACE[5], zIndex: 10 },
+  gutter: { width: 12, alignItems: 'center', paddingTop: 22 },
+  dotGreen: { width: 11, height: 11, borderRadius: 6, backgroundColor: COLORS.green },
+  stem: { flex: 1, width: 2, backgroundColor: COLORS.line, marginVertical: 4, minHeight: 34 },
+  square: { width: 11, height: 11, borderRadius: 3, backgroundColor: COLORS.navy },
 
-  // Search
-  searchContainer: {
-    zIndex: 9999,
-    elevation: 9999,
-    marginBottom: 8,
-  },
-  autocompleteContainer: {
-    flex: 0,
-  },
-  autocompleteInputContainer: {
-    backgroundColor: 'transparent',
-    borderTopWidth: 0,
-    borderBottomWidth: 0,
-  },
-  autocompleteInput: {
-    backgroundColor: '#f4f6f8',
-    borderRadius: 14,
-    paddingHorizontal: 15,
-    paddingVertical: 14,
+  pickup: { flexDirection: 'row', alignItems: 'center', paddingBottom: SPACE[4] },
+  pickupAddress: { ...TYPE.callout, marginTop: 2 },
+  change: { ...TYPE.small, color: COLORS.blue, fontWeight: '700' },
+
+  searchWrap: { zIndex: 20 },
+  inputContainer: { backgroundColor: 'transparent', padding: 0 },
+  input: {
+    height: 52,
+    marginBottom: 0,
+    paddingHorizontal: SPACE[4],
+    borderRadius: RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.lineStrong,
+    backgroundColor: COLORS.surface,
     fontSize: 16,
-    color: '#1a1a1a',
-    borderWidth: 1,
-    borderColor: '#eee',
-    height: 50,
+    color: COLORS.ink,
   },
-  autocompleteListView: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    marginTop: 4,
-    elevation: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    borderWidth: 1,
-    borderColor: '#eee',
-    maxHeight: 250,
-  },
-  autocompleteRow: {
-    padding: 14,
-    height: 'auto',
-    minHeight: 50,
-  },
-  autocompleteSeparator: {
-    height: 1,
-    backgroundColor: '#f0f0f0',
-  },
-  autocompleteDescription: {
-    fontSize: 14,
-    color: '#1a1a1a',
-  },
-  autocompletePredefined: {
-    color: PRIMARY,
-  },
-  autocompleteLoader: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    height: 20,
-  },
-
-  // Suggestion Row
-  suggestionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  suggestionIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: '#F5F5F5',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  suggestionTextContainer: {
-    flex: 1,
-  },
-  suggestionMainText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#1a1a1a',
-  },
-  suggestionSubText: {
-    fontSize: 12,
-    color: '#888',
-    marginTop: 2,
-  },
-
-  // Map
-  mapContainer: {
-    height: 130,
-    borderRadius: 16,
-    overflow: 'hidden',
-    marginBottom: 16,
-    zIndex: 1,
-  },
-  map: {
-    width: '100%',
-    height: '100%',
-  },
-  mapOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.25)',
-  },
-  mapTextContainer: {
+  listView: {
     position: 'absolute',
-    bottom: 12,
-    left: 12,
-    right: 12,
+    top: 58,
+    left: 0,
+    right: 0,
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.line,
+    zIndex: 30,
   },
-  mapLabelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginBottom: 4,
+  suggestionRow: { padding: 0, height: 'auto' },
+  separator: { height: StyleSheet.hairlineWidth, backgroundColor: COLORS.line },
+  suggestion: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
+    paddingHorizontal: SPACE[4], paddingVertical: SPACE[3],
   },
-  mapLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#ccc',
-    letterSpacing: 0.8,
-  },
-  mapAddress: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#fff',
-    lineHeight: 18,
-  },
+  suggestionMain: { fontSize: 15, fontWeight: '600', color: COLORS.ink },
+  suggestionSub: { ...TYPE.small, marginTop: 1 },
 
-  // Marker
-  markerContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  markerDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: PRIMARY,
-    borderWidth: 3,
-    borderColor: '#fff',
-  },
-  markerRing: {
-    position: 'absolute',
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 2,
-    borderColor: PRIMARY,
-    opacity: 0.3,
-  },
-
-  // Quick Actions
-  quickRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 20,
-    zIndex: 1,
-  },
-  quickCard: {
-    flex: 1,
-    alignItems: 'center',
-    backgroundColor: '#F8F9FA',
-    borderRadius: 14,
-    paddingVertical: 16,
-    paddingHorizontal: 8,
-    borderWidth: 1,
-    borderColor: '#eee',
-  },
-  quickIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  quickTitle: {
-    fontWeight: '600',
-    fontSize: 13,
-    color: '#1a1a1a',
-    marginBottom: 2,
-  },
-  quickSub: {
-    fontSize: 11,
-    color: '#888',
-  },
-
-  // Recent Searches
-  recentContainer: {
-    flex: 1,
-    zIndex: 1,
-  },
-  recentTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1a1a1a',
-    marginBottom: 12,
-  },
-  recentItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
-  },
+  recents: { flex: 1, paddingHorizontal: SPACE[5], paddingTop: SPACE[6] },
+  rowLine: { height: StyleSheet.hairlineWidth, backgroundColor: COLORS.line },
+  recentRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[3], paddingVertical: SPACE[3], minHeight: 56 },
   recentIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: '#F0F7E6',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
+    width: 38, height: 38, borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.surface,
+    alignItems: 'center', justifyContent: 'center',
   },
-  recentTextContainer: {
-    flex: 1,
-  },
-  recentText: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: '#1a1a1a',
-  },
-  recentSub: {
-    fontSize: 12,
-    color: '#888',
-    marginTop: 2,
-  },
+  recentText: { fontSize: 15, fontWeight: '600', color: COLORS.ink },
+  recentSub: { ...TYPE.small, marginTop: 1 },
+  reuse: { transform: [{ rotate: '45deg' }] },
 });

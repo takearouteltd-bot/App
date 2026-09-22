@@ -19,9 +19,10 @@ import { auth, db, storage } from "../../config/firebase";
 import { doc, updateDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { uriToBlob } from "../../helpers/uploadPicker";
+import { COLORS, RADIUS } from '../../components/ui/kit';
 
 const TOTAL_STEPS = 3;
-const PRIMARY = "#79B531";
+const PRIMARY = COLORS.green;
 
 export default function RiderProfileScreen({ navigation }) {
   const [currentStep] = useState(1);
@@ -184,7 +185,7 @@ export default function RiderProfileScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
+  safe: { flex: 1, backgroundColor: COLORS.white },
   container: { padding: 20, paddingBottom: 40 },
 
   header: {
@@ -237,7 +238,7 @@ const styles = StyleSheet.create({
   button: {
     backgroundColor: PRIMARY,
     paddingVertical: 16,
-    borderRadius: 30,
+    borderRadius: RADIUS.md,
     alignItems: "center",
   },
   buttonText: { color: "white", fontSize: 16, fontWeight: "bold" },

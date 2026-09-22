@@ -110,7 +110,7 @@ export default function RiderRideCompletedScreen() {
             {lines.map(([label, value]) => (
               <View key={label} style={styles.lineRow}>
                 <Text style={TYPE.body}>{label}</Text>
-                <Text style={[TYPE.body, value < 0 && { color: '#3F6F12' }]}>
+                <Text style={[TYPE.body, value < 0 && { color: COLORS.success }]}>
                   {value < 0 ? '-' : ''}{money(Math.abs(Number(value) || 0), currency)}
                 </Text>
               </View>
@@ -147,9 +147,9 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.surface },
   content: { padding: 20, paddingBottom: 40 },
   hero: { backgroundColor: COLORS.navy, borderRadius: 24, padding: 26, marginTop: 8, overflow: 'hidden' },
-  heroLabel: { fontSize: 15, fontWeight: '600', color: '#C9D6EA' },
+  heroLabel: { fontSize: 15, fontWeight: '600', color: COLORS.onDark },
   heroAmount: { fontSize: 48, fontWeight: '800', color: COLORS.white, letterSpacing: -1.5, marginTop: 6 },
-  heroSub: { fontSize: 13, color: '#C9D6EA', marginTop: 6, lineHeight: 18 },
+  heroSub: { fontSize: 13, color: COLORS.onDark, marginTop: 6, lineHeight: 18 },
   pendingBar: { height: 3, borderRadius: 2, backgroundColor: COLORS.green, opacity: 0.7, marginTop: 18, width: '40%' },
   route: { flexDirection: 'row', gap: 12 },
   rail: { alignItems: 'center', paddingTop: 5 },

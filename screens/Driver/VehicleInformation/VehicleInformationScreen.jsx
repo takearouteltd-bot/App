@@ -12,10 +12,11 @@ import {
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { getAuth } from "firebase/auth";
 import { doc, getDoc, getFirestore } from "firebase/firestore";
+import { COLORS } from '../../../components/ui/kit';
 
-const PRIMARY = "#79B531";
-const SECONDARY = "#235594";
-const BG = "#F6F7F9";
+const PRIMARY = COLORS.green;
+const SECONDARY = COLORS.blue;
+const BG = COLORS.surface;
 const VEHICLE_TYPE_META = {
   RouteMini: {
     label: "RouteMini",
@@ -246,7 +247,7 @@ const styles = StyleSheet.create({
   heroCard: {
     marginHorizontal: 20,
     marginTop: 10,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     borderRadius: 20,
     paddingVertical: 28,
     paddingHorizontal: 20,
@@ -286,7 +287,7 @@ const styles = StyleSheet.create({
   heroTitle: {
     fontSize: 20,
     fontWeight: "800",
-    color: "#1A1A1A",
+    color: COLORS.ink,
     textAlign: "center",
   },
   heroSubtitle: {
@@ -298,7 +299,7 @@ const styles = StyleSheet.create({
   heroDescription: {
     fontSize: 13,
     lineHeight: 19,
-    color: "#666",
+    color: COLORS.muted,
     textAlign: "center",
     marginTop: 10,
   },
@@ -318,7 +319,7 @@ const styles = StyleSheet.create({
   heroMetaValue: {
     fontSize: 16,
     fontWeight: "800",
-    color: "#1A1A1A",
+    color: COLORS.ink,
   },
   heroMetaLabel: {
     fontSize: 11,
@@ -330,14 +331,14 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: "800",
-    color: "#1A1A1A",
+    color: COLORS.ink,
     marginTop: 24,
     marginHorizontal: 20,
     marginBottom: 12,
   },
   categoryCard: {
     marginHorizontal: 20,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     borderRadius: 18,
     padding: 16,
     shadowColor: "#000",
@@ -365,7 +366,7 @@ const styles = StyleSheet.create({
   categoryTitle: {
     fontSize: 16,
     fontWeight: "800",
-    color: "#1A1A1A",
+    color: COLORS.ink,
   },
   categoryDescription: {
     fontSize: 13,
@@ -388,7 +389,7 @@ const styles = StyleSheet.create({
   },
   sectionCard: {
     marginHorizontal: 20,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     borderRadius: 18,
     padding: 16,
     shadowColor: "#000",
@@ -424,12 +425,12 @@ const styles = StyleSheet.create({
   infoValue: {
     fontSize: 15,
     fontWeight: "600",
-    color: "#1A1A1A",
+    color: COLORS.ink,
     marginTop: 4,
   },
   statusCard: {
     marginHorizontal: 20,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     borderRadius: 18,
     padding: 18,
     shadowColor: "#000",
@@ -445,14 +446,14 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   statusPillText: {
-    color: "#fff",
+    color: COLORS.white,
     fontSize: 12,
     fontWeight: "700",
   },
   statusDescription: {
     fontSize: 14,
     lineHeight: 20,
-    color: "#666",
+    color: COLORS.muted,
     marginTop: 12,
   },
 });

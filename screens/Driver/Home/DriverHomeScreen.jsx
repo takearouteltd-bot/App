@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,10 +10,11 @@ import {
   Dimensions,
   AppState,
   Alert,
+  Easing,
 } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import {
   collection,
@@ -26,12 +27,16 @@ import {
   getDoc,
   runTransaction,
   serverTimestamp,
-} from "firebase/firestore";
-import { db } from "../../../config/firebase";
-import { getAuth } from "firebase/auth";
+} from 'firebase/firestore';
+import { db } from '../../../config/firebase';
+import { getAuth } from 'firebase/auth';
 import { useAppConfig, currencySymbol } from '../../../utils/appConfig';
 import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocuments';
+import { canServe, classLabel } from '../../../constants/vehicleClasses';
 import { clearJobAlerts } from '../../../utils/notifications';
+import { COLORS, TYPE, SPACE, RADIUS, SHADOW } from '../../../components/ui/kit';
+
+const { width } = Dimensions.get('window');
 
 // "Online 2h 10m of 12h" while a shift limit applies.
 function shiftLabel(startedMs, maxHours) {
@@ -43,15 +48,8 @@ function shiftLabel(startedMs, maxHours) {
   return maxHours > 0 ? `Online ${online} of ${maxHours}h` : `Online ${online}`;
 }
 
-const { width, height } = Dimensions.get('window');
-const PRIMARY = '#79B531';
-const SECONDARY = '#235594';
-const DARK = '#1a1a1a';
-const BG = '#F8F9FA';
-
 export default function DriverHomeScreen() {
   const mapRef = useRef(null);
-  const scaleAnim = useRef(new Animated.Value(1)).current;
   const slideAnim = useRef(new Animated.Value(width)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
@@ -60,11 +58,17 @@ export default function DriverHomeScreen() {
   const [location, setLocation] = useState(null);
   const { dispatch: dispatchConfig, drivers: driverConfig } = useAppConfig();
   const maxShiftHours = driverConfig.maxShiftHours; // 0 means unlimited
+  const searchRadiusKm = dispatchConfig.searchRadiusKm;
+
   const [shiftStartedAt, setShiftStartedAt] = useState(null);
   const [onRide, setOnRide] = useState(false);
-  const searchRadiusKm = dispatchConfig.searchRadiusKm;
-  const [isOnline, setIsOnline] = useState(true);
-  const [isApproved, setIsApproved] = useState(true);
+  // Assume nothing until the driver record says otherwise, so the screen never
+  // flashes "You are online" at someone who is not.
+  const [isOnline, setIsOnline] = useState(false);
+  const [isApproved, setIsApproved] = useState(false);
+  // The class this driver's vehicle was approved as. Decides which jobs they
+  // are shown; see constants/vehicleClasses.js.
+  const [vehicleType, setVehicleType] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const [rideRequests, setRideRequests] = useState([]);
@@ -72,11 +76,9 @@ export default function DriverHomeScreen() {
   const [timer, setTimer] = useState(15);
   const [isAccepting, setIsAccepting] = useState(false);
 
-  // Real data states
   const [earningsToday, setEarningsToday] = useState(0);
   const [walletBalance, setWalletBalance] = useState(0);
   const [tripsToday, setTripsToday] = useState(0);
-  const [driverName, setDriverName] = useState('');
   const [documentAlerts, setDocumentAlerts] = useState([]);
 
   const auth = getAuth();
@@ -84,109 +86,89 @@ export default function DriverHomeScreen() {
 
   const [checkingRide, setCheckingRide] = useState(true);
 
-
-
-  const updateDriverLocation = async (driverId, coords) => {
+  const updateDriverLocation = async (id, coords) => {
     try {
-      const driverRef = doc(db, "drivers", driverId);
       await setDoc(
-        driverRef,
+        doc(db, 'drivers', id),
         {
-          location: {
-            latitude: coords.latitude,
-            longitude: coords.longitude,
-          },
-          // Shown on the dashboard's Live drivers page. The phone reports
-          // speed in m/s, or a negative number when it doesn't know.
-          speedKph: typeof coords.speed === 'number' && coords.speed >= 0
-            ? Math.round(coords.speed * 3.6)
-            : null,
-          heading: typeof coords.heading === 'number' && coords.heading >= 0
-            ? Math.round(coords.heading)
-            : null,
+          location: { latitude: coords.latitude, longitude: coords.longitude },
+          // Shown on the dashboard's Live drivers page. The phone reports speed
+          // in m/s, or a negative number when it doesn't know.
+          speedKph:
+            typeof coords.speed === 'number' && coords.speed >= 0
+              ? Math.round(coords.speed * 3.6)
+              : null,
+          heading:
+            typeof coords.heading === 'number' && coords.heading >= 0
+              ? Math.round(coords.heading)
+              : null,
           lastUpdated: serverTimestamp(),
         },
         { merge: true }
       );
     } catch (error) {
-      console.log("Location update error:", error);
+      console.log('Location update error:', error);
     }
   };
 
-  /* ================= FETCH REAL DATA ================= */
+  /* ================= DRIVER, WALLET, TODAY ================= */
   useEffect(() => {
-    if (!driverId) return;
+    if (!driverId) return undefined;
 
-    // Fetch driver profile
-    const driverRef = doc(db, "drivers", driverId);
+    const driverRef = doc(db, 'drivers', driverId);
     const unsubDriver = onSnapshot(driverRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        setDriverName(data.firstName || data.fullName || 'Driver');
-        setIsOnline(data.status === 'online');
-        setIsApproved(data.approved === true);
-        setOnRide(data.isOnRide === true);
-        // Expiry dates are set by admin on the dashboard.
-        setDocumentAlerts(expiryAlertsFor(data));
-        const started = data.shiftStartedAt?.toMillis?.() ?? null;
-        setShiftStartedAt(started);
-        // Online from before shift tracking existed: start the clock now.
-        if (data.status === 'online' && !data.shiftStartedAt) {
-          setDoc(driverRef, { shiftStartedAt: serverTimestamp() }, { merge: true }).catch(() => {});
-        }
+      if (!snap.exists()) return;
+      const data = snap.data();
+      setIsOnline(data.status === 'online');
+      setIsApproved(data.approved === true);
+      setOnRide(data.isOnRide === true);
+      setVehicleType(data.vehicleType || null);
+      setDocumentAlerts(expiryAlertsFor(data));
+      const started = data.shiftStartedAt?.toMillis?.() ?? null;
+      setShiftStartedAt(started);
+      // Online from before shift tracking existed: start the clock now.
+      if (data.status === 'online' && !data.shiftStartedAt) {
+        setDoc(driverRef, { shiftStartedAt: serverTimestamp() }, { merge: true }).catch(() => {});
       }
     });
 
-    // Fetch wallet data
-    const walletRef = doc(db, "driverWallets", driverId);
-    const unsubWallet = onSnapshot(walletRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        setWalletBalance(data.availableBalance || 0);
-      } else {
-        setWalletBalance(0);
-      }
+    const unsubWallet = onSnapshot(doc(db, 'driverWallets', driverId), (snap) => {
+      setWalletBalance(snap.exists() ? snap.data().availableBalance || 0 : 0);
     });
 
-    // Fetch today's earnings from rides
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const ridesQ = query(
-      collection(db, "rides"),
-      where("driverId", "==", driverId)
+    const unsubRides = onSnapshot(
+      query(collection(db, 'rides'), where('driverId', '==', driverId)),
+      (snapshot) => {
+        let todayTotal = 0;
+        let todayTrips = 0;
+
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          if (data.route?.status !== 'completed' && data.status !== 'completed') return;
+
+          const completedAt = data.completedAt;
+          const completedDate = completedAt?.toDate
+            ? completedAt.toDate()
+            : completedAt
+            ? new Date(completedAt)
+            : null;
+          if (!completedDate) return;
+
+          const rideDate = new Date(completedDate);
+          rideDate.setHours(0, 0, 0, 0);
+          if (rideDate.getTime() === today.getTime()) {
+            todayTotal += data.earnings?.driverEarning || data.fare?.total || 0;
+            todayTrips += 1;
+          }
+        });
+
+        setEarningsToday(todayTotal);
+        setTripsToday(todayTrips);
+      }
     );
-
-    const unsubRides = onSnapshot(ridesQ, (snapshot) => {
-      let todayTotal = 0;
-      let todayTrips = 0;
-
-      snapshot.forEach((docSnap) => {
-        const data = docSnap.data();
-        const completedAt = data.completedAt;
-
-        if (data.route?.status === "completed" || data.status === "completed") {
-          // Check if completed today
-          let completedDate = null;
-          if (completedAt?.toDate) {
-            completedDate = completedAt.toDate();
-          } else if (completedAt) {
-            completedDate = new Date(completedAt);
-          }
-
-          if (completedDate) {
-            const rideDate = new Date(completedDate);
-            rideDate.setHours(0, 0, 0, 0);
-            if (rideDate.getTime() === today.getTime()) {
-              todayTotal += data.earnings?.driverEarning || data.fare?.total || 0;
-              todayTrips += 1;
-            }
-          }
-        }
-      });
-      setEarningsToday(todayTotal);
-      setTripsToday(todayTrips);
-    });
 
     return () => {
       unsubDriver();
@@ -195,34 +177,27 @@ export default function DriverHomeScreen() {
     };
   }, [driverId]);
 
-  /* ================= LOCATION TRACKING ================= */
+  /* ================= LOCATION ================= */
   useEffect(() => {
     let subscription;
 
     (async () => {
       const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') return;
+      if (status !== 'granted') {
+        setLoading(false);
+        return;
+      }
 
       const loc = await Location.getCurrentPositionAsync({});
       setLocation(loc.coords);
       setLoading(false);
-
-      if (driverId) {
-        await updateDriverLocation(driverId, loc.coords);
-      }
+      if (driverId) await updateDriverLocation(driverId, loc.coords);
 
       subscription = await Location.watchPositionAsync(
-        {
-          accuracy: Location.Accuracy.High,
-          timeInterval: 4000,
-        },
+        { accuracy: Location.Accuracy.High, timeInterval: 4000 },
         async (newLoc) => {
-          const coords = newLoc.coords;
-          setLocation(coords);
-
-          if (driverId) {
-            await updateDriverLocation(driverId, coords);
-          }
+          setLocation(newLoc.coords);
+          if (driverId) await updateDriverLocation(driverId, newLoc.coords);
         }
       );
     })();
@@ -232,26 +207,25 @@ export default function DriverHomeScreen() {
     };
   }, [driverId]);
 
-  /* ================= TOGGLE ONLINE/OFFLINE ================= */
+  /* ================= ONLINE / OFFLINE ================= */
   const toggleOnlineStatus = async () => {
     if (!driverId) return;
     const newStatus = !isOnline ? 'online' : 'offline';
 
     if (newStatus === 'online' && !isApproved) {
       Alert.alert(
-        "Application under review",
-        "You can go online as soon as your application has been approved."
+        'Application under review',
+        'You can go online as soon as your application has been approved.'
       );
       return;
     }
 
     try {
-      const driverRef = doc(db, "drivers", driverId);
-      // shiftStartedAt drives the maximum shift length set on the dashboard.
-      // It is kept while the driver goes on and off trips, and cleared when
-      // they go offline themselves.
+      // shiftStartedAt drives the maximum shift length set on the dashboard. It
+      // is kept while the driver goes on and off trips, and cleared when they
+      // go offline themselves.
       await setDoc(
-        driverRef,
+        doc(db, 'drivers', driverId),
         newStatus === 'online'
           ? { status: newStatus, shiftStartedAt: serverTimestamp() }
           : { status: newStatus, shiftStartedAt: null },
@@ -259,8 +233,8 @@ export default function DriverHomeScreen() {
       );
       setIsOnline(!isOnline);
     } catch (error) {
-      console.log("Status update error:", error);
-      Alert.alert("Error", "Failed to update status. Please try again.");
+      console.log('Status update error:', error);
+      Alert.alert('Could not update', 'Failed to change your status. Please try again.');
     }
   };
 
@@ -269,29 +243,28 @@ export default function DriverHomeScreen() {
      driver is taken offline for safety. A driver on a trip finishes it first. */
   const shiftEndedRef = useRef(false);
   useEffect(() => {
-    if (!driverId || !isOnline || !shiftStartedAt || !(maxShiftHours > 0)) return;
+    if (!driverId || !isOnline || !shiftStartedAt || !(maxShiftHours > 0)) return undefined;
     shiftEndedRef.current = false;
 
     const check = async () => {
       if (shiftEndedRef.current || onRide) return;
-      const limitMs = maxShiftHours * 60 * 60 * 1000;
-      if (Date.now() - shiftStartedAt < limitMs) return;
+      if (Date.now() - shiftStartedAt < maxShiftHours * 60 * 60 * 1000) return;
 
       shiftEndedRef.current = true;
       try {
         await setDoc(
-          doc(db, "drivers", driverId),
+          doc(db, 'drivers', driverId),
           { status: 'offline', shiftStartedAt: null, lastShiftEndedAt: serverTimestamp() },
           { merge: true }
         );
         setIsOnline(false);
         Alert.alert(
-          "Shift limit reached",
+          'Shift limit reached',
           `You have been online for ${maxShiftHours} hours, so you have been taken offline for your safety. Please take a break before driving again.`
         );
       } catch (error) {
         shiftEndedRef.current = false;
-        console.log("Shift limit update error:", error);
+        console.log('Shift limit update error:', error);
       }
     };
 
@@ -300,25 +273,46 @@ export default function DriverHomeScreen() {
     return () => clearInterval(id);
   }, [driverId, isOnline, shiftStartedAt, maxShiftHours, onRide]);
 
-  /* ================= RIDE LISTENER ================= */
+  /* ================= JOB OFFERS ================= */
+  const animateCard = useCallback(() => {
+    slideAnim.setValue(width);
+    Animated.timing(slideAnim, {
+      toValue: 0,
+      duration: 380,
+      useNativeDriver: true,
+      easing: Easing.out(Easing.cubic),
+    }).start();
+  }, [slideAnim]);
+
+  const getDistanceFromLatLonInKm = (lat1, lon1, lat2, lon2) => {
+    const R = 6371;
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos((lat1 * Math.PI) / 180) *
+        Math.cos((lat2 * Math.PI) / 180) *
+        Math.sin(dLon / 2) ** 2;
+    return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+  };
+
   useEffect(() => {
-    if (!isOnline || !location) return;
+    if (!isOnline || !location) return undefined;
 
-    const q = query(
-      collection(db, "rides"),
-      where("status", "==", "searching")
-    );
+    const q = query(collection(db, 'rides'), where('status', '==', 'searching'));
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    return onSnapshot(q, (snapshot) => {
       const rides = [];
 
       snapshot.forEach((docSnap) => {
         const data = docSnap.data();
         if (!data.pickupLocation) return;
-        // Jobs this driver already cancelled are not offered to them again.
+        // Jobs this driver already cancelled are not offered again.
         if (Array.isArray(data.declinedBy) && data.declinedBy.includes(driverId)) return;
         // Passengers who asked not to be matched with this driver.
         if (Array.isArray(data.blockedDriverIds) && data.blockedDriverIds.includes(driverId)) return;
+        // Somebody who booked and paid for Executive does not get a Mini.
+        if (!canServe(vehicleType, data.rideType)) return;
 
         const distance = getDistanceFromLatLonInKm(
           location.latitude,
@@ -327,920 +321,493 @@ export default function DriverHomeScreen() {
           data.pickupLocation.longitude
         );
 
-        if (distance <= searchRadiusKm && data.status === "searching") {
-          rides.push({
-            id: docSnap.id,
-            ...data,
-            driverToPickup: {
-              distance: distance.toFixed(1),
-              duration: Math.ceil(distance * 2),
-            },
-          });
+        // Straight-line distance only. We do not have a road route to the
+        // pickup, so no arrival time is shown rather than a guessed one.
+        if (distance <= searchRadiusKm) {
+          rides.push({ id: docSnap.id, ...data, pickupDistanceKm: distance });
         }
       });
 
+      rides.sort((a, b) => a.pickupDistanceKm - b.pickupDistanceKm);
       setRideRequests(rides);
       setCurrentIndex(0);
-
       if (rides.length) animateCard();
     });
+  }, [isOnline, location, searchRadiusKm, driverId, vehicleType, animateCard]);
 
-    return () => unsubscribe();
-  }, [isOnline, location, searchRadiusKm]);
+  // Move to the next offer, or clear the queue when there are none left.
+  const advanceQueue = useCallback(() => {
+    setCurrentIndex((index) => {
+      if (index < rideRequests.length - 1) {
+        animateCard();
+        return index + 1;
+      }
+      setRideRequests([]);
+      return 0;
+    });
+  }, [rideRequests.length, animateCard]);
 
-  /* ================= DISTANCE ================= */
-  const getDistanceFromLatLonInKm = (lat1, lon1, lat2, lon2) => {
-    const R = 6371;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-
-    const a =
-      Math.sin(dLat / 2) ** 2 +
-      Math.cos(lat1 * Math.PI / 180) *
-      Math.cos(lat2 * Math.PI / 180) *
-      Math.sin(dLon / 2) ** 2;
-
-    return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
-  };
-
-  /* ================= ANIMATION ================= */
-  const animateCard = () => {
-    slideAnim.setValue(width);
-    Animated.timing(slideAnim, {
-      toValue: 0,
-      duration: 400,
-      useNativeDriver: true,
-    }).start();
-  };
-
-  /* ================= PULSE ANIMATION FOR ONLINE ================= */
   useEffect(() => {
     if (isOnline) {
       const pulse = Animated.loop(
         Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.3, duration: 1000, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1.35, duration: 1000, useNativeDriver: true }),
           Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
         ])
       );
       pulse.start();
       return () => pulse.stop();
     }
-  }, [isOnline]);
+    return undefined;
+  }, [isOnline, pulseAnim]);
 
-  /* ================= TIMER ================= */
+  /* The offer countdown. When it runs out the job moves on, rather than
+     sitting at "1s" forever as it used to. */
   useEffect(() => {
-    if (!rideRequests.length) return;
+    if (!rideRequests.length) return undefined;
 
-    // Job alert length from the dashboard (Settings, Dispatch).
     setTimer(Math.max(5, Math.round(dispatchConfig.requestTimeoutSeconds || 15)));
 
     const interval = setInterval(() => {
-      setTimer((prev) => (prev > 1 ? prev - 1 : 1));
+      setTimer((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          advanceQueue();
+          return 0;
+        }
+        return prev - 1;
+      });
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [currentIndex, rideRequests]);
+  }, [currentIndex, rideRequests, dispatchConfig.requestTimeoutSeconds, advanceQueue]);
 
-  /* ================= ACCEPT RIDE ================= */
   const handleAcceptRide = async (ride) => {
     if (isAccepting) return;
-
     setIsAccepting(true);
 
     try {
-      const rideRef = doc(db, "rides", ride.id);
-      const driverRef = doc(db, "drivers", driverId);
+      const rideRef = doc(db, 'rides', ride.id);
+      const driverRef = doc(db, 'drivers', driverId);
 
       clearJobAlerts();
 
       await runTransaction(db, async (transaction) => {
         const rideDoc = await transaction.get(rideRef);
-
-        if (!rideDoc.exists()) throw "Ride does not exist";
-
-        if (rideDoc.data().status !== "searching") {
-          throw "Ride already taken";
+        if (!rideDoc.exists()) throw new Error('This job no longer exists.');
+        if (rideDoc.data().status !== 'searching') throw new Error('Another driver took this job.');
+        // Re-checked here because the list is only a filter: the class could
+        // have changed, or the job could have arrived from a stale render.
+        // Firestore rules enforce it properly, this is the friendly message.
+        if (!canServe(vehicleType, rideDoc.data().rideType)) {
+          throw new Error(
+            `This is a ${classLabel(rideDoc.data().rideType)} job and your vehicle is registered as ${classLabel(vehicleType)}.`
+          );
         }
 
         transaction.update(rideRef, {
-          driverId: driverId,
-          status: "accepted",
+          driverId,
+          status: 'accepted',
           walletProcessed: false,
           acceptedAt: serverTimestamp(),
         });
 
         transaction.set(
           driverRef,
-          {
-            isOnRide: true,
-            currentRideId: ride.id,
-            status: "on_ride",
-          },
+          { isOnRide: true, currentRideId: ride.id, status: 'on_ride' },
           { merge: true }
         );
       });
 
-      const unsubscribe = onSnapshot(rideRef, (snap) => {
-        if (!snap.exists()) return;
-        const data = snap.data();
-
-        if (data.status === "accepted") {
-          navigation.replace("DriverRideInProgress", {
-            rideId: ride.id,
-          });
-          unsubscribe();
-        }
-      });
-
-    } catch (err) {
-      console.log(err);
-      Alert.alert("Error", "Ride already taken or failed");
+      navigation.replace('DriverRideInProgress', { rideId: ride.id });
+    } catch (error) {
+      console.log(error);
+      Alert.alert('Job not taken', error?.message || 'This job is no longer available.');
+      advanceQueue();
     } finally {
       setIsAccepting(false);
     }
   };
 
-
-useEffect(() => {
-  const checkOngoingRide = async () => {
-    if (!driverId) {
-      setCheckingRide(false);
-      return;
-    }
-
-    try {
-      const driverRef = doc(db, 'drivers', driverId);
-      const driverSnap = await getDoc(driverRef);
-
-      if (!driverSnap.exists()) {
+  /* ================= RESUME AN ACTIVE JOB ================= */
+  useEffect(() => {
+    const checkOngoingRide = async () => {
+      if (!driverId) {
         setCheckingRide(false);
         return;
       }
 
-      const driverData = driverSnap.data();
-
-      // If no ongoing ride, stop checking
-      if (!driverData.isOnRide || !driverData.currentRideId) {
-        setCheckingRide(false);
-        return;
-      }
-
-      // Has ongoing ride — check the ride doc
-      const rideRef = doc(db, 'rides', driverData.currentRideId);
-      const rideSnap = await getDoc(rideRef);
-
-      if (!rideSnap.exists()) {
-        setCheckingRide(false);
-        return;
-      }
-
-      const rideData = rideSnap.data();
-      const status = rideData.status;
-      let navigateTo = null;
-
-      // Only resume a job that still belongs to this driver.
-      const stillMine = rideData.driverId === driverId;
-
-      if (stillMine && (status === 'accepted' || status === 'arrived')) {
-        navigateTo = 'DriverRideInProgress';
-      } else if (stillMine && status === 'ongoing') {
-        navigateTo = 'RideToDropoff';
-      }
-
-      if (navigateTo) {
-        navigation.replace(navigateTo, { 
-          rideId: driverData.currentRideId 
-        });
-        // Don't setCheckingRide(false) — we're leaving this screen
-      } else {
-        // Ride exists but not in a state we should navigate to (finished,
-        // cancelled, or handed to another driver). Clear the stale pointer.
-        try {
-          await updateDoc(driverRef, { isOnRide: false, currentRideId: null });
-        } catch (clearError) {
-          console.log('Could not clear stale ride pointer:', clearError);
+      try {
+        const driverRef = doc(db, 'drivers', driverId);
+        const driverSnap = await getDoc(driverRef);
+        if (!driverSnap.exists()) {
+          setCheckingRide(false);
+          return;
         }
+
+        const driverData = driverSnap.data();
+        if (!driverData.isOnRide || !driverData.currentRideId) {
+          setCheckingRide(false);
+          return;
+        }
+
+        const rideSnap = await getDoc(doc(db, 'rides', driverData.currentRideId));
+        if (!rideSnap.exists()) {
+          setCheckingRide(false);
+          return;
+        }
+
+        const rideData = rideSnap.data();
+        const stillMine = rideData.driverId === driverId;
+        let navigateTo = null;
+
+        if (stillMine && (rideData.status === 'accepted' || rideData.status === 'arrived')) {
+          navigateTo = 'DriverRideInProgress';
+        } else if (stillMine && rideData.status === 'ongoing') {
+          navigateTo = 'RideToDropoff';
+        }
+
+        if (navigateTo) {
+          navigation.replace(navigateTo, { rideId: driverData.currentRideId });
+          return; // leaving this screen
+        }
+
+        // Finished, cancelled, or handed to another driver: clear the pointer.
+        await updateDoc(driverRef, { isOnRide: false, currentRideId: null }).catch(() => null);
+        setCheckingRide(false);
+      } catch (error) {
+        console.error('Error checking ongoing ride:', error);
         setCheckingRide(false);
       }
+    };
 
-    } catch (error) {
-      console.error('Error checking ongoing ride:', error);
-      setCheckingRide(false);
-    }
-  };
+    checkOngoingRide();
 
-  checkOngoingRide();
+    const subscription = AppState.addEventListener('change', (next) => {
+      if (next === 'active') checkOngoingRide();
+    });
 
-  const subscription = AppState.addEventListener('change', (nextAppState) => {
-    if (nextAppState === 'active') {
-      checkOngoingRide();
-    }
-  });
+    return () => subscription.remove();
+  }, [driverId, navigation]);
 
-  return () => subscription.remove();
-}, [driverId, navigation]);
-
+  /* ================= RENDER ================= */
   if (checkingRide) {
     return (
       <SafeAreaView style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={PRIMARY} />
-        <Text style={{ marginTop: 12, color: '#666', fontWeight: '600' }}>
-          Checking for active ride...
-        </Text>
+        <ActivityIndicator size="large" color={COLORS.green} />
+        <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>Checking for an active job…</Text>
       </SafeAreaView>
     );
   }
-  /* ================= UI ================= */
 
   if (loading || !location) {
     return (
-      <SafeAreaView style={styles.loader}>
-        <ActivityIndicator size="large" color={PRIMARY} />
-        <Text style={{ color: '#fff', marginTop: 10 }}>Getting location…</Text>
+      <SafeAreaView style={[styles.container, styles.centered]}>
+        <ActivityIndicator size="large" color={COLORS.green} />
+        <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>Finding your location…</Text>
       </SafeAreaView>
     );
   }
 
   const currentRide = rideRequests[currentIndex];
-
-  const handleDeclineRide = () => {
-    if (currentIndex < rideRequests.length - 1) {
-      setCurrentIndex(currentIndex + 1);
-      animateCard();
-    } else {
-      setRideRequests([]);
-    }
-  };
-
-  const handleMarkerPress = () => {
-    Animated.sequence([
-      Animated.timing(scaleAnim, { toValue: 1.25, duration: 120, useNativeDriver: true }),
-      Animated.timing(scaleAnim, { toValue: 1, duration: 120, useNativeDriver: true }),
-    ]).start();
-  };
-
-  const avgPerTrip = tripsToday > 0 ? (earningsToday / tripsToday) : 0;
-
-
-  
+  const alert = documentAlerts[0];
 
   return (
     <View style={styles.container}>
       <MapView
         ref={mapRef}
+        provider={PROVIDER_GOOGLE}
         style={StyleSheet.absoluteFill}
         initialRegion={{
           latitude: location.latitude,
           longitude: location.longitude,
-          latitudeDelta: 0.003,
-          longitudeDelta: 0.003,
+          latitudeDelta: 0.01,
+          longitudeDelta: 0.01,
         }}
         customMapStyle={mapStyle}
+        showsCompass={false}
+        toolbarEnabled={false}
       >
-        <Marker coordinate={location} onPress={handleMarkerPress}>
-          <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
-            <View style={styles.carMarker}>
-              <Ionicons name="car-sport" size={18} color="#fff" />
-            </View>
-          </Animated.View>
+        <Marker coordinate={location} anchor={{ x: 0.5, y: 0.5 }} flat>
+          <View style={styles.carMarker}>
+            <Ionicons name="car-sport" size={18} color={COLORS.white} />
+          </View>
         </Marker>
       </MapView>
 
-      {/* HEADER */}
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <View style={styles.onlineDotWrap}>
-            <Animated.View style={[styles.onlinePulse, { transform: [{ scale: pulseAnim }] }]} />
-            <View style={[styles.onlineDot, { backgroundColor: isOnline ? PRIMARY : '#ccc' }]} />
+      {/* Status and the one control that matters. */}
+      <SafeAreaView style={styles.topArea} pointerEvents="box-none">
+        <View style={styles.header}>
+          <View style={styles.presence}>
+            {isOnline ? (
+              <Animated.View style={[styles.presenceHalo, { transform: [{ scale: pulseAnim }] }]} />
+            ) : null}
+            <View style={[styles.presenceDot, { backgroundColor: isOnline ? COLORS.green : COLORS.faint }]} />
           </View>
-          <View style={styles.statusContent}>
-            <Text style={styles.statusText}>
-              {isOnline ? 'You are online' : 'You are offline'}
-            </Text>
-            <Text style={styles.subText}>
-              {isOnline
-                ? shiftLabel(shiftStartedAt, maxShiftHours) || 'Finding trips near you'
-                : 'Go online to find trips'}
-            </Text>
-          </View>
-        </View>
 
-        <View style={styles.goButtonWrap}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.presenceTitle}>{isOnline ? 'Online' : 'Offline'}</Text>
+            <Text style={TYPE.small} numberOfLines={1}>
+              {isOnline
+                ? shiftLabel(shiftStartedAt, maxShiftHours) || 'Waiting for jobs'
+                : isApproved
+                ? 'Go online to get jobs'
+                : 'Application under review'}
+            </Text>
+          </View>
+
           <TouchableOpacity
-            style={[styles.goButton, { backgroundColor: isOnline ? '#DC2626' : PRIMARY }]}
+            style={[styles.goBtn, isOnline ? styles.goBtnOff : styles.goBtnOn]}
             onPress={toggleOnlineStatus}
+            activeOpacity={0.85}
+            accessibilityRole="button"
           >
-            <Text style={styles.goButtonText}>
-              {isOnline ? 'GO OFFLINE' : 'GO ONLINE'}
+            <Text style={[styles.goBtnText, isOnline && { color: COLORS.red }]}>
+              {isOnline ? 'Stop' : 'Go'}
             </Text>
           </TouchableOpacity>
         </View>
-      </View>
 
-      {/* EARNINGS CARD - Professional Design */}
-      <View style={styles.earningsCard}>
-        {/* Document expiry: expired, or due within 30 days */}
-        {documentAlerts.length > 0 && (
+        {alert ? (
           <TouchableOpacity
             activeOpacity={0.85}
             onPress={() => navigation.navigate('DriverDocuments')}
-            style={[
-              styles.docBanner,
-              documentAlerts[0].status === 'expired' ? styles.docBannerExpired : styles.docBannerExpiring,
-            ]}
+            style={[styles.docAlert, alert.status === 'expired' ? styles.docExpired : styles.docExpiring]}
           >
             <Ionicons
-              name={documentAlerts[0].status === 'expired' ? 'alert-circle' : 'time-outline'}
-              size={22}
-              color={documentAlerts[0].status === 'expired' ? '#B91C1C' : '#B45309'}
+              name={alert.status === 'expired' ? 'alert-circle' : 'time-outline'}
+              size={20}
+              color={alert.status === 'expired' ? COLORS.red : COLORS.amber}
             />
-            <View style={{ flex: 1, marginLeft: 10 }}>
-              <Text style={styles.docBannerTitle}>
-                {documentAlerts[0].label}: {describeExpiry(documentAlerts[0]).toLowerCase()}
-              </Text>
-              <Text style={styles.docBannerSub}>
-                {documentAlerts.length > 1
-                  ? `and ${documentAlerts.length - 1} more. Tap to upload replacements.`
-                  : 'Tap to upload a replacement.'}
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color="#6B7280" />
+            <Text style={styles.docText} numberOfLines={2}>
+              {alert.label}: {describeExpiry(alert).toLowerCase()}
+              {documentAlerts.length > 1 ? ` and ${documentAlerts.length - 1} more` : ''}
+            </Text>
+            <Ionicons name="chevron-forward" size={16} color={COLORS.muted} />
           </TouchableOpacity>
-        )}
+        ) : null}
+      </SafeAreaView>
 
-        <View style={styles.earningsTopRow}>
-          <View style={styles.earningsHeader}>
-            <View style={styles.earningsIconBox}>
-              <Ionicons name="trending-up" size={20} color={PRIMARY} />
-            </View>
-            <View>
-              <Text style={styles.cardTitle}>Earnings Today</Text>
-              <Text style={styles.amount}>{currencySymbol()}{earningsToday.toFixed(2)}</Text>
-            </View>
-          </View>
-
-          <TouchableOpacity 
-            style={styles.walletMiniCard}
+      {/* Today, and the wallet. Two numbers that matter, not a dashboard. */}
+      {!currentRide ? (
+        <View style={styles.bottom}>
+          <TouchableOpacity
+            style={styles.earnings}
+            activeOpacity={0.9}
             onPress={() => navigation.navigate('EarningsScreen')}
           >
-            <Ionicons name="wallet-outline" size={16} color={SECONDARY} />
-            <View style={{ marginLeft: 8 }}>
-              <Text style={styles.walletMiniLabel}>Wallet</Text>
-              <Text style={styles.walletMiniValue}>{currencySymbol()}{walletBalance.toFixed(2)}</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={14} color="#C5C5C7" style={{ marginLeft: 6 }} />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.earningsDivider} />
-
-        <View style={styles.earningsBottomRow}>
-          <View style={styles.miniStat}>
-            <Text style={styles.miniStatValue}>{tripsToday}</Text>
-            <Text style={styles.miniStatLabel}>Trips Today</Text>
-          </View>
-          <View style={styles.miniStatDivider} />
-          <View style={styles.miniStat}>
-            <Text style={styles.miniStatValue}>{currencySymbol()}{avgPerTrip.toFixed(2)}</Text>
-            <Text style={styles.miniStatLabel}>Avg / Trip</Text>
-          </View>
-          <View style={styles.miniStatDivider} />
-          <View style={styles.miniStat}>
-            <Text style={styles.miniStatValue}>{isOnline ? 'Active' : 'Off'}</Text>
-            <Text style={styles.miniStatLabel}>Status</Text>
-          </View>
-        </View>
-      </View>
-
-      {/* RIDE CARD */}
-      {currentRide && (
-        <Animated.View
-          style={[
-            styles.rideRequestCard,
-            { transform: [{ translateX: slideAnim }] },
-          ]}
-        >
-          <View style={styles.cardHandle} />
-
-          <View style={styles.badge}>
-            <MaterialCommunityIcons name="lightning-bolt" size={16} color="#fff" />
-            <Text style={styles.badgeText}>NEW REQUEST</Text>
-          </View>
-
-          <View style={styles.locationSection}>
-            <View style={styles.locationRow}>
-              <View style={styles.dotPickup} />
-              <Text style={styles.pickup} numberOfLines={1}>
-                {currentRide.pickupLocation.address}
+            <View style={{ flex: 1 }}>
+              <Text style={styles.earningsLabel}>Earned today</Text>
+              <Text style={styles.earningsValue}>
+                {currencySymbol()}
+                {earningsToday.toFixed(2)}
+              </Text>
+              <Text style={styles.earningsSub}>
+                {tripsToday} {tripsToday === 1 ? 'trip' : 'trips'}
               </Text>
             </View>
 
-            <View style={styles.locationMeta}>
-              <View style={styles.metaChip}>
-                <Ionicons name="navigate-outline" size={12} color={SECONDARY} />
-                <Text style={styles.metaText}>
-                  {currentRide.driverToPickup.distance} km
-                </Text>
-              </View>
-              <View style={styles.metaChip}>
-                <Ionicons name="time-outline" size={12} color={SECONDARY} />
-                <Text style={styles.metaText}>
-                  {currentRide.driverToPickup.duration} mins
-                </Text>
-              </View>
+            <View style={styles.walletBox}>
+              <Text style={styles.walletLabel}>Wallet</Text>
+              <Text style={styles.walletValue}>
+                {currencySymbol()}
+                {walletBalance.toFixed(2)}
+              </Text>
             </View>
-          </View>
 
-          <View style={styles.fareSection}>
-            <Text style={styles.fareLabel}>Trip Fare</Text>
-            <Text style={styles.fare}>
-              {currencySymbol()}{currentRide.fareEstimate.toFixed(2)}
+            <Ionicons name="chevron-forward" size={18} color={COLORS.onDark} />
+          </TouchableOpacity>
+
+          {isOnline ? (
+            <View style={styles.waiting}>
+              <ActivityIndicator size="small" color={COLORS.green} />
+              <Text style={styles.waitingText}>Waiting for jobs nearby</Text>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+
+      {/* A job offer. */}
+      {currentRide ? (
+        <Animated.View style={[styles.offer, { transform: [{ translateX: slideAnim }] }]}>
+          <View style={styles.offerTop}>
+            <View style={styles.classTag}>
+              <Text style={styles.classTagText}>{classLabel(currentRide.rideType)}</Text>
+            </View>
+            <Text style={styles.offerFare}>
+              {currencySymbol()}
+              {Number(currentRide.fareEstimate || 0).toFixed(2)}
             </Text>
           </View>
 
-          <View style={styles.tripDetails}>
-            <View style={styles.tripItem}>
-              <Ionicons name="location-outline" size={14} color="#888" />
-              <Text style={styles.tripText}>
-                {currentRide.route?.distanceKm || 0} km trip
-              </Text>
+          <View style={styles.offerRoute}>
+            <View style={styles.gutter}>
+              <View style={styles.dotGreen} />
+              <View style={styles.stem} />
+              <View style={styles.square} />
             </View>
-            <View style={styles.dotSeparator} />
-            <View style={styles.tripItem}>
-              <Ionicons name="time-outline" size={14} color="#888" />
-              <Text style={styles.tripText}>
-                {Math.ceil(currentRide.route?.durationMinutes || 0)} mins
-              </Text>
+            <View style={{ flex: 1, gap: SPACE[4] }}>
+              <View>
+                <Text style={TYPE.label}>Pickup</Text>
+                <Text style={styles.addr} numberOfLines={2}>
+                  {currentRide.pickupLocation?.address}
+                </Text>
+                <Text style={styles.away}>
+                  {currentRide.pickupDistanceKm.toFixed(1)} km away
+                </Text>
+              </View>
+              <View>
+                <Text style={TYPE.label}>Dropoff</Text>
+                <Text style={styles.addr} numberOfLines={2}>
+                  {currentRide.dropoffLocation?.address}
+                </Text>
+                <Text style={styles.away}>
+                  {currentRide.route?.distanceKm || 0} km ·{' '}
+                  {Math.ceil(currentRide.route?.durationMinutes || 0)} min trip
+                </Text>
+              </View>
             </View>
           </View>
 
           <TouchableOpacity
-            style={[styles.acceptButton, isAccepting && styles.acceptButtonDisabled]}
+            style={[styles.accept, isAccepting && { opacity: 0.6 }]}
             disabled={isAccepting}
             onPress={() => handleAcceptRide(currentRide)}
+            activeOpacity={0.9}
+            accessibilityRole="button"
           >
             <Text style={styles.acceptText}>
-              {isAccepting ? 'Accepting…' : `ACCEPT (${timer}s)`}
+              {isAccepting ? 'Accepting…' : `Accept · ${timer}s`}
             </Text>
-            {!isAccepting && <Ionicons name="checkmark" size={18} color="#fff" />}
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.declineButton}
-            onPress={handleDeclineRide}
-          >
+          <TouchableOpacity style={styles.decline} onPress={advanceQueue} activeOpacity={0.7}>
             <Text style={styles.declineText}>Decline</Text>
           </TouchableOpacity>
         </Animated.View>
-      )}
-
-      {/* NO RIDES STATE */}
-      {!currentRide && isOnline && (
-        <View style={styles.noRidesCard}>
-          <View style={styles.noRidesIcon}>
-            <Ionicons name="search" size={32} color={PRIMARY} />
-          </View>
-          <Text style={styles.noRidesTitle}>Looking for rides</Text>
-          <Text style={styles.noRidesSub}>We'll notify you when a trip is available nearby</Text>
-        </View>
-      )}
+      ) : null}
     </View>
   );
 }
 
 const mapStyle = [
-  { elementType: 'geometry', stylers: [{ color: '#f5f7fa' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#64748b' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
-  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#e2e8f0' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#dbeafe' }] },
+  { elementType: 'geometry', stylers: [{ color: '#F5F7FA' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: COLORS.muted }] },
+  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: COLORS.white }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: COLORS.line }] },
+  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#DCE6F2' }] },
 ];
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  loader: {
-    flex: 1,
-    backgroundColor: SECONDARY,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  container: { flex: 1, backgroundColor: COLORS.surface },
+  centered: { alignItems: 'center', justifyContent: 'center' },
 
-  /* Car Marker */
   carMarker: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: PRIMARY,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 3,
-    borderColor: '#fff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 4,
+    width: 42, height: 42, borderRadius: 21,
+    backgroundColor: COLORS.navy,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 3, borderColor: COLORS.white,
+    ...SHADOW.float,
   },
 
-  /* Header */
+  topArea: { position: 'absolute', top: 0, left: 0, right: 0, paddingHorizontal: SPACE[4] },
   header: {
-    position: 'absolute',
-    top: 0,
-    left: 16,
-    right: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    paddingLeft: 16,
-    paddingRight: 16,
-    paddingVertical: 12,
-    minHeight: 78,
-    borderRadius: 16,
-    marginTop: 50,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.lg,
+    paddingHorizontal: SPACE[4], paddingVertical: SPACE[3],
+    marginTop: SPACE[3],
+    ...SHADOW.float,
   },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1,
-    marginRight: 12,
-    backgroundColor: '#F8FAFC',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 14,
+  presence: { width: 26, height: 26, alignItems: 'center', justifyContent: 'center' },
+  presenceHalo: {
+    position: 'absolute', width: 26, height: 26, borderRadius: 13,
+    backgroundColor: COLORS.green, opacity: 0.22,
   },
-  statusContent: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  goButtonWrap: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    alignSelf: 'center',
-    marginRight: 2,
-    marginLeft: 4,
-  },
-  onlineDotWrap: {
-    width: 24,
-    height: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 12,
-    backgroundColor: 'rgba(121, 181, 49, 0.12)',
-  },
-  onlinePulse: {
-    position: 'absolute',
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: PRIMARY,
-    opacity: 0.4,
-  },
-  onlineDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  statusText: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: DARK,
-  },
-  subText: {
-    fontSize: 12,
-    color: '#888',
-    marginTop: 2,
-  },
-  goButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  goButtonText: {
-    color: '#fff',
-    fontWeight: '800',
-    fontSize: 12,
-    letterSpacing: 0.5,
-  },
+  presenceDot: { width: 11, height: 11, borderRadius: 6 },
+  presenceTitle: { fontSize: 16, fontWeight: '800', color: COLORS.navy, letterSpacing: -0.3 },
 
-  /* Earnings Card - Professional */
-  earningsCard: {
-    position: 'absolute',
-    top: 132,
-    left: 16,
-    right: 16,
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 18,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    elevation: 6,
+  goBtn: {
+    minWidth: 76, height: 42, borderRadius: RADIUS.sm,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
   },
-  earningsTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  earningsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    flex: 1,
-  },
-  earningsIconBox: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: PRIMARY + '15',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cardTitle: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#888',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  amount: {
-    fontSize: 28,
-    fontWeight: '900',
-    color: DARK,
-    marginTop: 4,
-  },
-  walletMiniCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F8F9FA',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E5E5EA',
-  },
-  walletMiniLabel: {
-    fontSize: 10,
-    fontWeight: '600',
-    color: '#888',
-    textTransform: 'uppercase',
-  },
-  walletMiniValue: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: SECONDARY,
-    marginTop: 1,
-  },
-  earningsDivider: {
-    height: 1,
-    backgroundColor: '#F2F2F7',
-    marginVertical: 14,
-  },
-  earningsBottomRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-  },
-  miniStat: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  miniStatValue: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: DARK,
-  },
-  miniStatLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#888',
-    marginTop: 3,
-    textTransform: 'uppercase',
-    letterSpacing: 0.3,
-  },
-  miniStatDivider: {
-    width: 1,
-    height: 28,
-    backgroundColor: '#E5E5EA',
-  },
+  goBtnOn: { backgroundColor: COLORS.green, borderColor: COLORS.green },
+  goBtnOff: { backgroundColor: COLORS.white, borderColor: COLORS.lineStrong },
+  goBtnText: { fontSize: 15, fontWeight: '800', color: COLORS.white, letterSpacing: -0.2 },
 
-  /* Ride Request Card */
-  rideRequestCard: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingTop: 12,
-    paddingHorizontal: 20,
-    paddingBottom: 30,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    elevation: 20,
+  docAlert: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
+    borderRadius: RADIUS.md, borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: SPACE[4], paddingVertical: SPACE[3],
+    marginTop: SPACE[2],
   },
-  cardHandle: {
-    alignSelf: 'center',
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#ddd',
-    marginBottom: 16,
-  },
-  badge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'center',
-    backgroundColor: PRIMARY,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 20,
-    gap: 6,
-    marginBottom: 16,
-  },
-  badgeText: {
-    color: '#fff',
-    fontWeight: '800',
-    fontSize: 12,
-    letterSpacing: 0.5,
-  },
+  docExpired: { backgroundColor: COLORS.redSoft, borderColor: '#FCA5A5' },
+  docExpiring: { backgroundColor: COLORS.amberSoft, borderColor: '#FCD34D' },
+  docText: { flex: 1, ...TYPE.small, color: COLORS.ink, fontWeight: '600' },
 
-  /* Location Section */
-  locationSection: {
-    marginBottom: 16,
+  bottom: { position: 'absolute', left: SPACE[4], right: SPACE[4], bottom: SPACE[5], gap: SPACE[3] },
+  earnings: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[4],
+    backgroundColor: COLORS.navy,
+    borderRadius: RADIUS.lg,
+    padding: SPACE[5],
+    ...SHADOW.float,
   },
-  locationRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginBottom: 8,
+  earningsLabel: { ...TYPE.small, color: COLORS.onDark },
+  earningsValue: { fontSize: 32, fontWeight: '800', color: COLORS.white, letterSpacing: -1, marginTop: 2 },
+  earningsSub: { ...TYPE.small, color: COLORS.onDark, marginTop: 2 },
+  walletBox: {
+    alignItems: 'flex-end', paddingLeft: SPACE[4],
+    borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: COLORS.navyLine,
   },
-  dotPickup: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: PRIMARY,
-  },
-  pickup: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: DARK,
-    flex: 1,
-  },
-  locationMeta: {
-    flexDirection: 'row',
-    gap: 10,
-    paddingLeft: 20,
-  },
-  metaChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: BG,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 8,
-    gap: 4,
-  },
-  metaText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: SECONDARY,
-  },
+  walletLabel: { ...TYPE.small, color: COLORS.onDark },
+  walletValue: { fontSize: 17, fontWeight: '800', color: COLORS.white, marginTop: 2 },
 
-  /* Fare Section */
-  fareSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: BG,
-    padding: 14,
-    borderRadius: 14,
-    marginBottom: 12,
+  waiting: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACE[2],
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.md, paddingVertical: SPACE[3],
+    ...SHADOW.float,
   },
-  fareLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#888',
-  },
-  fare: {
-    fontSize: 24,
-    fontWeight: '900',
-    color: PRIMARY,
-  },
+  waitingText: { ...TYPE.small, fontWeight: '600', color: COLORS.inkSoft },
 
-  /* Trip Details */
-  tripDetails: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
-    marginBottom: 16,
+  offer: {
+    position: 'absolute', left: SPACE[4], right: SPACE[4], bottom: SPACE[5],
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.xl,
+    padding: SPACE[5],
+    ...SHADOW.sheet,
   },
-  tripItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
+  offerTop: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingBottom: SPACE[4],
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.line,
   },
-  tripText: {
-    fontSize: 12,
-    color: '#888',
-    fontWeight: '500',
+  offerFare: { fontSize: 28, fontWeight: '800', color: COLORS.navy, letterSpacing: -0.8 },
+  classTag: {
+    backgroundColor: COLORS.navy,
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: SPACE[3], paddingVertical: 5,
   },
-  dotSeparator: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#ccc',
-  },
+  classTagText: { fontSize: 12, fontWeight: '800', color: COLORS.white, letterSpacing: 0.3 },
 
-  /* Buttons */
-  acceptButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: PRIMARY,
-    paddingVertical: 16,
-    borderRadius: 16,
-    gap: 8,
-    marginBottom: 10,
-  },
-  acceptButtonDisabled: {
-    opacity: 0.6,
-  },
-  acceptText: {
-    color: '#fff',
-    fontWeight: '800',
-    fontSize: 16,
-    letterSpacing: 0.5,
-  },
-  declineButton: {
-    alignItems: 'center',
-    paddingVertical: 14,
-  },
-  declineText: {
-    color: '#888',
-    fontWeight: '700',
-    fontSize: 14,
-  },
+  offerRoute: { flexDirection: 'row', gap: SPACE[3], paddingVertical: SPACE[5] },
+  gutter: { width: 12, alignItems: 'center', paddingTop: 20 },
+  dotGreen: { width: 11, height: 11, borderRadius: 6, backgroundColor: COLORS.green },
+  stem: { flex: 1, width: 2, backgroundColor: COLORS.line, marginVertical: 4, minHeight: 34 },
+  square: { width: 11, height: 11, borderRadius: 3, backgroundColor: COLORS.navy },
+  addr: { ...TYPE.callout, marginTop: 2 },
+  away: { ...TYPE.small, marginTop: 2 },
 
-  /* No Rides */
-  noRidesCard: {
-    position: 'absolute',
-    bottom: 40,
-    left: 16,
-    right: 16,
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 24,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 4,
+  accept: {
+    minHeight: 54, borderRadius: RADIUS.md,
+    backgroundColor: COLORS.green,
+    alignItems: 'center', justifyContent: 'center',
   },
-  noRidesIcon: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: 'rgba(121,180,49,0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  noRidesTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: DARK,
-    marginBottom: 4,
-  },
-  noRidesSub: {
-    fontSize: 13,
-    color: '#888',
-    textAlign: 'center',
-  },
-  docBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-  },
-  docBannerExpired: { backgroundColor: '#FEE2E2', borderColor: '#FCA5A5' },
-  docBannerExpiring: { backgroundColor: '#FEF3C7', borderColor: '#FCD34D' },
-  docBannerTitle: { fontSize: 14, fontWeight: '700', color: '#1F2937' },
-  docBannerSub: { fontSize: 12, color: '#4B5563', marginTop: 2 },
+  acceptText: { fontSize: 16, fontWeight: '800', color: COLORS.white, letterSpacing: -0.2 },
+  decline: { alignItems: 'center', paddingVertical: SPACE[4] },
+  declineText: { fontSize: 15, fontWeight: '700', color: COLORS.muted },
 });

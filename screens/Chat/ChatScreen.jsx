@@ -29,9 +29,10 @@ import {
   deleteDoc,
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
+import { COLORS } from '../../components/ui/kit';
 
-const PRIMARY = '#79B531';
-const SECONDARY = '#235594';
+const PRIMARY = COLORS.green;
+const SECONDARY = COLORS.blue;
 
 // Predefined quick messages for safer driving
 const QUICK_MESSAGES = [
@@ -143,14 +144,50 @@ const ChatScreen = ({ route }) => {
     }
   };
 
+  /* Writes a real report into the same `reports` collection the Report an
+     issue screen uses, so it reaches the admin dashboard and the person gets
+     replies under My reports. It used to only console.log while telling the
+     user their report had been received. */
   const reportMessage = (message) => {
-    // In production, send to your backend or Firestore collection
     Alert.alert(
-      'Report Message',
-      'This message has been reported. Our team will review it.',
-      [{ text: 'OK' }]
+      'Report this message?',
+      'Our support team will read it and get back to you.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Report',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await addDoc(collection(db, 'reports'), {
+                reporterId: currentUser.uid,
+                reporterType: userType,
+                rideId,
+                otherPartyId: message.senderId,
+                category: 'chat',
+                subCategory: 'inappropriate_message',
+                categoryLabel: 'Chat',
+                subCategoryLabel: 'Inappropriate message',
+                description: `Reported message: "${String(message.text || '').slice(0, 500)}"`,
+                severity: 'high',
+                status: 'open',
+                priority: 'normal',
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+                resolvedAt: null,
+                assignedTo: null,
+                adminNotes: '',
+                reportedMessageId: message.id,
+              });
+              Alert.alert('Reported', 'Thank you. Support will review this and reply under My reports.');
+            } catch (error) {
+              console.error('Could not report message:', error);
+              Alert.alert('Could not report', 'Please try again, or use Report an issue in your account.');
+            }
+          },
+        },
+      ]
     );
-    console.log('Reported message:', message.id);
   };
 
   const renderQuickMessage = (msg) => (
@@ -202,7 +239,7 @@ const ChatScreen = ({ route }) => {
               <Ionicons 
                 name={item.read ? "checkmark-done" : "checkmark"} 
                 size={14} 
-                color={item.read ? PRIMARY : '#999'} 
+                color={item.read ? PRIMARY : COLORS.faint} 
                 style={styles.readIcon}
               />
             )}
@@ -226,7 +263,7 @@ const ChatScreen = ({ route }) => {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={0}
     >
-      <StatusBar barStyle="light-content" backgroundColor="#17375E" />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
 
       {/* ========== HEADER ========== */}
       <View style={styles.header}>
@@ -234,14 +271,14 @@ const ChatScreen = ({ route }) => {
           style={styles.backBtn} 
           onPress={() => navigation.goBack()}
         >
-          <Ionicons name="arrow-back" size={24} color="#fff" />
+          <Ionicons name="arrow-back" size={24} color={COLORS.white} />
         </TouchableOpacity>
 
         {otherUserPhoto ? (
           <Image source={{ uri: otherUserPhoto }} style={styles.headerAvatar} />
         ) : (
           <View style={[styles.headerAvatar, styles.headerAvatarPlaceholder]}>
-            <Ionicons name="person" size={20} color="#fff" />
+            <Ionicons name="person" size={20} color={COLORS.white} />
           </View>
         )}
 
@@ -297,7 +334,7 @@ const ChatScreen = ({ route }) => {
             value={inputText}
             onChangeText={setInputText}
             placeholder="Type a message..."
-            placeholderTextColor="#999"
+            placeholderTextColor={COLORS.faint}
             multiline
             maxLength={500}
             returnKeyType="send"
@@ -314,7 +351,7 @@ const ChatScreen = ({ route }) => {
             <Ionicons 
               name="send" 
               size={20} 
-              color={inputText.trim() ? '#fff' : '#ccc'} 
+              color={inputText.trim() ? COLORS.white : COLORS.lineStrong} 
             />
           </TouchableOpacity>
         </View>
@@ -339,7 +376,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#17375E',
+    backgroundColor: COLORS.navy,
     paddingTop: Platform.OS === 'ios' ? 50 : StatusBar.currentHeight + 10,
     paddingBottom: 14,
     paddingHorizontal: 16,
@@ -369,7 +406,7 @@ const styles = StyleSheet.create({
   headerName: {
     fontSize: 17,
     fontWeight: '700',
-    color: '#fff',
+    color: COLORS.white,
   },
   headerStatus: {
     fontSize: 13,
@@ -379,7 +416,7 @@ const styles = StyleSheet.create({
 
   /* ========== QUICK MESSAGES ========== */
   quickMessagesContainer: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderBottomWidth: 1,
@@ -388,7 +425,7 @@ const styles = StyleSheet.create({
   quickMessagesLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#666',
+    color: COLORS.muted,
     marginBottom: 8,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
@@ -450,9 +487,9 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 4,
   },
   theirBubble: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: COLORS.line,
     borderBottomLeftRadius: 4,
   },
   messageText: {
@@ -460,10 +497,10 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   myMessageText: {
-    color: '#fff',
+    color: COLORS.white,
   },
   theirMessageText: {
-    color: '#1a1a1a',
+    color: COLORS.ink,
   },
   messageMeta: {
     flexDirection: 'row',
@@ -474,7 +511,7 @@ const styles = StyleSheet.create({
   timestamp: {
     fontSize: 11,
     opacity: 0.7,
-    color: '#888',
+    color: COLORS.muted,
   },
   readIcon: {
     marginLeft: 4,
@@ -482,7 +519,7 @@ const styles = StyleSheet.create({
 
   /* ========== INPUT ========== */
   inputWrapper: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderTopWidth: 1,
     borderTopColor: '#E8E8E8',
     paddingHorizontal: 12,
@@ -509,9 +546,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingTop: 11,
     paddingBottom: 11,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: COLORS.line,
     borderRadius: 14,
     fontSize: 15,
     color: '#1F2937',
@@ -526,7 +563,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   sendBtnDisabled: {
-    backgroundColor: '#E5E7EB',
+    backgroundColor: COLORS.line,
   },
 });
 

@@ -6,25 +6,36 @@ import {
   SafeAreaView,
   ActivityIndicator,
   TouchableOpacity,
-  Dimensions,
   Animated,
+  Easing,
   Alert,
 } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import MapViewDirections from 'react-native-maps-directions';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { Ionicons, FontAwesome5 } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { getAuth } from 'firebase/auth';
-import { confirmPayment } from '@stripe/stripe-react-native';
 import { currencySymbol } from '../../utils/appConfig';
+import {
+  COLORS, TYPE, SPACE, RADIUS, SHADOW, IconButton, RouteLine,
+  MapUnavailable, isCoord, validCoords, regionCovering,
+} from '../../components/ui/kit';
 
-const { width } = Dimensions.get('window');
-const PRIMARY = '#79B431';
-const SECONDARY = '#235594';
-const DARK = '#1a1a1a';
-const BG = '#F8F9FA';
+const GOOGLE_MAPS_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ';
+
+// How long we have been looking. Real elapsed time, rather than a progress bar
+// that implies we know how far through the search we are — we do not.
+function useElapsed(active) {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    if (!active) return undefined;
+    const id = setInterval(() => setSeconds((v) => v + 1), 1000);
+    return () => clearInterval(id);
+  }, [active]);
+  return seconds;
+}
 
 export default function RideRequestScreen() {
   const route = useRoute();
@@ -32,734 +43,337 @@ export default function RideRequestScreen() {
   const { rideId } = route.params;
 
   const mapRef = useRef(null);
-  const progress = useRef(new Animated.Value(0)).current;
-  const paymentInProgress = useRef(false);
-  const paymentCompleted = useRef(false);
+  const pulse = useRef(new Animated.Value(0)).current;
 
   const [rideData, setRideData] = useState(null);
-  const [rideStatus, setRideStatus] = useState("searching");
+  const [rideStatus, setRideStatus] = useState('searching');
   const [cancelling, setCancelling] = useState(false);
 
-  const GOOGLE_MAPS_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ';
+  const hasNavigatedToTracking = useRef(false);
+  const hasLeftScreen = useRef(false);
+  const cancelledByMe = useRef(false);
+  const handoverTimer = useRef(null);
 
-  /* ================= PROGRESS ANIMATION ================= */
+  const isSearching = rideStatus === 'searching';
+  const elapsed = useElapsed(isSearching);
+
+  /* A radar sweep: it says "we are looking", without claiming to know how
+     close we are to finding someone. */
   useEffect(() => {
+    if (!isSearching) return undefined;
     const loop = Animated.loop(
-      Animated.sequence([
-        Animated.timing(progress, { toValue: width * 0.3, duration: 700, useNativeDriver: false }),
-        Animated.timing(progress, { toValue: width * 0.7, duration: 700, useNativeDriver: false }),
-        Animated.timing(progress, { toValue: width * 0.95, duration: 700, useNativeDriver: false }),
-        Animated.timing(progress, { toValue: 0, duration: 300, useNativeDriver: false }),
-      ])
+      Animated.timing(pulse, {
+        toValue: 1,
+        duration: 2000,
+        useNativeDriver: true,
+        easing: Easing.out(Easing.ease),
+      })
     );
     loop.start();
     return () => loop.stop();
-  }, []);
+  }, [isSearching, pulse]);
 
-  /* ================= REAL-TIME LISTENER ================= */
-const hasNavigatedToTracking = useRef(false);
-const hasLeftScreen = useRef(false);
-const cancelledByMe = useRef(false);
+  useEffect(() => {
+    if (!rideId) return undefined;
 
-useEffect(() => {
-  if (!rideId) return;
-
-  const rideDocRef = doc(db, 'rides', rideId);
-
-  const unsubscribe = onSnapshot(rideDocRef, (docSnap) => {
-    if (!docSnap.exists()) {
-      Alert.alert('Error', 'Ride not found');
-      navigation.goBack();
-      return;
-    }
-
-    const data = docSnap.data();
-    setRideData(data);
-    setRideStatus(data.status);
-
-    // ✅ Auto-navigate to tracking after driver accepted
-    if (
-      data.status === "accepted" &&
-      data.driverId &&
-      !hasNavigatedToTracking.current
-    ) {
-      hasNavigatedToTracking.current = true;
-      
-      // Show the assigned card for 3 seconds, then navigate
-      setTimeout(() => {
-        navigation.replace('RideTracking', { rideId });
-      }, 3000);
-    }
-
-    if (
-      data.status === "accepted" &&
-      data.driverId &&
-      data.payment?.status === "pending" &&
-      data.payment?.clientSecret &&
-      !paymentInProgress.current &&
-      !paymentCompleted.current
-    ) {
-      handlePaymentConfirmation(data);
-    }
-
-    // Leave once. Before, cancelling here called goBack twice (once from the
-    // button and once from this listener), popping an extra screen.
-    if ((data.status === "cancelled" || data.status === "canceled") && !hasLeftScreen.current) {
-      hasLeftScreen.current = true;
-      if (!cancelledByMe.current) {
-        Alert.alert("Ride Cancelled", "This ride has been cancelled.");
-      }
-      navigation.goBack();
-    }
-  });
-
-  return () => unsubscribe();
-}, [rideId]);
-
-  const handlePaymentConfirmation = async (ride) => {
-    try {
-      paymentInProgress.current = true;
-      const clientSecret = ride.payment.clientSecret;
-      console.log("🔐 Confirming payment...");
-
-      const { error, paymentIntent } = await confirmPayment(clientSecret);
-
-      if (error) {
-        console.log("❌ Payment failed:", error);
-        Alert.alert("Payment Failed", "Please update your payment method.");
-
-        await updateDoc(doc(db, "rides", rideId), {
-          status: "payment_failed",
-          payment: {
-            ...ride.payment,
-            status: "failed",
-            error: error.message,
-          },
-        });
-
-        paymentInProgress.current = false;
+    const unsubscribe = onSnapshot(doc(db, 'rides', rideId), (docSnap) => {
+      if (!docSnap.exists()) {
+        Alert.alert('Ride not found', 'We could not load this ride.');
+        navigation.goBack();
         return;
       }
 
-      console.log("✅ Payment authorized:", paymentIntent.id);
-      paymentCompleted.current = true;
+      const data = docSnap.data();
+      setRideData(data);
+      setRideStatus(data.status);
 
-      await updateDoc(doc(db, "rides", rideId), {
-        payment: {
-          ...ride.payment,
-          status: "authorized",
-        },
-      });
-    } catch (err) {
-      console.error("❌ Payment exception:", err);
-    } finally {
-      paymentInProgress.current = false;
-    }
-  };
+      // Let the "driver found" card be read before handing over to tracking.
+      if (data.status === 'accepted' && data.driverId && !hasNavigatedToTracking.current) {
+        hasNavigatedToTracking.current = true;
+        handoverTimer.current = setTimeout(() => {
+          navigation.replace('RideTracking', { rideId });
+        }, 2500);
+      }
 
-  /* ================= MAP FIT ================= */
-  const recenterMap = () => {
-    if (mapRef.current && rideData) {
-      const { pickupLocation, dropoffLocation } = rideData;
-      mapRef.current.fitToCoordinates(
-        [
-          { latitude: pickupLocation.latitude, longitude: pickupLocation.longitude },
-          { latitude: dropoffLocation.latitude, longitude: dropoffLocation.longitude },
-        ],
-        {
-          edgePadding: { top: 120, right: 60, bottom: 420, left: 60 },
-          animated: true,
+      // Leave once. Cancelling used to call goBack twice, popping an extra screen.
+      if ((data.status === 'cancelled' || data.status === 'canceled') && !hasLeftScreen.current) {
+        hasLeftScreen.current = true;
+        if (!cancelledByMe.current) {
+          Alert.alert('Ride cancelled', 'This ride has been cancelled.');
         }
-      );
-    }
+        navigation.goBack();
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      // Without this, cancelling inside the handover window navigates a screen
+      // that is already gone.
+      if (handoverTimer.current) clearTimeout(handoverTimer.current);
+    };
+  }, [rideId, navigation]);
+
+  const fitMap = () => {
+    if (!mapRef.current || !rideData) return;
+    const coords = validCoords(rideData.pickupLocation, rideData.dropoffLocation);
+    if (!coords.length) return;
+    mapRef.current.fitToCoordinates(coords, {
+      edgePadding: { top: 120, right: 60, bottom: 400, left: 60 },
+      animated: true,
+    });
   };
 
-  /* ================= CANCEL ================= */
-  const handleCancelRequest = async () => {
-    Alert.alert(
-      'Cancel Ride',
-      'Are you sure you want to cancel this ride request?',
-      [
-        { text: 'No', style: 'cancel' },
-        {
-          text: 'Yes, Cancel',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              setCancelling(true);
-              const auth = getAuth();
-              const currentUser = auth.currentUser;
-              if (!currentUser) return;
-
-              cancelledByMe.current = true;
-              await updateDoc(doc(db, 'rides', rideId), {
-                status: 'cancelled',
-                cancelledBy: 'rider',
-                cancelledAt: serverTimestamp(),
-              });
-              await updateDoc(doc(db, 'riders', currentUser.uid), { currentRideId: null });
-              // The ride listener above leaves the screen.
-            } catch (error) {
-              cancelledByMe.current = false;
-              console.error('Failed to cancel ride:', error);
-              Alert.alert('Error', 'Could not cancel the ride. Please try again.');
-              setCancelling(false);
-            }
-          },
+  const handleCancelRequest = () => {
+    Alert.alert('Cancel this ride?', 'You have not been charged.', [
+      { text: 'Keep looking', style: 'cancel' },
+      {
+        text: 'Cancel ride',
+        style: 'destructive',
+        onPress: async () => {
+          const currentUser = getAuth().currentUser;
+          if (!currentUser) return;
+          try {
+            setCancelling(true);
+            cancelledByMe.current = true;
+            await updateDoc(doc(db, 'rides', rideId), {
+              status: 'cancelled',
+              cancelledBy: 'rider',
+              cancelledAt: serverTimestamp(),
+            });
+            await updateDoc(doc(db, 'riders', currentUser.uid), { currentRideId: null });
+            // The listener above leaves the screen.
+          } catch (error) {
+            cancelledByMe.current = false;
+            console.error('Failed to cancel ride:', error);
+            Alert.alert('Could not cancel', 'Please try again.');
+            setCancelling(false);
+          }
         },
-      ]
-    );
+      },
+    ]);
   };
 
-  /* ================= LOADING ================= */
   if (!rideData) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.loadingOverlay}>
-          <ActivityIndicator size="large" color={PRIMARY} />
-          <Text style={styles.loadingText}>Loading your ride…</Text>
-        </View>
+      <SafeAreaView style={[styles.container, styles.centered]}>
+        <ActivityIndicator size="large" color={COLORS.green} />
+        <Text style={[TYPE.small, { marginTop: SPACE[4] }]}>Loading your ride…</Text>
       </SafeAreaView>
     );
   }
 
-  const {
-    pickupLocation,
-    dropoffLocation,
-    fareEstimate,
-    rideType,
-    route: rideRoute,
-  } = rideData;
-
+  const { pickupLocation, dropoffLocation, fareEstimate, route: rideRoute } = rideData;
   const distanceKm = rideRoute?.distanceKm || 0;
   const durationMinutes = rideRoute?.durationMinutes || 0;
+  const isAccepted = rideStatus === 'accepted' && rideData.driverId;
 
-  const isSearching = rideStatus === "searching";
-  const isAccepted = rideStatus === "accepted" && rideData.driverId;
+  const clock = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
+
+  // No usable coordinates means no map, rather than a map of the Atlantic.
+  const initialRegion = regionCovering([pickupLocation, dropoffLocation], 0.05);
+
+  const haloStyle = {
+    opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0] }),
+    transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.6, 2.4] }) }],
+  };
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* MAP */}
-      <MapView
-        ref={mapRef}
-        style={styles.map}
-        initialRegion={{
-          latitude: pickupLocation.latitude,
-          longitude: pickupLocation.longitude,
-          latitudeDelta: 0.05,
-          longitudeDelta: 0.05,
-        }}
-        onMapReady={recenterMap}
-      >
-        <Marker coordinate={pickupLocation}>
-          <View style={styles.originMarker}>
-            <View style={styles.originDot} />
-            <View style={styles.originRing} />
-          </View>
-        </Marker>
-        <Marker coordinate={dropoffLocation}>
-          <View style={styles.destMarker}>
-            <Ionicons name="location" size={28} color={SECONDARY} />
-          </View>
-        </Marker>
-
-        <MapViewDirections
-          origin={pickupLocation}
-          destination={dropoffLocation}
-          apikey={GOOGLE_MAPS_API_KEY}
-          strokeWidth={5}
-          strokeColor={PRIMARY}
-        />
-      </MapView>
-
-      {/* TOP BAR */}
-      <View style={styles.topBar}>
-        <TouchableOpacity style={styles.iconButton} onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={22} color={DARK} />
-        </TouchableOpacity>
-
-        <View style={styles.statusPill}>
-          <View style={[styles.statusDot, { backgroundColor: isSearching ? '#FFC107' : PRIMARY }]} />
-          <Text style={styles.statusText}>
-            {isSearching ? 'Searching' : isAccepted ? 'Driver Found' : rideStatus}
-          </Text>
+      {initialRegion ? (
+        <MapView
+          ref={mapRef}
+          provider={PROVIDER_GOOGLE}
+          style={StyleSheet.absoluteFill}
+          initialRegion={initialRegion}
+          onMapReady={fitMap}
+          showsCompass={false}
+          toolbarEnabled={false}
+        >
+          {isCoord(pickupLocation) ? (
+            <Marker coordinate={pickupLocation} anchor={{ x: 0.5, y: 0.5 }}>
+              <View style={styles.originMarker} />
+            </Marker>
+          ) : null}
+          {isCoord(dropoffLocation) ? (
+            <Marker coordinate={dropoffLocation} anchor={{ x: 0.5, y: 1 }}>
+              <Ionicons name="location" size={30} color={COLORS.navy} />
+            </Marker>
+          ) : null}
+          {isCoord(pickupLocation) && isCoord(dropoffLocation) ? (
+            <MapViewDirections
+              origin={pickupLocation}
+              destination={dropoffLocation}
+              apikey={GOOGLE_MAPS_API_KEY}
+              strokeWidth={4}
+              strokeColor={COLORS.green}
+            />
+          ) : null}
+        </MapView>
+      ) : (
+        <View style={StyleSheet.absoluteFill}>
+          <MapUnavailable note="We do not have map coordinates for this trip." />
         </View>
+      )}
 
-        <TouchableOpacity style={styles.iconButton}>
-          <Ionicons name="share-outline" size={22} color={DARK} />
-        </TouchableOpacity>
+      <View style={styles.topBar}>
+        <IconButton icon="chevron-back" onPress={() => navigation.goBack()} accessibilityLabel="Go back" />
       </View>
 
-      {/* BOTTOM SHEET */}
-      <View style={styles.bottomSheet}>
-        <View style={styles.sheetHandle} />
+      <View style={styles.sheet}>
+        <View style={styles.grabber} />
 
-        {isSearching && (
-          <View style={styles.searchingContainer}>
-            <View style={styles.pulseRing}>
-              <View style={styles.pulseInner}>
-                <Ionicons name="search" size={28} color={PRIMARY} />
+        {isSearching ? (
+          <View style={styles.searching}>
+            <View style={styles.radar}>
+              <Animated.View style={[styles.halo, haloStyle]} />
+              <View style={styles.radarCore}>
+                <Ionicons name="car-sport" size={26} color={COLORS.white} />
               </View>
             </View>
 
-            <Text style={styles.loadingText}>Finding your driver</Text>
-            <Text style={styles.etaText}>Estimated wait: 2–5 minutes</Text>
+            <Text style={styles.searchTitle}>Finding your driver</Text>
+            <Text style={styles.searchClock}>Looking for {clock}</Text>
 
-            <View style={styles.progressBarBackground}>
-              <Animated.View style={[styles.progressBarFill, { width: progress }]} />
-            </View>
-
-            <View style={styles.searchingDetails}>
-              <View style={styles.detailChip}>
-                <Ionicons name="card-outline" size={14} color={SECONDARY} />
-                <Text style={styles.chipText}>{currencySymbol()}{fareEstimate}</Text>
-              </View>
-              <View style={styles.detailChip}>
-                <Ionicons name="navigate-outline" size={14} color={SECONDARY} />
-                <Text style={styles.chipText}>{distanceKm} km</Text>
-              </View>
-              <View style={styles.detailChip}>
-                <Ionicons name="time-outline" size={14} color={SECONDARY} />
-                <Text style={styles.chipText}>{Math.ceil(durationMinutes)} min</Text>
-              </View>
+            <View style={styles.facts}>
+              <Fact icon="card-outline" text={`${currencySymbol()}${fareEstimate}`} />
+              <Fact icon="navigate-outline" text={`${distanceKm} km`} />
+              <Fact icon="time-outline" text={`${Math.ceil(durationMinutes)} min`} />
             </View>
 
             <TouchableOpacity
-              style={[styles.cancelButton, cancelling && styles.cancelButtonDisabled]}
+              style={[styles.cancel, cancelling && { opacity: 0.5 }]}
               onPress={handleCancelRequest}
               disabled={cancelling}
+              activeOpacity={0.8}
+              accessibilityRole="button"
             >
               <Text style={styles.cancelText}>
-                {cancelling ? 'Cancelling…' : 'Cancel Request'}
+                {cancelling ? 'Cancelling…' : 'Cancel ride'}
               </Text>
             </TouchableOpacity>
           </View>
-        )}
+        ) : null}
 
-        {isAccepted && (
-          <View style={styles.acceptedContainer}>
-            <View style={styles.successBadge}>
-              <Ionicons name="checkmark-circle" size={20} color="#fff" />
-              <Text style={styles.successText}>Driver Assigned</Text>
+        {isAccepted ? (
+          <View style={styles.accepted}>
+            <View style={styles.foundRow}>
+              <View style={styles.foundTick}>
+                <Ionicons name="checkmark" size={18} color={COLORS.white} />
+              </View>
+              <Text style={styles.foundText}>Driver found</Text>
             </View>
 
-            <View style={styles.rideTypeRow}>
-              <View style={styles.rideTypeBadge}>
-                <FontAwesome5 name="car-side" size={16} color={PRIMARY} />
-                <Text style={styles.rideTypeText}>{rideType}</Text>
-              </View>
+            <View style={styles.journey}>
+              <RouteLine
+                compact
+                pickup={pickupLocation.address}
+                dropoff={dropoffLocation.address}
+              />
             </View>
 
-            <View style={styles.locationCard}>
-              <View style={styles.locationRow}>
-                <View style={styles.locationDotContainer}>
-                  <View style={[styles.routeDot, { backgroundColor: PRIMARY }]} />
-                  <View style={styles.routeLine} />
-                </View>
-                <Text style={styles.locationText} numberOfLines={1}>
-                  {pickupLocation.address}
-                </Text>
+            <View style={styles.fareRow}>
+              <View>
+                <Text style={TYPE.label}>Trip fare</Text>
+                <Text style={styles.fareSub}>Includes VAT</Text>
               </View>
-
-              <View style={styles.locationRow}>
-                <View style={styles.locationDotContainer}>
-                  <View style={[styles.routeDot, { backgroundColor: SECONDARY }]} />
-                </View>
-                <Text style={styles.locationText} numberOfLines={1}>
-                  {dropoffLocation.address}
-                </Text>
-              </View>
+              <Text style={styles.fareValue}>
+                {currencySymbol()}
+                {fareEstimate}
+              </Text>
             </View>
 
-            <View style={styles.fareCard}>
-              <View style={styles.fareRow}>
-                <View style={styles.fareIconBox}>
-                  <Ionicons name="receipt-outline" size={18} color={SECONDARY} />
-                </View>
-                <View style={styles.fareTextBox}>
-                  <Text style={styles.fareLabel}>Trip Fare</Text>
-                  <Text style={styles.fareSub}>Includes VAT & fees</Text>
-                </View>
-                <Text style={styles.fareValue}>{currencySymbol()}{fareEstimate}</Text>
-              </View>
-
-              <View style={styles.fareDivider} />
-
-              <View style={styles.fareRowCompact}>
-                <View style={styles.fareCompactItem}>
-                  <Ionicons name="navigate-outline" size={14} color="#888" />
-                  <Text style={styles.fareCompactText}>{distanceKm} km</Text>
-                </View>
-                <View style={styles.fareCompactItem}>
-                  <Ionicons name="time-outline" size={14} color="#888" />
-                  <Text style={styles.fareCompactText}>{Math.ceil(durationMinutes)} min</Text>
-                </View>
-              </View>
-            </View>
-
-            <Text style={styles.etaText}>
-              Redirecting to live tracking…
-            </Text>
-
+            <Text style={styles.handover}>Opening live tracking…</Text>
           </View>
-        )}
+        ) : null}
       </View>
     </SafeAreaView>
   );
 }
 
+function Fact({ icon, text }) {
+  return (
+    <View style={styles.fact}>
+      <Ionicons name={icon} size={15} color={COLORS.muted} />
+      <Text style={styles.factText}>{text}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  map: { ...StyleSheet.absoluteFillObject },
+  container: { flex: 1, backgroundColor: COLORS.white },
+  centered: { alignItems: 'center', justifyContent: 'center' },
 
-  /* Loading */
-  loadingOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-  },
-
-  /* Top Bar */
-  topBar: {
-    position: 'absolute',
-    top: 50,
-    left: 16,
-    right: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  iconButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  statusPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
-    gap: 8,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  statusText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: DARK,
-  },
-
-  /* Markers */
   originMarker: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  originDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: PRIMARY,
-    borderWidth: 3,
-    borderColor: '#fff',
-  },
-  originRing: {
-    position: 'absolute',
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 2,
-    borderColor: PRIMARY,
-    opacity: 0.3,
-  },
-  destMarker: {
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 4,
+    width: 16, height: 16, borderRadius: 8,
+    backgroundColor: COLORS.green, borderWidth: 3, borderColor: COLORS.white,
   },
 
-  /* Bottom Sheet */
-  bottomSheet: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingTop: 12,
-    paddingHorizontal: 20,
-    paddingBottom: 30,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    elevation: 20,
+  topBar: { position: 'absolute', top: SPACE[3], left: SPACE[5] },
+
+  sheet: {
+    position: 'absolute', left: 0, right: 0, bottom: 0,
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl,
+    paddingHorizontal: SPACE[5], paddingTop: SPACE[3], paddingBottom: SPACE[8],
+    ...SHADOW.sheet,
   },
-  sheetHandle: {
-    alignSelf: 'center',
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#ddd',
-    marginBottom: 16,
+  grabber: {
+    width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.line,
+    alignSelf: 'center', marginBottom: SPACE[5],
   },
 
-  /* Searching State */
-  searchingContainer: {
-    alignItems: 'center',
-    paddingVertical: 8,
+  searching: { alignItems: 'center' },
+  radar: { width: 96, height: 96, alignItems: 'center', justifyContent: 'center' },
+  halo: {
+    position: 'absolute', width: 96, height: 96, borderRadius: 48,
+    backgroundColor: COLORS.green,
   },
-  pulseRing: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(121,180,49,0.12)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 20,
+  radarCore: {
+    width: 62, height: 62, borderRadius: 31,
+    backgroundColor: COLORS.navy,
+    alignItems: 'center', justifyContent: 'center',
   },
-  pulseInner: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: 'rgba(121,180,49,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
+  searchTitle: { ...TYPE.title, marginTop: SPACE[5] },
+  searchClock: { ...TYPE.small, marginTop: SPACE[1] },
+
+  facts: {
+    flexDirection: 'row', gap: SPACE[5],
+    marginTop: SPACE[6], paddingTop: SPACE[5],
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
+    alignSelf: 'stretch', justifyContent: 'center',
   },
-  loadingText: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: DARK,
-    textAlign: 'center',
+  fact: { flexDirection: 'row', alignItems: 'center', gap: SPACE[2] },
+  factText: { ...TYPE.small, color: COLORS.ink, fontWeight: '600' },
+
+  cancel: {
+    alignSelf: 'stretch', minHeight: 52,
+    alignItems: 'center', justifyContent: 'center',
+    borderRadius: RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.lineStrong,
+    marginTop: SPACE[6],
   },
-  etaText: {
-    fontSize: 15,
-    color: '#888',
-    textAlign: 'center',
-    marginTop: 6,
-    marginBottom: 20,
+  cancelText: { fontSize: 15, fontWeight: '700', color: COLORS.red },
+
+  accepted: { paddingBottom: SPACE[2] },
+  foundRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[3] },
+  foundTick: {
+    width: 30, height: 30, borderRadius: 15, backgroundColor: COLORS.green,
+    alignItems: 'center', justifyContent: 'center',
   },
-  progressBarBackground: {
-    width: '100%',
-    height: 6,
-    backgroundColor: '#eee',
-    borderRadius: 3,
-    marginBottom: 20,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: 6,
-    backgroundColor: PRIMARY,
-    borderRadius: 3,
-  },
-  searchingDetails: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 24,
-  },
-  detailChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: BG,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    gap: 6,
-  },
-  chipText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: DARK,
-  },
-  cancelButton: {
-    width: '100%',
-    paddingVertical: 16,
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: '#E0E0E0',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-  },
-  cancelButtonDisabled: {
-    opacity: 0.6,
-  },
-  cancelText: {
-    color: '#888',
-    fontWeight: '700',
-    fontSize: 15,
+  foundText: { ...TYPE.heading },
+
+  journey: {
+    marginTop: SPACE[5], paddingTop: SPACE[5],
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
   },
 
-  /* Accepted State */
-  acceptedContainer: {
-    paddingVertical: 4,
-  },
-  successBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'center',
-    backgroundColor: PRIMARY,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    gap: 6,
-    marginBottom: 16,
-  },
-  successText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  rideTypeRow: {
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  rideTypeBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(121,180,49,0.08)',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 12,
-    gap: 8,
-  },
-  rideTypeText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: PRIMARY,
-  },
-
-  /* Location Card */
-  locationCard: {
-    backgroundColor: BG,
-    padding: 16,
-    borderRadius: 16,
-    marginBottom: 16,
-  },
-  locationRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  locationDotContainer: {
-    width: 20,
-    alignItems: 'center',
-    marginRight: 10,
-  },
-  routeDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  routeLine: {
-    width: 2,
-    height: 20,
-    backgroundColor: '#ddd',
-    marginVertical: 2,
-  },
-  locationText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: DARK,
-    flex: 1,
-    lineHeight: 20,
-  },
-
-  /* Fare Card */
-  fareCard: {
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#eee',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-  },
   fareRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginTop: SPACE[5], paddingTop: SPACE[4],
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
   },
-  fareIconBox: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    backgroundColor: '#E3F2FD',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  fareTextBox: {
-    flex: 1,
-  },
-  fareLabel: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: DARK,
-  },
-  fareSub: {
-    fontSize: 12,
-    color: '#999',
-    marginTop: 2,
-  },
-  fareValue: {
-    fontSize: 20,
-    fontWeight: '800',
-    color: PRIMARY,
-  },
-  fareDivider: {
-    height: 1,
-    backgroundColor: '#f0f0f0',
-    marginVertical: 12,
-  },
-  fareRowCompact: {
-    flexDirection: 'row',
-    gap: 20,
-  },
-  fareCompactItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  fareCompactText: {
-    fontSize: 13,
-    color: '#888',
-    fontWeight: '500',
-  },
+  fareSub: { ...TYPE.small, marginTop: 2 },
+  fareValue: { ...TYPE.figure },
 
-  /* Track Button */
-  trackButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: PRIMARY,
-    paddingVertical: 16,
-    borderRadius: 16,
-    gap: 8,
-  },
-  trackText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
+  handover: { ...TYPE.small, textAlign: 'center', marginTop: SPACE[5] },
 });

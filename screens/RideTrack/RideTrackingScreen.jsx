@@ -5,12 +5,11 @@ import {
   StyleSheet,
   SafeAreaView,
   TouchableOpacity,
-  Image,
   ActivityIndicator,
   Animated,
   Alert,
 } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
+import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import MapViewDirections from 'react-native-maps-directions';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,11 +19,28 @@ import { db } from '../../config/firebase';
 import { useWaitingClock } from '../../utils/useWaitingClock';
 import SafetyButton from '../../components/SafetyButton';
 import { confirmMaskedCall } from '../../utils/calling';
+import {
+  COLORS,
+  TYPE,
+  SPACE,
+  RADIUS,
+  SHADOW,
+  Avatar,
+  IconButton,
+  RouteLine,
+  MapUnavailable,
+  isCoord,
+  validCoords,
+  regionCovering,
+} from '../../components/ui/kit';
 
-const PRIMARY = '#79B431';
-const SECONDARY = '#235594';
-const DARK = '#1a1a1a';
-const BG = '#F8F9FA';
+const GOOGLE_MAPS_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ';
+
+const STATUS = {
+  accepted: { title: 'Driver on the way', detail: 'Heading to your pickup point.' },
+  arrived: { title: 'Your driver has arrived', detail: 'Meet them at the pickup point.' },
+  ongoing: { title: 'On your way', detail: 'Heading to your destination.' },
+};
 
 export default function RideTrackingScreen() {
   const route = useRoute();
@@ -39,7 +55,113 @@ export default function RideTrackingScreen() {
   const [driverLocation, setDriverLocation] = useState(null);
   const waiting = useWaitingClock(rideData);
 
-  const GOOGLE_MAPS_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ';
+  const hasNavigatedToProgress = useRef(false);
+  // One driver listener at a time. Previously a new one was opened on every
+  // ride update and never closed.
+  const driverUnsubRef = useRef(null);
+  const listeningDriverId = useRef(null);
+
+  const listenToDriver = (driverId) =>
+    onSnapshot(doc(db, 'drivers', driverId), (snap) => {
+      if (!snap.exists()) return;
+      const driver = snap.data();
+      setDriverData(driver);
+      if (isCoord(driver.location)) {
+        setDriverLocation({
+          latitude: driver.location.latitude,
+          longitude: driver.location.longitude,
+        });
+      }
+    });
+
+  useEffect(() => {
+    const stopDriverListener = () => {
+      if (driverUnsubRef.current) {
+        driverUnsubRef.current();
+        driverUnsubRef.current = null;
+      }
+      listeningDriverId.current = null;
+    };
+
+    const unsubscribe = onSnapshot(doc(db, 'rides', rideId), (snap) => {
+      if (!snap.exists()) return;
+      if (hasNavigatedToProgress.current) return;
+
+      const data = snap.data();
+      setRideData(data);
+
+      if (data.status === 'ongoing') {
+        hasNavigatedToProgress.current = true;
+        navigation.replace('RideInProgress', { rideId });
+        return;
+      }
+
+      // Driver gave the job back: return to the searching screen.
+      if (data.status === 'searching') {
+        hasNavigatedToProgress.current = true;
+        Alert.alert(
+          'Finding you another driver',
+          'Your driver had to cancel. We are looking for a new one now.'
+        );
+        navigation.replace('RideRequest', { rideId });
+        return;
+      }
+
+      if (data.status === 'cancelled' || data.status === 'canceled') {
+        hasNavigatedToProgress.current = true;
+        if (data.cancelledBy === 'driver') {
+          Alert.alert(
+            'Ride cancelled',
+            'Your driver cancelled this ride. You have not been charged.'
+          );
+        }
+        navigation.popToTop();
+        return;
+      }
+
+      if (data.driverId && listeningDriverId.current !== data.driverId) {
+        stopDriverListener();
+        listeningDriverId.current = data.driverId;
+        driverUnsubRef.current = listenToDriver(data.driverId);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      stopDriverListener();
+    };
+  }, [rideId, navigation]);
+
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 1.4, duration: 1000, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, [pulseAnim]);
+
+  /* The map used to have no starting region, and this bailed out until the
+     driver's location arrived, leaving it at 0,0 — the sea off West Africa.
+     It now starts on the pickup and fits without the driver if needed. */
+  const recenterMap = () => {
+    if (!rideData) return;
+    const coords = validCoords(rideData.pickupLocation, rideData.dropoffLocation, driverLocation);
+    if (!coords.length) return;
+    mapRef.current?.fitToCoordinates(coords, {
+      edgePadding: { top: 120, right: 60, bottom: 380, left: 60 },
+      animated: true,
+    });
+  };
+
+  const hasFitDriver = useRef(false);
+  useEffect(() => {
+    if (!rideData || !driverLocation || hasFitDriver.current) return;
+    hasFitDriver.current = true;
+    recenterMap();
+  }, [rideData, driverLocation]);
 
   const handleChat = () => {
     navigation.navigate('ChatScreen', {
@@ -47,77 +169,13 @@ export default function RideTrackingScreen() {
       currentUser: { uid: rideData.riderId },
       userType: 'rider',
       otherUserName: driverData?.fullName || 'Driver',
-      otherUserPhoto: driverData?.photoURL,
+      otherUserPhoto: driverData?.selfieUrl,
     });
   };
 
-  /* ================= RIDE LISTENER ================= */
- const hasNavigatedToProgress = useRef(false);
- // One driver listener at a time. Previously a new one was opened on every
- // ride update and never closed.
- const driverUnsubRef = useRef(null);
- const listeningDriverId = useRef(null);
-
-useEffect(() => {
-  const rideRef = doc(db, 'rides', rideId);
-
-  const stopDriverListener = () => {
-    if (driverUnsubRef.current) {
-      driverUnsubRef.current();
-      driverUnsubRef.current = null;
-    }
-    listeningDriverId.current = null;
-  };
-
-  const unsubscribe = onSnapshot(rideRef, (snap) => {
-    if (!snap.exists()) return;
-    if (hasNavigatedToProgress.current) return;
-
-    const data = snap.data();
-    setRideData(data);
-
-    // ✅ Auto-navigate when trip starts
-    if (data.status === 'ongoing') {
-      hasNavigatedToProgress.current = true;
-      navigation.replace('RideInProgress', { rideId });
-      return; // stop processing, unmounting anyway
-    }
-
-    // Driver gave the job back: return to the searching screen.
-    if (data.status === 'searching') {
-      hasNavigatedToProgress.current = true;
-      Alert.alert('Finding you another driver', 'Your driver had to cancel. We are looking for a new one now.');
-      navigation.replace('RideRequest', { rideId });
-      return;
-    }
-
-    if (data.status === 'cancelled' || data.status === 'canceled') {
-      hasNavigatedToProgress.current = true;
-      if (data.cancelledBy === 'driver') {
-        Alert.alert('Ride cancelled', 'Your driver cancelled this ride. You have not been charged.');
-      }
-      navigation.popToTop();
-      return;
-    }
-
-    if (data.driverId && listeningDriverId.current !== data.driverId) {
-      stopDriverListener();
-      listeningDriverId.current = data.driverId;
-      driverUnsubRef.current = listenToDriver(data.driverId);
-    }
-  });
-
-  return () => {
-    unsubscribe();
-    stopDriverListener();
-  };
-}, []);
-
-  /* ================= CALL =================
-     Masked call through Twilio. Neither side sees a real number. */
+  // Masked call through Twilio. Neither side sees a real number.
   const handleCall = () => confirmMaskedCall(rideId, 'your driver');
 
-  /* ================= CANCEL (before pickup) ================= */
   const handleCancelRide = () => {
     Alert.alert('Cancel this ride?', 'Your driver will be told straight away.', [
       { text: 'Keep ride', style: 'cancel' },
@@ -131,7 +189,6 @@ useEffect(() => {
               cancelledBy: 'rider',
               cancelledAt: serverTimestamp(),
             });
-            // Clear the rider's active ride so the app doesn't reopen it.
             const uid = getAuth().currentUser?.uid;
             if (uid) {
               updateDoc(doc(db, 'riders', uid), { currentRideId: null }).catch((e) =>
@@ -140,543 +197,250 @@ useEffect(() => {
             }
           } catch (error) {
             console.log('Error cancelling ride:', error);
-            Alert.alert('Error', 'Could not cancel the ride. Please try again.');
+            Alert.alert('Could not cancel', 'Please try again.');
           }
         },
       },
     ]);
   };
 
-  /* ================= DRIVER LISTENER ================= */
-  const listenToDriver = (driverId) => {
-    const driverRef = doc(db, 'drivers', driverId);
-
-    return onSnapshot(driverRef, (snap) => {
-      if (!snap.exists()) return;
-
-      const driver = snap.data();
-      setDriverData(driver);
-
-      if (driver.location) {
-        setDriverLocation({
-          latitude: driver.location.latitude,
-          longitude: driver.location.longitude,
-        });
-      }
-    });
-  };
-
-  /* ================= PULSE ANIMATION ================= */
-  useEffect(() => {
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.4, duration: 1000, useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
-      ])
-    );
-    pulse.start();
-    return () => pulse.stop();
-  }, []);
-
-  /* ================= MAP FIT ================= */
-  // The map used to have no starting region, and this function bailed out
-  // until the driver's location arrived. The map sat at 0,0, which is the
-  // sea off West Africa. It now starts on the pickup and fits without the
-  // driver if needed.
-  const recenterMap = () => {
-    if (!rideData) return;
-
-    const { pickupLocation, dropoffLocation } = rideData;
-    const coords = [pickupLocation, dropoffLocation, driverLocation].filter(
-      (c) => c && typeof c.latitude === 'number' && typeof c.longitude === 'number'
-    );
-    if (coords.length === 0) return;
-
-    mapRef.current?.fitToCoordinates(coords, {
-      edgePadding: { top: 120, right: 60, bottom: 420, left: 60 },
-      animated: true,
-    });
-  };
-
-  // Fit once when the driver's position first comes in.
-  const hasFitDriver = useRef(false);
-  useEffect(() => {
-    if (!rideData || !driverLocation || hasFitDriver.current) return;
-    hasFitDriver.current = true;
-    recenterMap();
-  }, [rideData, driverLocation]);
-
   if (!rideData) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.loadingOverlay}>
-          <ActivityIndicator size="large" color={PRIMARY} />
-          <Text style={styles.loadingText}>Loading your ride…</Text>
-        </View>
+      <SafeAreaView style={[styles.container, styles.centered]}>
+        <ActivityIndicator size="large" color={COLORS.green} />
+        <Text style={[TYPE.small, { marginTop: SPACE[4] }]}>Loading your ride…</Text>
       </SafeAreaView>
     );
   }
 
   const { pickupLocation, dropoffLocation, status } = rideData;
+  const state = STATUS[status] || STATUS.accepted;
+  const beforePickup = status === 'accepted' || status === 'arrived';
 
-  const getStatusConfig = () => {
-    switch (status) {
-      case 'accepted':
-        return { label: 'Driver is on the way', color: SECONDARY, icon: 'navigate' };
-      case 'arrived':
-        return { label: 'Driver has arrived', color: PRIMARY, icon: 'location' };
-      case 'ongoing':
-        return { label: 'Ride in progress', color: PRIMARY, icon: 'car-sport' };
-      default:
-        return { label: 'Tracking ride', color: SECONDARY, icon: 'navigate' };
-    }
-  };
+  // While the driver is still coming to you, the line that matters is theirs
+  // to the pickup — not yours to the destination.
+  const routeFrom = beforePickup && driverLocation ? driverLocation : pickupLocation;
+  const routeTo = beforePickup ? pickupLocation : dropoffLocation;
+  const drawRoute =
+    isCoord(routeFrom) &&
+    isCoord(routeTo) &&
+    !(routeFrom.latitude === routeTo.latitude && routeFrom.longitude === routeTo.longitude);
 
-  const statusConfig = getStatusConfig();
+  // Without this the map falls back to 0,0 and opens on the Gulf of Guinea.
+  const initialRegion = regionCovering([pickupLocation, dropoffLocation], 0.05);
+
+  const rating = driverData?.rating ? Number(driverData.rating).toFixed(1) : null;
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* MAP */}
+      {initialRegion ? (
       <MapView
         ref={mapRef}
-        style={styles.map}
+        provider={PROVIDER_GOOGLE}
+        style={StyleSheet.absoluteFill}
         onMapReady={recenterMap}
-        initialRegion={{
-          latitude: pickupLocation.latitude,
-          longitude: pickupLocation.longitude,
-          latitudeDelta: 0.05,
-          longitudeDelta: 0.05,
-        }}
+        initialRegion={initialRegion}
+        showsCompass={false}
+        toolbarEnabled={false}
       >
-        <Marker coordinate={pickupLocation}>
-          <View style={styles.originMarker}>
-            <View style={styles.originDot} />
-            <View style={styles.originRing} />
-          </View>
-        </Marker>
+        {isCoord(pickupLocation) ? (
+          <Marker coordinate={pickupLocation} anchor={{ x: 0.5, y: 0.5 }}>
+            <View style={styles.pickupMarker} />
+          </Marker>
+        ) : null}
 
-        <Marker coordinate={dropoffLocation}>
-          <View style={styles.destMarker}>
-            <Ionicons name="location" size={28} color={SECONDARY} />
-          </View>
-        </Marker>
+        {isCoord(dropoffLocation) ? (
+          <Marker coordinate={dropoffLocation} anchor={{ x: 0.5, y: 1 }}>
+            <Ionicons name="location" size={30} color={COLORS.navy} />
+          </Marker>
+        ) : null}
 
-        {driverLocation && (
-          <Marker coordinate={driverLocation}>
+        {driverLocation ? (
+          <Marker coordinate={driverLocation} anchor={{ x: 0.5, y: 0.5 }} flat>
             <View style={styles.driverMarkerWrap}>
-              <Animated.View style={[styles.driverPulse, { transform: [{ scale: pulseAnim }] }]} />
+              <Animated.View
+                style={[styles.driverPulse, { transform: [{ scale: pulseAnim }] }]}
+              />
               <View style={styles.driverMarker}>
-                <Ionicons name="car" size={16} color="#fff" />
+                <Ionicons name="car-sport" size={16} color={COLORS.white} />
               </View>
             </View>
           </Marker>
-        )}
+        ) : null}
 
-        <MapViewDirections
-          origin={pickupLocation}
-          destination={dropoffLocation}
-          apikey={GOOGLE_MAPS_API_KEY}
-          strokeWidth={5}
-          strokeColor={PRIMARY}
-        />
+        {drawRoute ? (
+          <MapViewDirections
+            origin={routeFrom}
+            destination={routeTo}
+            apikey={GOOGLE_MAPS_API_KEY}
+            strokeWidth={4}
+            strokeColor={COLORS.green}
+          />
+        ) : null}
       </MapView>
-
-      {/* TOP BAR */}
-      <View style={styles.topBar}>
-        <TouchableOpacity style={styles.iconButton} onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={22} color={DARK} />
-        </TouchableOpacity>
-
-        <View style={styles.statusPill}>
-          <View style={[styles.statusDot, { backgroundColor: statusConfig.color }]} />
-          <Text style={styles.statusText}>{statusConfig.label}</Text>
+      ) : (
+        <View style={StyleSheet.absoluteFill}>
+          <MapUnavailable note="We do not have map coordinates for this trip." />
         </View>
+      )}
 
-        <View style={{ flexDirection: 'row', gap: 10 }}>
+      <View style={styles.topBar}>
+        <IconButton icon="chevron-back" onPress={() => navigation.goBack()} accessibilityLabel="Go back" />
+        <View style={styles.topRight}>
           <SafetyButton role="rider" rideId={rideId} />
-          <TouchableOpacity style={styles.iconButton} onPress={recenterMap}>
-            <Ionicons name="locate" size={22} color={DARK} />
-          </TouchableOpacity>
+          <IconButton icon="locate" onPress={recenterMap} accessibilityLabel="Recentre the map" />
         </View>
       </View>
 
-      {/* BOTTOM SHEET */}
-      <View style={styles.bottomSheet}>
-        <View style={styles.sheetHandle} />
+      <View style={styles.sheet}>
+        <View style={styles.grabber} />
 
-        {/* Status Header */}
-        <View style={styles.statusHeader}>
-          <View style={[styles.statusIconBox, { backgroundColor: `${statusConfig.color}15` }]}>
-            <Ionicons name={statusConfig.icon} size={22} color={statusConfig.color} />
-          </View>
-          <View>
-            <Text style={styles.statusTitle}>{statusConfig.label}</Text>
-            <Text style={styles.statusSub}>
-              {status === 'accepted' && 'Approaching pickup location'}
-              {status === 'arrived' && 'Meet your driver at the pickup spot'}
-              {status === 'ongoing' && 'Heading to your destination'}
-            </Text>
-            {waiting && (
-              <>
-                <Text style={[styles.statusSub, { color: waiting.inFreeTime ? SECONDARY : '#D97706', fontWeight: '700', marginTop: 2 }]}>
-                  {waiting.label}
-                </Text>
-                <Text style={styles.statusSub}>{waiting.detail}</Text>
-              </>
-            )}
-          </View>
-        </View>
+        <Text style={TYPE.title}>{state.title}</Text>
+        <Text style={[TYPE.small, { marginTop: SPACE[1] }]}>{state.detail}</Text>
 
-        {/* Pickup Location */}
-        <View style={styles.locationCard}>
-          <View style={styles.locationRow}>
-            <View style={styles.locationDotContainer}>
-              <View style={[styles.routeDot, { backgroundColor: PRIMARY }]} />
-            </View>
-            <View style={styles.locationTextBox}>
-              <Text style={styles.locationLabel}>Pickup</Text>
-              <Text style={styles.locationText} numberOfLines={1}>
-                {pickupLocation.address}
-              </Text>
-            </View>
-          </View>
-        </View>
-
-        {/* Driver Card */}
-        {driverData && (
-          <View style={styles.driverCard}>
-            <Image
-              source={{ uri: driverData.selfieUrl }}
-              style={styles.driverImage}
-            />
-
-            <View style={styles.driverInfo}>
-              <Text style={styles.driverName}>{driverData.fullName}</Text>
-              <Text style={styles.driverSub}>{driverData.makeModel}</Text>
-              <View style={styles.plateBox}>
-                <Text style={styles.plate}>{driverData.registrationNumber}</Text>
-              </View>
-            </View>
-
-            <View style={styles.actionButtons}>
-              <TouchableOpacity style={styles.actionBtn} onPress={handleChat}>
-                <Ionicons name="chatbubble-ellipses" size={18} color={SECONDARY} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.actionBtn}
-                onPress={handleCall}
-              >
-                <Ionicons name="call" size={18} color={SECONDARY} />
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
-        {/* The trip screen opens by itself when the driver starts the ride.
-            Opening it early showed "Heading to destination" before pickup
-            and left two copies of the screen open. */}
-        {(status === 'accepted' || status === 'arrived') && (
-          <TouchableOpacity
-            style={[styles.primaryButton, { backgroundColor: '#fff', borderWidth: 1, borderColor: '#DC2626' }]}
-            onPress={handleCancelRide}
+        {waiting ? (
+          <View
+            style={[
+              styles.waiting,
+              waiting.inFreeTime ? styles.waitingFree : styles.waitingCharged,
+            ]}
           >
-            <Text style={[styles.primaryText, { color: '#DC2626' }]}>Cancel ride</Text>
+            <Ionicons
+              name="time-outline"
+              size={18}
+              color={waiting.inFreeTime ? COLORS.blue : COLORS.amber}
+            />
+            <View style={{ flex: 1 }}>
+              <Text
+                style={[
+                  styles.waitingLabel,
+                  { color: waiting.inFreeTime ? COLORS.blue : COLORS.amber },
+                ]}
+              >
+                {waiting.label}
+              </Text>
+              <Text style={TYPE.small}>{waiting.detail}</Text>
+            </View>
+          </View>
+        ) : null}
+
+        {driverData ? (
+          <View style={styles.driverCard}>
+            <Avatar uri={driverData.selfieUrl} name={driverData.fullName} size={52} />
+
+            <View style={{ flex: 1 }}>
+              <Text style={styles.driverName} numberOfLines={1}>
+                {driverData.fullName || 'Your driver'}
+              </Text>
+              <Text style={TYPE.small} numberOfLines={1}>
+                {[driverData.vehicleColor, driverData.makeModel].filter(Boolean).join(' ') ||
+                  'Vehicle'}
+                {rating ? ` · ★ ${rating}` : ''}
+              </Text>
+              {driverData.registrationNumber ? (
+                <View style={styles.plate}>
+                  <Text style={styles.plateText}>
+                    {driverData.registrationNumber.toUpperCase()}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+
+            <View style={styles.contact}>
+              <IconButton icon="chatbubble-ellipses" onPress={handleChat} size={42} accessibilityLabel="Message your driver" />
+              <IconButton icon="call" onPress={handleCall} size={42} tone="dark" accessibilityLabel="Call your driver" />
+            </View>
+          </View>
+        ) : null}
+
+        <View style={styles.journey}>
+          <RouteLine compact pickup={pickupLocation.address} dropoff={dropoffLocation.address} />
+        </View>
+
+        {/* The trip screen opens by itself when the driver starts the ride. */}
+        {beforePickup ? (
+          <TouchableOpacity style={styles.cancel} onPress={handleCancelRide} activeOpacity={0.8}>
+            <Text style={styles.cancelText}>Cancel ride</Text>
           </TouchableOpacity>
-        )}
+        ) : null}
       </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  map: { ...StyleSheet.absoluteFillObject },
+  container: { flex: 1, backgroundColor: COLORS.white },
+  centered: { alignItems: 'center', justifyContent: 'center' },
 
-  /* Loading */
-  loadingOverlay: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#fff',
+  pickupMarker: {
+    width: 16, height: 16, borderRadius: 8,
+    backgroundColor: COLORS.green, borderWidth: 3, borderColor: COLORS.white,
   },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 15,
-    color: '#888',
-    fontWeight: '500',
-  },
-
-  /* Top Bar */
-  topBar: {
-    position: 'absolute',
-    top: 50,
-    left: 16,
-    right: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  iconButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  statusPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 4,
-    gap: 8,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  statusText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: DARK,
-  },
-
-  /* Markers */
-  originMarker: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  originDot: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: PRIMARY,
-    borderWidth: 3,
-    borderColor: '#fff',
-  },
-  originRing: {
-    position: 'absolute',
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 2,
-    borderColor: PRIMARY,
-    opacity: 0.3,
-  },
-  destMarker: {
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 4,
-  },
-  driverMarkerWrap: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  driverMarkerWrap: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center' },
   driverPulse: {
-    position: 'absolute',
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(121,180,49,0.3)',
+    position: 'absolute', width: 46, height: 46, borderRadius: 23,
+    backgroundColor: COLORS.navy, opacity: 0.18,
   },
   driverMarker: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: PRIMARY,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 3,
-    borderColor: '#fff',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 4,
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: COLORS.navy,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: COLORS.white,
   },
 
-  /* Bottom Sheet */
-  bottomSheet: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingTop: 12,
-    paddingHorizontal: 20,
-    paddingBottom: 30,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    elevation: 20,
+  topBar: {
+    position: 'absolute', top: SPACE[3], left: SPACE[5], right: SPACE[5],
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
   },
-  sheetHandle: {
-    alignSelf: 'center',
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#ddd',
-    marginBottom: 16,
+  topRight: { flexDirection: 'row', gap: SPACE[2] },
+
+  sheet: {
+    position: 'absolute', left: 0, right: 0, bottom: 0,
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl,
+    paddingHorizontal: SPACE[5], paddingTop: SPACE[3], paddingBottom: SPACE[8],
+    ...SHADOW.sheet,
+  },
+  grabber: {
+    width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.line,
+    alignSelf: 'center', marginBottom: SPACE[5],
   },
 
-  /* Status Header */
-  statusHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    marginBottom: 16,
+  waiting: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
+    borderRadius: RADIUS.md, borderWidth: StyleSheet.hairlineWidth,
+    padding: SPACE[3], marginTop: SPACE[4],
   },
-  statusIconBox: {
-    width: 48,
-    height: 48,
-    borderRadius: 14,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  statusTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: DARK,
-  },
-  statusSub: {
-    fontSize: 13,
-    color: '#888',
-    marginTop: 2,
-  },
+  waitingFree: { backgroundColor: COLORS.blueSoft, borderColor: '#BFD3EC' },
+  waitingCharged: { backgroundColor: COLORS.amberSoft, borderColor: '#FCD34D' },
+  waitingLabel: { fontSize: 14, fontWeight: '700' },
 
-  /* Location Card */
-  locationCard: {
-    backgroundColor: BG,
-    padding: 14,
-    borderRadius: 16,
-    marginBottom: 14,
-  },
-  locationRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  locationDotContainer: {
-    width: 20,
-    alignItems: 'center',
-    marginRight: 10,
-  },
-  routeDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-  },
-  locationTextBox: {
-    flex: 1,
-  },
-  locationLabel: {
-    fontSize: 11,
-    color: '#999',
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 2,
-  },
-  locationText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: DARK,
-  },
-
-  /* Driver Card */
   driverCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: BG,
-    padding: 14,
-    borderRadius: 16,
-    marginBottom: 16,
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
+    marginTop: SPACE[5], paddingTop: SPACE[5],
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
   },
-  driverImage: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    marginRight: 14,
-    borderWidth: 2,
-    borderColor: '#fff',
-  },
-  driverInfo: {
-    flex: 1,
-  },
-  driverName: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: DARK,
-  },
-  driverSub: {
-    fontSize: 13,
-    color: '#888',
-    marginTop: 2,
-  },
-  plateBox: {
-    alignSelf: 'flex-start',
-    backgroundColor: '#fff',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-    marginTop: 6,
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-  },
+  driverName: { fontSize: 17, fontWeight: '700', color: COLORS.navy, letterSpacing: -0.3 },
   plate: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: DARK,
-    letterSpacing: 1,
+    alignSelf: 'flex-start', marginTop: SPACE[2],
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.sm,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.line,
+    paddingHorizontal: SPACE[2], paddingVertical: 3,
   },
-  actionButtons: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  actionBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#eee',
+  plateText: { fontSize: 13, fontWeight: '800', color: COLORS.ink, letterSpacing: 1 },
+  contact: { flexDirection: 'row', gap: SPACE[2] },
+
+  journey: {
+    marginTop: SPACE[5], paddingTop: SPACE[5],
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
   },
 
-  /* Primary Button */
-  primaryButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: PRIMARY,
-    paddingVertical: 16,
-    borderRadius: 16,
-    gap: 8,
+  cancel: {
+    minHeight: 50, marginTop: SPACE[5],
+    alignItems: 'center', justifyContent: 'center',
+    borderRadius: RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.lineStrong,
   },
-  primaryText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
+  cancelText: { fontSize: 15, fontWeight: '700', color: COLORS.red },
 });

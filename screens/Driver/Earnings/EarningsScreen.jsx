@@ -113,13 +113,13 @@ const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
     return (
       <View style={styles.txRow}>
         <View style={[styles.txIcon, { backgroundColor: isPositive ? COLORS.greenSoft : COLORS.blueSoft }]}>
-          <Ionicons name={icon} size={18} color={isPositive ? '#3F6F12' : COLORS.blue} />
+          <Ionicons name={icon} size={18} color={isPositive ? COLORS.success : COLORS.blue} />
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.txTitle} numberOfLines={1}>{title}</Text>
           <Text style={TYPE.small}>{formatDate(item.createdAt)}</Text>
         </View>
-        <Text style={[styles.txAmount, { color: isPositive ? '#3F6F12' : COLORS.ink }]}>
+        <Text style={[styles.txAmount, { color: isPositive ? COLORS.success : COLORS.ink }]}>
           {isPositive ? '+' : '-'}{money(Math.abs(amount))}
         </Text>
       </View>
@@ -234,9 +234,9 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     padding: 22,
   },
-  balanceLabel: { fontSize: 14, fontWeight: '600', color: '#C9D6EA' },
+  balanceLabel: { fontSize: 14, fontWeight: '600', color: COLORS.onDark },
   balanceValue: { fontSize: 40, fontWeight: '800', color: COLORS.white, letterSpacing: -1, marginTop: 4 },
-  balanceSub: { fontSize: 13, color: '#C9D6EA', marginTop: 4 },
+  balanceSub: { fontSize: 13, color: COLORS.onDark, marginTop: 4 },
   withdrawBtn: { marginTop: 18 },
   stats: { flexDirection: 'row', gap: 10, marginTop: 12 },
   stat: { flex: 1, padding: 12 },

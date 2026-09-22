@@ -14,9 +14,10 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import nativeAuth from "@react-native-firebase/auth";
 import { setConfirmation } from "../../store/phoneAuthStore";
+import { COLORS, RADIUS } from '../../components/ui/kit';
 
-const PRIMARY = "#79B531";
-const DARK = "#111827";
+const PRIMARY = COLORS.green;
+const DARK = COLORS.ink;
 
 const UK_DIAL_CODE = "+44";
 const UK_LOCAL_LENGTH = 10; // UK mobile: 7xxxxxxxxx (the leading 0 is dropped)
@@ -103,7 +104,7 @@ export default function PhoneLoginScreen({ navigation }) {
             ref={inputRef}
             style={styles.input}
             placeholder="7700 900123"
-            placeholderTextColor="#9ca3af"
+            placeholderTextColor={COLORS.faint}
             keyboardType="number-pad"
             textContentType="telephoneNumber"
             autoComplete="tel"
@@ -126,7 +127,7 @@ export default function PhoneLoginScreen({ navigation }) {
           disabled={!canSubmit || loading}
         >
           {loading ? (
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator color={COLORS.white} />
           ) : (
             <Text style={styles.buttonText}>Send Verification Code</Text>
           )}
@@ -137,16 +138,16 @@ export default function PhoneLoginScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
+  container: { flex: 1, backgroundColor: COLORS.white },
   innerContainer: { flex: 1, paddingHorizontal: 25, paddingTop: 20 },
   backBtn: { marginBottom: 30 },
   title: { fontSize: 34, fontWeight: "bold", color: DARK, marginBottom: 10 },
-  subtitle: { fontSize: 16, color: "#6b7280", marginBottom: 40, lineHeight: 22 },
+  subtitle: { fontSize: 16, color: COLORS.muted, marginBottom: 40, lineHeight: 22 },
   inputContainer: {
     flexDirection: "row",
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "#d1d5db",
+    borderColor: COLORS.lineStrong,
     borderRadius: 12,
     paddingHorizontal: 15,
     height: 60,
@@ -161,20 +162,20 @@ const styles = StyleSheet.create({
   divider: {
     width: 1,
     height: 28,
-    backgroundColor: "#d1d5db",
+    backgroundColor: COLORS.lineStrong,
     marginHorizontal: 12,
   },
   input: { flex: 1, fontSize: 18, color: DARK, letterSpacing: 0.5 },
-  hint: { fontSize: 13, color: "#9ca3af", marginTop: 8, marginLeft: 4 },
+  hint: { fontSize: 13, color: COLORS.faint, marginTop: 8, marginLeft: 4 },
   button: {
     backgroundColor: PRIMARY,
     paddingVertical: 20,
-    borderRadius: 30,
+    borderRadius: RADIUS.md,
     alignItems: "center",
     marginBottom: 15,
   },
   buttonDisabled: {
     opacity: 0.5,
   },
-  buttonText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
+  buttonText: { color: COLORS.white, fontSize: 18, fontWeight: "bold" },
 });

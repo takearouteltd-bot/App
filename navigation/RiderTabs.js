@@ -9,9 +9,10 @@ import PaymentsMethodScreen from "../screens/Rider/PaymentMethods/PaymentMethods
 import RiderPaymentStack from "./Rider/RiderPaymentStack";
 import RiderTripsStack from "./Rider/RiderTripsStack";
 import RiderProfileStack from "./Rider/RiderProfileStack";
+import { COLORS } from '../components/ui/kit';
 
 const Tab = createBottomTabNavigator();
-const PRIMARY = "#79B531";
+const PRIMARY = COLORS.green;
 
 export default function RiderTabs() {
   return (

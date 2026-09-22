@@ -14,9 +14,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { db, auth } from "../../config/firebase";
 import { onAuthStateChanged } from "firebase/auth";
+import { COLORS, RADIUS } from '../../components/ui/kit';
 
 const TOTAL_STEPS = 5;
-const PRIMARY = "#79B531";
+const PRIMARY = COLORS.green;
 
 // UK sort code: 6 digits shown as XX-XX-XX.
 const isValidSortCode = (value) => /^\d{2}-\d{2}-\d{2}$/.test(value);
@@ -189,7 +190,7 @@ const handleContinue = async () => {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
+  safe: { flex: 1, backgroundColor: COLORS.white },
   container: { padding: 20, paddingBottom: 40 },
 
   header: {
@@ -243,7 +244,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginBottom: 6,
     marginLeft: 4,
-    color: "#333",
+    color: COLORS.inkSoft,
   },
 
   input: {
@@ -286,7 +287,7 @@ const styles = StyleSheet.create({
   button: {
     backgroundColor: PRIMARY,
     paddingVertical: 16,
-    borderRadius: 30,
+    borderRadius: RADIUS.md,
     alignItems: "center",
     marginTop: 10,
   },

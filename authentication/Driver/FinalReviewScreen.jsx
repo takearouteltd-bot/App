@@ -12,9 +12,10 @@ import {
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { auth, db } from "../../config/firebase";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { COLORS } from '../../components/ui/kit';
 
 const TOTAL_STEPS = 5;
-const PRIMARY = "#79B531";
+const PRIMARY = COLORS.green;
 
 export default function ApplicationSummaryScreen({
   navigation,
@@ -200,8 +201,8 @@ export default function ApplicationSummaryScreen({
             <Switch
               value={termsAccepted}
               onValueChange={setTermsAccepted}
-              trackColor={{ true: PRIMARY, false: "#ccc" }}
-              thumbColor="#fff"
+              trackColor={{ true: PRIMARY, false: COLORS.lineStrong }}
+              thumbColor={COLORS.white}
             />
           </View>
 
@@ -216,8 +217,8 @@ export default function ApplicationSummaryScreen({
             <Switch
               value={gdprAccepted}
               onValueChange={setGdprAccepted}
-              trackColor={{ true: PRIMARY, false: "#ccc" }}
-              thumbColor="#fff"
+              trackColor={{ true: PRIMARY, false: COLORS.lineStrong }}
+              thumbColor={COLORS.white}
             />
           </View>
         </View>
@@ -232,7 +233,7 @@ export default function ApplicationSummaryScreen({
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
+  safe: { flex: 1, backgroundColor: COLORS.white },
   container: {
     flexGrow: 1,
     paddingHorizontal: 25,
@@ -244,10 +245,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: 20,
   },
-  stepText: { fontSize: 14, color: "#6b7280" },
+  stepText: { fontSize: 14, color: COLORS.muted },
   progressBarBg: {
     height: 6,
-    backgroundColor: "#e5e7eb",
+    backgroundColor: COLORS.line,
     borderRadius: 3,
     marginBottom: 20,
   },
@@ -256,18 +257,18 @@ const styles = StyleSheet.create({
     backgroundColor: PRIMARY,
     borderRadius: 3,
   },
-  title: { fontSize: 28, fontWeight: "bold", color: "#111827", marginBottom: 6 },
-  subtitle: { fontSize: 16, color: "#6b7280", marginBottom: 20 },
+  title: { fontSize: 28, fontWeight: "bold", color: COLORS.ink, marginBottom: 6 },
+  subtitle: { fontSize: 16, color: COLORS.muted, marginBottom: 20 },
   card: {
-    backgroundColor: "#f3f4f6",
+    backgroundColor: COLORS.surface,
     borderRadius: 12,
     padding: 15,
     marginBottom: 15,
   },
   cardContent: { flexDirection: "row", alignItems: "center" },
   iconContainer: { width: 50, alignItems: "center" },
-  cardTitle: { fontSize: 18, fontWeight: "bold", color: "#111827" },
-  cardStatus: { fontSize: 14, color: "#6b7280", marginTop: 4 },
+  cardTitle: { fontSize: 18, fontWeight: "bold", color: COLORS.ink },
+  cardStatus: { fontSize: 14, color: COLORS.muted, marginTop: 4 },
   sectionTitle: { fontSize: 16, fontWeight: "700", marginBottom: 12 },
   switchContainer: {
     flexDirection: "row",
@@ -275,7 +276,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: 15,
   },
-  switchText: { fontSize: 14, color: "#111827", flex: 1, marginRight: 10 },
+  switchText: { fontSize: 14, color: COLORS.ink, flex: 1, marginRight: 10 },
   button: {
     backgroundColor: PRIMARY,
     paddingVertical: 16,
@@ -284,5 +285,5 @@ const styles = StyleSheet.create({
     marginTop: 20,
     marginBottom: 30,
   },
-  buttonText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
+  buttonText: { color: COLORS.white, fontSize: 18, fontWeight: "bold" },
 });
