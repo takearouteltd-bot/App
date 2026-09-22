@@ -35,10 +35,11 @@ import {
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { uriToBlob } from "../../../helpers/uploadPicker";
 import { db, auth, storage } from "../../../config/firebase";
+import { COLORS } from '../../../components/ui/kit';
 
-const PRIMARY = "#79B531";
-const SECONDARY = "#235594";
-const BG = "#F8F9FA";
+const PRIMARY = COLORS.green;
+const SECONDARY = COLORS.blue;
+const BG = COLORS.surface;
 
 export default function EditProfileScreen() {
   const navigation = useNavigation();
@@ -380,7 +381,7 @@ export default function EditProfileScreen() {
   if (!user) {
     return (
       <View style={[styles.container, styles.centered]}>
-        <Text style={{ color: "#888" }}>Please sign in to edit your profile</Text>
+        <Text style={{ color: COLORS.muted }}>Please sign in to edit your profile</Text>
       </View>
     );
   }
@@ -395,7 +396,7 @@ export default function EditProfileScreen() {
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={24} color="#fff" />
+          <Ionicons name="arrow-back" size={24} color={COLORS.white} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Personal Information</Text>
         <View style={styles.backBtn} />
@@ -417,9 +418,9 @@ export default function EditProfileScreen() {
               )}
               <View style={styles.cameraOverlay}>
                 {uploadingImage ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={COLORS.white} />
                 ) : (
-                  <Ionicons name="camera" size={18} color="#fff" />
+                  <Ionicons name="camera" size={18} color={COLORS.white} />
                 )}
               </View>
             </View>
@@ -440,7 +441,7 @@ export default function EditProfileScreen() {
                 value={fullName}
                 onChangeText={setFullName}
                 placeholder="Your full name"
-                placeholderTextColor="#bbb"
+                placeholderTextColor={COLORS.faint}
               />
             </View>
             {fullName !== originalData.fullName && (
@@ -450,7 +451,7 @@ export default function EditProfileScreen() {
                 disabled={savingField === "name"}
               >
                 {savingField === "name" ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={COLORS.white} />
                 ) : (
                   <Text style={styles.saveBtnText}>Save Name</Text>
                 )}
@@ -489,7 +490,7 @@ export default function EditProfileScreen() {
                     value={email}
                     onChangeText={setEmail}
                     placeholder="your@email.com"
-                    placeholderTextColor="#bbb"
+                    placeholderTextColor={COLORS.faint}
                     keyboardType="email-address"
                     autoCapitalize="none"
                     autoCorrect={false}
@@ -502,7 +503,7 @@ export default function EditProfileScreen() {
                     disabled={savingField === "email"}
                   >
                     {savingField === "email" ? (
-                      <ActivityIndicator size="small" color="#fff" />
+                      <ActivityIndicator size="small" color={COLORS.white} />
                     ) : (
                       <Text style={styles.saveBtnText}>Send Verification Email</Text>
                     )}
@@ -525,7 +526,7 @@ export default function EditProfileScreen() {
       value={phoneNumber}
       onChangeText={setPhoneNumber}
       placeholder="+44 312 3456789"
-      placeholderTextColor="#bbb"
+      placeholderTextColor={COLORS.faint}
       keyboardType="phone-pad"
     />
   </View>
@@ -536,7 +537,7 @@ export default function EditProfileScreen() {
       disabled={savingField === "phone"}
     >
       {savingField === "phone" ? (
-        <ActivityIndicator size="small" color="#fff" />
+        <ActivityIndicator size="small" color={COLORS.white} />
       ) : (
         <Text style={styles.saveBtnText}>
           {originalData.phoneNumber ? "Update Phone" : "Add Phone Number"}
@@ -633,7 +634,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 18,
     fontWeight: "700",
-    color: "#fff",
+    color: COLORS.white,
   },
 
   scrollContent: {
@@ -653,7 +654,7 @@ const styles = StyleSheet.create({
     height: 110,
     borderRadius: 55,
     borderWidth: 4,
-    borderColor: "#fff",
+    borderColor: COLORS.white,
   },
   avatarPlaceholder: {
     backgroundColor: "#E8E8E8",
@@ -676,12 +677,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 3,
-    borderColor: "#fff",
+    borderColor: COLORS.white,
   },
   photoHint: {
     marginTop: 10,
     fontSize: 13,
-    color: "#999",
+    color: COLORS.faint,
   },
 
   // Form
@@ -694,7 +695,7 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 12,
     fontWeight: "700",
-    color: "#666",
+    color: COLORS.muted,
     marginBottom: 8,
     textTransform: "uppercase",
     letterSpacing: 0.8,
@@ -702,7 +703,7 @@ const styles = StyleSheet.create({
   inputWrapper: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     borderRadius: 12,
     paddingHorizontal: 14,
     shadowColor: "#000",
@@ -717,7 +718,7 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     fontSize: 15,
-    color: "#1a1a1a",
+    color: COLORS.ink,
     paddingVertical: 14,
   },
   saveBtn: {
@@ -728,7 +729,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   saveBtnText: {
-    color: "#fff",
+    color: COLORS.white,
     fontSize: 14,
     fontWeight: "600",
   },
@@ -764,7 +765,7 @@ const styles = StyleSheet.create({
   },
   pendingNote: {
     fontSize: 12,
-    color: "#888",
+    color: COLORS.muted,
     fontStyle: "italic",
     marginBottom: 12,
   },
@@ -779,7 +780,7 @@ const styles = StyleSheet.create({
 
   // Phone Verification
   verificationCard: {
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     borderRadius: 12,
     padding: 16,
     shadowColor: "#000",
@@ -796,7 +797,7 @@ const styles = StyleSheet.create({
   codeInput: {
     fontSize: 32,
     fontWeight: "700",
-    color: "#1a1a1a",
+    color: COLORS.ink,
     letterSpacing: 8,
     textAlign: "center",
     paddingVertical: 10,
@@ -818,7 +819,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#F0F0F0",
   },
   cancelBtnText: {
-    color: "#666",
+    color: COLORS.muted,
     fontSize: 14,
     fontWeight: "600",
   },
@@ -854,7 +855,7 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   modalContent: {
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     borderRadius: 20,
     padding: 24,
     width: "100%",
@@ -873,23 +874,23 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 18,
     fontWeight: "700",
-    color: "#1a1a1a",
+    color: COLORS.ink,
     marginBottom: 8,
   },
   modalSubtitle: {
     fontSize: 13,
-    color: "#666",
+    color: COLORS.muted,
     marginBottom: 20,
     textAlign: "center",
     lineHeight: 18,
   },
   modalInput: {
-    backgroundColor: "#F5F5F5",
+    backgroundColor: COLORS.surface,
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 14,
     fontSize: 15,
-    color: "#1a1a1a",
+    color: COLORS.ink,
     width: "100%",
     marginBottom: 16,
   },
@@ -908,7 +909,7 @@ const styles = StyleSheet.create({
     backgroundColor: PRIMARY,
   },
   modalBtnPrimaryText: {
-    color: "#fff",
+    color: COLORS.white,
     fontWeight: "700",
     fontSize: 14,
   },
@@ -916,7 +917,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#F0F0F0",
   },
   modalBtnSecondaryText: {
-    color: "#666",
+    color: COLORS.muted,
     fontWeight: "600",
     fontSize: 14,
   },

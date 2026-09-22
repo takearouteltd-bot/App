@@ -14,6 +14,7 @@ import { getFirestore, collection, query, where, onSnapshot, doc, getDoc } from 
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getAuth } from 'firebase/auth';
 import { currencySymbol } from '../../utils/appConfig';
+import { COLORS } from '../../components/ui/kit';
 
 export default function AdminPayoutTestScreen() {
   const db = getFirestore();
@@ -150,7 +151,7 @@ export default function AdminPayoutTestScreen() {
             disabled={processingId === item.id}
           >
             {processingId === item.id ? (
-              <ActivityIndicator color="#fff" size="small" />
+              <ActivityIndicator color={COLORS.white} size="small" />
             ) : (
               <Text style={styles.btnText}>Mark Paid</Text>
             )}
@@ -171,7 +172,7 @@ export default function AdminPayoutTestScreen() {
   if (loading) {
     return (
       <View style={[styles.container, styles.center]}>
-        <ActivityIndicator size="large" color="#235594" />
+        <ActivityIndicator size="large" color={COLORS.blue} />
       </View>
     );
   }
@@ -199,14 +200,14 @@ export default function AdminPayoutTestScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: COLORS.surface,
   },
   center: {
     justifyContent: 'center',
     alignItems: 'center',
   },
   header: {
-    backgroundColor: '#235594',
+    backgroundColor: COLORS.blue,
     paddingTop: 50,
     paddingHorizontal: 16,
     paddingBottom: 16,
@@ -214,7 +215,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#fff',
+    color: COLORS.white,
   },
   count: {
     fontSize: 14,
@@ -222,7 +223,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   payoutCard: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderRadius: 16,
     padding: 16,
     marginBottom: 12,
@@ -235,32 +236,32 @@ const styles = StyleSheet.create({
   },
   driverId: {
     fontSize: 14,
-    color: '#6B7280',
+    color: COLORS.muted,
   },
   amount: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#235594',
+    color: COLORS.blue,
   },
   bankDetails: {
-    backgroundColor: '#F3F4F6',
+    backgroundColor: COLORS.surface,
     borderRadius: 8,
     padding: 12,
     marginBottom: 12,
   },
   bankText: {
     fontSize: 13,
-    color: '#374151',
+    color: COLORS.inkSoft,
     marginBottom: 2,
   },
   date: {
     fontSize: 12,
-    color: '#9CA3AF',
+    color: COLORS.faint,
     marginBottom: 12,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: COLORS.line,
     borderRadius: 8,
     padding: 10,
     fontSize: 14,
@@ -272,7 +273,7 @@ const styles = StyleSheet.create({
   },
   completeBtn: {
     flex: 1,
-    backgroundColor: '#79B531',
+    backgroundColor: COLORS.green,
     paddingVertical: 12,
     borderRadius: 8,
     alignItems: 'center',
@@ -281,7 +282,7 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   btnText: {
-    color: '#fff',
+    color: COLORS.white,
     fontWeight: '700',
   },
   rejectBtn: {
@@ -289,15 +290,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#DC2626',
+    borderColor: COLORS.red,
   },
   rejectText: {
-    color: '#DC2626',
+    color: COLORS.red,
     fontWeight: '600',
   },
   empty: {
     textAlign: 'center',
-    color: '#6B7280',
+    color: COLORS.muted,
     marginTop: 40,
     fontSize: 16,
   },

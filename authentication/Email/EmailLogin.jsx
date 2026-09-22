@@ -19,6 +19,7 @@ import {
 } from "firebase/auth";
 import { auth, db } from "../../config/firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
+import { COLORS } from '../../components/ui/kit';
 
 export default function EmailAuthScreen({
   navigation,
@@ -185,7 +186,7 @@ export default function EmailAuthScreen({
             style={styles.backBtn}
             onPress={() => navigation.goBack()}
           >
-            <Ionicons name="arrow-back" size={28} color="#111827" />
+            <Ionicons name="arrow-back" size={28} color={COLORS.ink} />
           </TouchableOpacity>
 
           <Text style={styles.title}>
@@ -229,13 +230,13 @@ export default function EmailAuthScreen({
               <Ionicons
                 name="mail-outline"
                 size={20}
-                color="#9ca3af"
+                color={COLORS.faint}
                 style={styles.inputIcon}
               />
               <TextInput
                 style={styles.input}
                 placeholder="Enter your email"
-                placeholderTextColor="#9ca3af"
+                placeholderTextColor={COLORS.faint}
                 value={email}
                 onChangeText={setEmail}
                 keyboardType="email-address"
@@ -251,13 +252,13 @@ export default function EmailAuthScreen({
               <Ionicons
                 name="lock-closed-outline"
                 size={20}
-                color="#9ca3af"
+                color={COLORS.faint}
                 style={styles.inputIcon}
               />
               <TextInput
                 style={styles.input}
                 placeholder="Enter your password"
-                placeholderTextColor="#9ca3af"
+                placeholderTextColor={COLORS.faint}
                 value={password}
                 onChangeText={setPassword}
                 secureTextEntry={!showPassword}
@@ -268,7 +269,7 @@ export default function EmailAuthScreen({
                 <Ionicons
                   name={showPassword ? "eye-off-outline" : "eye-outline"}
                   size={20}
-                  color="#9ca3af"
+                  color={COLORS.faint}
                 />
               </TouchableOpacity>
             </View>
@@ -281,13 +282,13 @@ export default function EmailAuthScreen({
                 <Ionicons
                   name="lock-closed-outline"
                   size={20}
-                  color="#9ca3af"
+                  color={COLORS.faint}
                   style={styles.inputIcon}
                 />
                 <TextInput
                   style={styles.input}
                   placeholder="Re-enter your password"
-                  placeholderTextColor="#9ca3af"
+                  placeholderTextColor={COLORS.faint}
                   value={confirmPassword}
                   onChangeText={setConfirmPassword}
                   secureTextEntry={!showConfirmPassword}
@@ -304,7 +305,7 @@ export default function EmailAuthScreen({
                         : "eye-outline"
                     }
                     size={20}
-                    color="#9ca3af"
+                    color={COLORS.faint}
                   />
                 </TouchableOpacity>
               </View>
@@ -317,7 +318,7 @@ export default function EmailAuthScreen({
             disabled={loading}
           >
             {loading ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={COLORS.white} />
             ) : (
               <Text style={styles.buttonText}>
                 {isLogin ? "Login" : "Create Account"}
@@ -343,15 +344,15 @@ export default function EmailAuthScreen({
 
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
+  container: { flex: 1, backgroundColor: COLORS.white },
   content: { flexGrow: 1, paddingHorizontal: 25, paddingTop: 20, paddingBottom: 40 },
   backBtn: { marginBottom: 30 },
-  title: { fontSize: 34, fontWeight: "bold", color: "#111827", marginBottom: 8 },
-  subtitle: { fontSize: 15, color: "#6b7280", marginBottom: 30 },
+  title: { fontSize: 34, fontWeight: "bold", color: COLORS.ink, marginBottom: 8 },
+  subtitle: { fontSize: 15, color: COLORS.muted, marginBottom: 30 },
 
   toggleContainer: {
     flexDirection: "row",
-    backgroundColor: "#f3f4f6",
+    backgroundColor: COLORS.surface,
     borderRadius: 12,
     padding: 4,
     marginBottom: 30,
@@ -363,41 +364,41 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   toggleBtnActive: {
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
     shadowRadius: 2,
     elevation: 2,
   },
-  toggleText: { fontSize: 15, fontWeight: "600", color: "#9ca3af" },
-  toggleTextActive: { color: "#79B531" },
+  toggleText: { fontSize: 15, fontWeight: "600", color: COLORS.faint },
+  toggleTextActive: { color: COLORS.green },
 
   inputWrapper: { marginBottom: 18 },
-  label: { fontSize: 14, fontWeight: "600", color: "#374151", marginBottom: 8 },
+  label: { fontSize: 14, fontWeight: "600", color: COLORS.inkSoft, marginBottom: 8 },
   inputContainer: {
     flexDirection: "row",
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "#d1d5db",
+    borderColor: COLORS.lineStrong,
     borderRadius: 12,
     paddingHorizontal: 15,
     height: 56,
     backgroundColor: "#fafafa",
   },
   inputIcon: { marginRight: 10 },
-  input: { flex: 1, fontSize: 15, color: "#111827" },
+  input: { flex: 1, fontSize: 15, color: COLORS.ink },
 
   button: {
-    backgroundColor: "#79B531",
+    backgroundColor: COLORS.green,
     paddingVertical: 18,
     borderRadius: 12,
     alignItems: "center",
     marginBottom: 20,
   },
-  buttonText: { color: "#fff", fontSize: 17, fontWeight: "bold" },
+  buttonText: { color: COLORS.white, fontSize: 17, fontWeight: "bold" },
 
   switchBtn: { alignItems: "center" },
-  switchText: { color: "#6b7280", fontSize: 14 },
-  switchTextBold: { color: "#79B531", fontWeight: "bold" },
+  switchText: { color: COLORS.muted, fontSize: 14 },
+  switchTextBold: { color: COLORS.green, fontWeight: "bold" },
 });

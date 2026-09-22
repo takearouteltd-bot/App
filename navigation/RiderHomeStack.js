@@ -8,6 +8,7 @@ import RideTrackingScreen from "../screens/RideTrack/RideTrackingScreen";
 import RideInProgressScreen from "../screens/RideInProgress/RideInProgressScreen";
 import RiderRideCompletedScreen from "../screens/RideCompleted/RiderRideCompletedScreen";
 import HomeScreen from "../screens/Home/HomeScreen";
+import PickupPickerScreen from "../screens/Home/PickupPickerScreen";
 import ChatScreen from "../screens/Chat/ChatScreen";
 import RiderPaymentStack from "./Rider/RiderPaymentStack";
 
@@ -17,6 +18,7 @@ export default function RiderHomeStack() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="HomeScreen" component={HomeScreen} />
+      <Stack.Screen name="PickupPicker" component={PickupPickerScreen} />
       <Stack.Screen name="DestinationSearch" component={DestinationSearchScreen} />
       <Stack.Screen name="FareEstimation" component={FareEstimationScreen} />
       <Stack.Screen name="AddPayment" component={RiderPaymentStack} />

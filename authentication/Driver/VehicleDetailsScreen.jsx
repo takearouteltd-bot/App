@@ -21,10 +21,11 @@ import {
   isPdfUpload,
   selectUploadAsset,
 } from "../../helpers/uploadPicker";
+import { COLORS } from '../../components/ui/kit';
 
 const TOTAL_STEPS = 5;
-const PRIMARY = "#79B531";
-const DARK = "#1a1a1a";
+const PRIMARY = COLORS.green;
+const DARK = COLORS.ink;
 const VEHICLE_TYPES = [
   {
     id: "RouteMini",
@@ -249,7 +250,7 @@ export default function VehicleDetailsScreen({
         <Ionicons
           name={isUploaded ? "create-outline" : "add-circle-outline"}
           size={22}
-          color={isUploaded ? PRIMARY : "#ccc"}
+          color={isUploaded ? PRIMARY : COLORS.lineStrong}
         />
       </TouchableOpacity>
     );
@@ -409,7 +410,7 @@ export default function VehicleDetailsScreen({
               <MaterialCommunityIcons
                 name="office-building-outline"
                 size={18}
-                color={ownershipType === "company" ? PRIMARY : "#999"}
+                color={ownershipType === "company" ? PRIMARY : COLORS.faint}
                 style={{ marginRight: 6 }}
               />
               <Text
@@ -438,7 +439,7 @@ export default function VehicleDetailsScreen({
               <MaterialCommunityIcons
                 name="car-outline"
                 size={18}
-                color={ownershipType === "private" ? PRIMARY : "#999"}
+                color={ownershipType === "private" ? PRIMARY : COLORS.faint}
                 style={{ marginRight: 6 }}
               />
               <Text
@@ -486,7 +487,7 @@ export default function VehicleDetailsScreen({
             disabled={!isFormComplete()}
           >
             <Text style={styles.buttonText}>Continue</Text>
-            <Ionicons name="arrow-forward" size={18} color="#fff" />
+            <Ionicons name="arrow-forward" size={18} color={COLORS.white} />
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -495,7 +496,7 @@ export default function VehicleDetailsScreen({
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: "#fff" },
+  safe: { flex: 1, backgroundColor: COLORS.white },
   container: { padding: 20, paddingBottom: 40 },
 
   header: {
@@ -509,7 +510,7 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: "#F5F5F5",
+    backgroundColor: COLORS.surface,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -521,7 +522,7 @@ const styles = StyleSheet.create({
 
   progressBarBg: {
     height: 6,
-    backgroundColor: "#eee",
+    backgroundColor: COLORS.line,
     borderRadius: 3,
     marginBottom: 28,
     overflow: "hidden",
@@ -540,7 +541,7 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 14,
-    color: "#888",
+    color: COLORS.muted,
     marginBottom: 24,
   },
 
@@ -552,14 +553,14 @@ const styles = StyleSheet.create({
     color: DARK,
   },
   input: {
-    backgroundColor: "#F8F9FA",
+    backgroundColor: COLORS.surface,
     borderRadius: 14,
     paddingHorizontal: 18,
     paddingVertical: 14,
     fontSize: 16,
     marginBottom: 18,
     borderWidth: 1,
-    borderColor: "#eee",
+    borderColor: COLORS.line,
     color: DARK,
   },
 
@@ -571,14 +572,14 @@ const styles = StyleSheet.create({
   },
   regInput: {
     flex: 1,
-    backgroundColor: "#F8F9FA",
+    backgroundColor: COLORS.surface,
     borderRadius: 14,
     paddingHorizontal: 18,
     paddingVertical: 14,
     fontSize: 18,
     fontWeight: "700",
     borderWidth: 1,
-    borderColor: "#eee",
+    borderColor: COLORS.line,
     color: DARK,
     letterSpacing: 2,
   },
@@ -590,10 +591,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: "#F8F9FA",
+    backgroundColor: COLORS.surface,
     borderRadius: 16,
     borderWidth: 1.5,
-    borderColor: "#eee",
+    borderColor: COLORS.line,
     paddingHorizontal: 14,
     paddingVertical: 14,
   },
@@ -611,7 +612,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 12,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     justifyContent: "center",
     alignItems: "center",
     marginRight: 12,
@@ -659,8 +660,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 14,
     borderWidth: 1.5,
-    borderColor: "#eee",
-    backgroundColor: "#F8F9FA",
+    borderColor: COLORS.line,
+    backgroundColor: COLORS.surface,
   },
   radioOptionSelected: {
     borderColor: PRIMARY,
@@ -671,7 +672,7 @@ const styles = StyleSheet.create({
     height: 18,
     borderRadius: 9,
     borderWidth: 2,
-    borderColor: "#ccc",
+    borderColor: COLORS.lineStrong,
     justifyContent: "center",
     alignItems: "center",
     marginRight: 8,
@@ -685,7 +686,7 @@ const styles = StyleSheet.create({
   radioLabel: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#888",
+    color: COLORS.muted,
   },
   radioLabelSelected: {
     color: PRIMARY,
@@ -700,7 +701,7 @@ const styles = StyleSheet.create({
   },
   sectionSub: {
     fontSize: 13,
-    color: "#888",
+    color: COLORS.muted,
     marginBottom: 16,
   },
   uploadGrid: {
@@ -709,11 +710,11 @@ const styles = StyleSheet.create({
   uploadCard: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     borderRadius: 16,
     padding: 14,
     borderWidth: 1.5,
-    borderColor: "#eee",
+    borderColor: COLORS.line,
     borderStyle: "dashed",
     gap: 14,
   },
@@ -742,7 +743,7 @@ const styles = StyleSheet.create({
     position: "absolute",
     bottom: -4,
     right: -4,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     borderRadius: 10,
   },
   uploadInfo: {
@@ -770,10 +771,10 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   buttonDisabled: {
-    backgroundColor: "#ccc",
+    backgroundColor: COLORS.lineStrong,
   },
   buttonText: {
-    color: "#fff",
+    color: COLORS.white,
     fontSize: 16,
     fontWeight: "700",
   },

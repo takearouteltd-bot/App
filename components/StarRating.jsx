@@ -31,7 +31,7 @@ export default function StarRating({ rideId, who, existing, prompt, style }) {
       <View style={styles.row}>
         {[1, 2, 3, 4, 5].map((n) => (
           <TouchableOpacity key={n} onPress={() => rate(n)} disabled={saved} activeOpacity={0.7} hitSlop={6}>
-            <Ionicons name={n <= stars ? 'star' : 'star-outline'} size={38} color={n <= stars ? '#F5B300' : COLORS.line} />
+            <Ionicons name={n <= stars ? 'star' : 'star-outline'} size={38} color={n <= stars ? COLORS.star : COLORS.line} />
           </TouchableOpacity>
         ))}
       </View>

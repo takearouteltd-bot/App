@@ -1,7 +1,6 @@
 import React from "react";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import DriverHomeScreen from "../screens/Driver/Home/DriverHomeScreen";
-import IncomingRideScreen from "../screens/Driver/IncomingRide/IncomingRideScreen";
 import DriverRideInProgressScreen from "../screens/Driver/DriverRideInProgress/DriverRideInProgressScreen";
 import DriverRideToDropoffScreen from "../screens/Driver/DriverRideInProgress/DriverRideToDropoffScreen";
 import RideCompletedScreen from "../screens/Driver/RideCompleted/RideCompletedScreen";
@@ -16,7 +15,6 @@ export default function DriverStack() {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       {/* Home */}
         <Stack.Screen name='DriverHome' component={DriverHomeScreen} />
-        <Stack.Screen name='IncomingRide' component={IncomingRideScreen} />
         <Stack.Screen name='DriverRideInProgress' component={DriverRideInProgressScreen} />
         <Stack.Screen name='ChatScreen' component={ChatScreen} />
         <Stack.Screen name='RideToDropoff' component={DriverRideToDropoffScreen} />

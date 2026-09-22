@@ -20,9 +20,10 @@ import {
   inferUploadExtension,
   selectUploadAsset,
 } from "../../helpers/uploadPicker";
+import { COLORS } from '../../components/ui/kit';
 
 const TOTAL_STEPS = 5;
-const PRIMARY = "#79B531";
+const PRIMARY = COLORS.green;
 
 export default function IdentityVerificationScreen({
   navigation,
@@ -279,7 +280,7 @@ export default function IdentityVerificationScreen({
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
   },
   container: {
     padding: 20,
@@ -293,7 +294,7 @@ const styles = StyleSheet.create({
   },
   stepText: {
     fontSize: 14,
-    color: "#666",
+    color: COLORS.muted,
     fontWeight: "500",
   },
   progressBarBg: {
@@ -304,7 +305,7 @@ const styles = StyleSheet.create({
   },
   progressBarFill: {
     height: 6,
-    backgroundColor: "#79B531",
+    backgroundColor: COLORS.green,
     borderRadius: 4,
   },
   title: {
@@ -315,7 +316,7 @@ const styles = StyleSheet.create({
   },
   subtitle: {
     fontSize: 14,
-    color: "#666",
+    color: COLORS.muted,
     marginBottom: 24,
     lineHeight: 20,
   },
@@ -325,7 +326,7 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: "#eee",
+    borderColor: COLORS.line,
   },
   cardContent: {
     flexDirection: "row",
@@ -348,13 +349,13 @@ const styles = StyleSheet.create({
   },
   cardSubtitle: {
     fontSize: 12,
-    color: "#888",
+    color: COLORS.muted,
   },
   uploadBtn: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#79B531",
+    backgroundColor: COLORS.green,
     borderRadius: 8,
     paddingVertical: 10,
   },
@@ -366,7 +367,7 @@ const styles = StyleSheet.create({
   uploadedText: {
     marginTop: 8,
     fontSize: 13,
-    color: "#79B531",
+    color: COLORS.green,
     fontWeight: "500",
   },
   shareCodeInput: {
@@ -377,11 +378,11 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 16,
     color: "#111",
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     letterSpacing: 1.5,
   },
   button: {
-    backgroundColor: "#79B531",
+    backgroundColor: COLORS.green,
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: "center",

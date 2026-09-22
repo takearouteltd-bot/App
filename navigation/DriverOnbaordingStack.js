@@ -6,7 +6,6 @@ import IdentityVerificationScreen from "../authentication/Driver/IdentityVerific
 import VehicleDetailsScreen from "../authentication/Driver/VehicleDetailsScreen";
 import PayoutDetailsScreen from "../authentication/Driver/PayoutDetailsScreen";
 import ApplicationSummaryScreen from "../authentication/Driver/FinalReviewScreen";
-import SubscriptionScreen from "../authentication/Driver/SubscriptionScreen";
 
 const Stack = createNativeStackNavigator();
 
@@ -58,15 +57,6 @@ export default function DriverOnboardingStack({ setOnboardingStatus }) {
           />
         )}
       </Stack.Screen>
-
-      {/* <Stack.Screen name="Subscription">
-        {(props) => (
-          <SubscriptionScreen
-            {...props}
-            setOnboardingStatus={setOnboardingStatus}
-          />
-        )}
-      </Stack.Screen> */}
 
 
     </Stack.Navigator>

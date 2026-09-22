@@ -17,10 +17,11 @@ import { arrayRemove, arrayUnion, doc, getDoc, onSnapshot, setDoc, deleteField }
 import { auth, db } from '../../../config/firebase';
 import { currencySymbol } from '../../../utils/appConfig';
 import EmailReceiptButton from '../../../components/EmailReceiptButton';
+import { COLORS, Avatar, RADIUS } from '../../../components/ui/kit';
 
-const PRIMARY = '#79B531';
-const SECONDARY = '#235594';
-const DANGER = '#DC2626';
+const PRIMARY = COLORS.green;
+const SECONDARY = COLORS.blue;
+const DANGER = COLORS.red;
 
 export default function RiderTripDetailsScreen() {
   const navigation = useNavigation();
@@ -113,8 +114,8 @@ export default function RiderTripDetailsScreen() {
           const driverData = driverDoc.data();
           setDriver({
             name: driverData.name || driverData.fullName || 'Driver',
-            image: driverData.profileImage || driverData.selfieUrl || 'https://randomuser.me/api/portraits/men/45.jpg',
-            rating: driverData.rating || driverData.averageRating || 4.9,
+            image: driverData.profileImage || driverData.selfieUrl,
+            rating: driverData.rating || driverData.averageRating || null,
             vehicle: driverData
               ? `${driverData.makeModel || ''} ${driverData.registrationNumber || ''} `.trim()
               : 'Vehicle',
@@ -143,6 +144,11 @@ export default function RiderTripDetailsScreen() {
   // ✅ Pickup & dropoff from nested location objects
   const pickup = trip.pickupLocation || {};
   const dropoff = trip.dropoffLocation || {};
+  const hasRouteCoords =
+    typeof pickup.latitude === 'number' &&
+    typeof pickup.longitude === 'number' &&
+    typeof dropoff.latitude === 'number' &&
+    typeof dropoff.longitude === 'number';
 
   // ✅ Route stats from nested route object
   const routeInfo = trip.route || {};
@@ -152,7 +158,12 @@ export default function RiderTripDetailsScreen() {
   // ✅ Payment info from nested payment object
   const payment = trip.payment || {};
   const paymentMethod = payment.method || 'card';
-  const lastFour = '•••• 4242'; // You don't store last4 in your structure, use placeholder
+  // Written onto the ride by chargeOnRideCompletion from the card Stripe
+  // actually charged. Older trips predate it, so they just say "Card" rather
+  // than inventing digits.
+  const cardLabel = trip.cardLast4
+    ? `${(trip.cardBrand || 'Card').replace(/^./, (c) => c.toUpperCase())} ···· ${trip.cardLast4}`
+    : 'Card';
 
   // ✅ Format timestamps
   const formatDateTime = (timestamp) => {
@@ -182,13 +193,15 @@ export default function RiderTripDetailsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        {/* Map */}
+        {/* Map. Trips without saved coordinates simply have no map, rather
+            than falling back to a fixed point on the other side of the world. */}
+        {hasRouteCoords ? (
         <View style={styles.mapContainer}>
           <MapView
             style={styles.map}
             initialRegion={{
-              latitude: pickup.latitude || 33.993657,
-              longitude: pickup.longitude || 71.505161,
+              latitude: pickup.latitude,
+              longitude: pickup.longitude,
               latitudeDelta: 0.02,
               longitudeDelta: 0.02,
             }}
@@ -197,16 +210,16 @@ export default function RiderTripDetailsScreen() {
           >
             <Marker
               coordinate={{
-                latitude: pickup.latitude || 33.993657,
-                longitude: pickup.longitude || 71.505161,
+                latitude: pickup.latitude,
+                longitude: pickup.longitude,
               }}
               pinColor={PRIMARY}
             />
 
             <Marker
               coordinate={{
-                latitude: dropoff.latitude || 33.993927,
-                longitude: dropoff.longitude || 71.503440,
+                latitude: dropoff.latitude,
+                longitude: dropoff.longitude,
               }}
               pinColor={DANGER}
             />
@@ -214,12 +227,12 @@ export default function RiderTripDetailsScreen() {
             <Polyline
               coordinates={[
                 {
-                  latitude: pickup.latitude || 33.993657,
-                  longitude: pickup.longitude || 71.505161,
+                  latitude: pickup.latitude,
+                  longitude: pickup.longitude,
                 },
                 {
-                  latitude: dropoff.latitude || 33.993927,
-                  longitude: dropoff.longitude || 71.503440,
+                  latitude: dropoff.latitude,
+                  longitude: dropoff.longitude,
                 },
               ]}
               strokeColor={SECONDARY}
@@ -227,13 +240,14 @@ export default function RiderTripDetailsScreen() {
             />
           </MapView>
         </View>
+        ) : null}
 
         {/* Status Badge */}
         <View style={styles.statusRow}>
           <View style={[
             styles.statusBadge,
             {
-              backgroundColor: isCompleted ? '#E9F5DD' : isCancelled ? '#FDECEC' : '#E6F0FA',
+              backgroundColor: isCompleted ? COLORS.greenSoft : isCancelled ? '#FDECEC' : '#E6F0FA',
             }
           ]}>
             <Text style={[
@@ -276,10 +290,7 @@ export default function RiderTripDetailsScreen() {
             <ActivityIndicator size="small" color={PRIMARY} />
           ) : (
             <>
-              <Image 
-                source={{ uri: driver?.image || 'https://randomuser.me/api/portraits/men/45.jpg' }} 
-                style={styles.driverImage} 
-              />
+              <Avatar uri={driver?.image} name={driver?.name} size={52} />
 
               <View style={{ marginLeft: 12, flex: 1 }}>
                 <Text style={styles.driverName}>{driver?.name || 'Driver'}</Text>
@@ -287,8 +298,8 @@ export default function RiderTripDetailsScreen() {
               </View>
 
               <View style={styles.driverRating}>
-                <Ionicons name="star" size={16} color="#FACC15" />
-                <Text style={styles.ratingText}>{driver?.rating || '4.9'}</Text>
+                <Ionicons name="star" size={16} color={COLORS.star} />
+                <Text style={styles.ratingText}>{driver?.rating || 'New'}</Text>
               </View>
             </>
           )}
@@ -363,7 +374,7 @@ export default function RiderTripDetailsScreen() {
           <View style={{ marginLeft: 12, flex: 1 }}>
             <Text style={styles.paymentMethodLabel}>Payment Method</Text>
             <Text style={styles.paymentMethodValue}>
-              {paymentMethod === 'card' ? `Card ${lastFour}` : 'Cash'}
+              {paymentMethod === 'card' ? cardLabel : 'Cash'}
             </Text>
           </View>
           <Text style={[
@@ -380,7 +391,7 @@ export default function RiderTripDetailsScreen() {
         ) : null}
 
         <TouchableOpacity onPress={bookAgain} style={styles.secondaryBtn}>
-          <Ionicons name="refresh" size={20} color="#fff" />
+          <Ionicons name="refresh" size={20} color={COLORS.white} />
           <Text style={styles.primaryBtnText}>Book this trip again</Text>
         </TouchableOpacity>
 
@@ -399,7 +410,7 @@ export default function RiderTripDetailsScreen() {
             reporterType: 'rider'
           })}
         style={styles.dangerBtn}>
-          <MaterialIcons name="report-problem" size={20} color="#fff" />
+          <MaterialIcons name="report-problem" size={20} color={COLORS.white} />
           <Text style={styles.primaryBtnText}>Report an Issue</Text>
         </TouchableOpacity>
 
@@ -428,7 +439,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: '#111827',
+    color: COLORS.ink,
   },
 
   content: {
@@ -466,7 +477,7 @@ const styles = StyleSheet.create({
 
   dateText: {
     fontSize: 14,
-    color: '#6B7280',
+    color: COLORS.muted,
     fontWeight: '500',
   },
 
@@ -483,25 +494,25 @@ const styles = StyleSheet.create({
 
   locationLabel: {
     fontSize: 12,
-    color: '#6B7280',
+    color: COLORS.muted,
   },
 
   locationValue: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#111827',
+    color: COLORS.ink,
     marginTop: 2,
   },
 
   divider: {
     height: 1,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: COLORS.line,
     marginVertical: 20,
   },
 
   driverCard: {
     flexDirection: 'row',
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderRadius: 18,
     padding: 16,
     marginBottom: 20,
@@ -519,12 +530,12 @@ const styles = StyleSheet.create({
   driverName: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#111827',
+    color: COLORS.ink,
   },
 
   driverSubtext: {
     fontSize: 13,
-    color: '#6B7280',
+    color: COLORS.muted,
     marginTop: 2,
   },
 
@@ -547,7 +558,7 @@ const styles = StyleSheet.create({
 
   statCard: {
     flex: 0.48,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderRadius: 18,
     padding: 18,
     alignItems: 'center',
@@ -556,18 +567,18 @@ const styles = StyleSheet.create({
 
   statLabel: {
     fontSize: 12,
-    color: '#6B7280',
+    color: COLORS.muted,
   },
 
   statValue: {
     fontSize: 22,
     fontWeight: '800',
     marginTop: 4,
-    color: '#111827',
+    color: COLORS.ink,
   },
 
   paymentCard: {
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderRadius: 18,
     padding: 18,
     marginBottom: 20,
@@ -589,13 +600,13 @@ const styles = StyleSheet.create({
 
   paymentLabel: {
     fontSize: 14,
-    color: '#6B7280',
+    color: COLORS.muted,
   },
 
   paymentValue: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#111827',
+    color: COLORS.ink,
   },
 
   totalRow: {
@@ -604,13 +615,13 @@ const styles = StyleSheet.create({
     marginTop: 14,
     paddingTop: 14,
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
+    borderTopColor: COLORS.line,
   },
 
   totalLabel: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#111827',
+    color: COLORS.ink,
   },
 
   totalValue: {
@@ -621,7 +632,7 @@ const styles = StyleSheet.create({
 
   paymentMethodCard: {
     flexDirection: 'row',
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderRadius: 18,
     padding: 18,
     marginBottom: 20,
@@ -631,13 +642,13 @@ const styles = StyleSheet.create({
 
   paymentMethodLabel: {
     fontSize: 12,
-    color: '#6B7280',
+    color: COLORS.muted,
   },
 
   paymentMethodValue: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#111827',
+    color: COLORS.ink,
     marginTop: 2,
   },
 
@@ -652,7 +663,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: SECONDARY,
     paddingVertical: 14,
-    borderRadius: 30,
+    borderRadius: RADIUS.md,
     marginBottom: 12,
   },
 
@@ -662,7 +673,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: PRIMARY,
     paddingVertical: 14,
-    borderRadius: 30,
+    borderRadius: RADIUS.md,
     marginBottom: 12,
   },
 
@@ -670,11 +681,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     borderWidth: 1,
     borderColor: '#D5DCE6',
     paddingVertical: 14,
-    borderRadius: 30,
+    borderRadius: RADIUS.md,
     marginBottom: 12,
   },
 
@@ -684,12 +695,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: DANGER,
     paddingVertical: 14,
-    borderRadius: 30,
+    borderRadius: RADIUS.md,
     marginBottom: 40,
   },
 
   primaryBtnText: {
-    color: '#fff',
+    color: COLORS.white,
     fontWeight: '700',
     fontSize: 16,
     marginLeft: 8,

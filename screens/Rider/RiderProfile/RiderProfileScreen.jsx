@@ -18,11 +18,13 @@ import { onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "../../../config/firebase";
 import { money } from '../../../utils/appConfig';
 import { COLORS, TYPE, Card, ListRow, Button, Loading } from '../../../components/ui/kit';
+import ModeSwitchRow from '../../../components/ModeSwitchRow';
+import { openTerms, openPrivacy } from '../../../utils/legal';
 
-const PRIMARY = "#79B531";
-const SECONDARY = "#235594";
-const DANGER = "#D32F2F";
-const BG = "#F8F9FA";
+const PRIMARY = COLORS.green;
+const SECONDARY = COLORS.blue;
+const DANGER = COLORS.red;
+const BG = COLORS.surface;
 
 export default function RiderProfileScreen() {
   const navigation = useNavigation();
@@ -220,10 +222,17 @@ const fetchRiderData = useCallback(async () => {
           { icon: "mail-outline", title: "Messages", detail: "Updates from TakeARoute", onPress: () => navigation.navigate("Inbox", { role: "rider" }) },
         ])}
 
+        {/* Same account, other mode. Hidden until it knows what to offer. */}
+        <View style={{ marginTop: 26 }}>
+          <ModeSwitchRow uid={currentUser.uid} currentRole="rider" />
+        </View>
+
         <Text style={styles.groupTitle}>Help and safety</Text>
         {group([
           { icon: "chatbubbles-outline", title: "My reports", detail: "Issues, lost property and replies from support", onPress: () => navigation.navigate("MyReports", { role: "rider" }) },
           { icon: "shield-checkmark-outline", iconColor: COLORS.red, title: "Safety", detail: riderData?.emergencyContact?.name ? `Emergency contact: ${riderData.emergencyContact.name}` : "Add an emergency contact", onPress: () => navigation.navigate("EmergencyContact", { role: "rider" }) },
+          { icon: "document-text-outline", title: "Terms of use", onPress: openTerms },
+          { icon: "lock-closed-outline", title: "Privacy policy", onPress: openPrivacy },
         ])}
 
         <Button title="Sign out" variant="secondary" style={{ marginTop: 28 }} onPress={handleLogout} />

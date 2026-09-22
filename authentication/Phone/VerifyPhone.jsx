@@ -22,9 +22,10 @@ import {
   getConfirmation,
   setConfirmation,
 } from "../../store/phoneAuthStore";
+import { COLORS } from '../../components/ui/kit';
 
-const PRIMARY = "#79B531";
-const DARK = "#111827";
+const PRIMARY = COLORS.green;
+const DARK = COLORS.ink;
 
 const EMPTY_OTP = ["", "", "", "", "", ""];
 
@@ -255,7 +256,7 @@ export default function VerifyPhone({ navigation, route }) {
           disabled={loading}
         >
           {loading ? (
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator color={COLORS.white} />
           ) : (
             <Text style={styles.buttonText}>Verify & Continue</Text>
           )}
@@ -266,11 +267,11 @@ export default function VerifyPhone({ navigation, route }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
+  container: { flex: 1, backgroundColor: COLORS.white },
   innerContainer: { flex: 1, paddingHorizontal: 25, paddingTop: 20 },
   backBtn: { marginBottom: 30 },
   title: { fontSize: 34, fontWeight: "bold", color: DARK, marginBottom: 10 },
-  subtitle: { fontSize: 16, color: "#6b7280", marginBottom: 40, lineHeight: 22 },
+  subtitle: { fontSize: 16, color: COLORS.muted, marginBottom: 40, lineHeight: 22 },
   otpContainer: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -280,7 +281,7 @@ const styles = StyleSheet.create({
     width: 48,
     height: 58,
     borderWidth: 1.5,
-    borderColor: "#d1d5db",
+    borderColor: COLORS.lineStrong,
     borderRadius: 12,
     textAlign: "center",
     fontSize: 22,
@@ -300,5 +301,5 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 30,
   },
-  buttonText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
+  buttonText: { color: COLORS.white, fontSize: 18, fontWeight: "bold" },
 });

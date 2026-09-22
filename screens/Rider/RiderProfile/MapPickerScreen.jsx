@@ -17,10 +17,11 @@ import { useNavigation, useRoute } from "@react-navigation/native";
 import * as Location from "expo-location";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { auth, db } from "../../../config/firebase";
+import { COLORS } from '../../../components/ui/kit';
 
-const PRIMARY = "#79B531";
-const SECONDARY = "#235594";
-const BG = "#F8F9FA";
+const PRIMARY = COLORS.green;
+const SECONDARY = COLORS.blue;
+const BG = COLORS.surface;
 
 const GOOGLE_PLACES_API_KEY = "AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ";
 
@@ -276,20 +277,20 @@ export default function MapPickerScreen() {
       {/* Search Header */}
       <View style={styles.searchHeader}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={24} color="#fff" />
+          <Ionicons name="arrow-back" size={24} color={COLORS.white} />
         </TouchableOpacity>
         <View style={styles.searchInputContainer}>
-          <Ionicons name="search" size={18} color="#999" />
+          <Ionicons name="search" size={18} color={COLORS.faint} />
           <TextInput
             style={styles.searchInput}
             value={searchQuery}
             onChangeText={searchPlaces}
             placeholder="Search address, postcode..."
-            placeholderTextColor="#999"
+            placeholderTextColor={COLORS.faint}
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => { setSearchQuery(""); setPredictions([]); }}>
-              <Ionicons name="close-circle" size={18} color="#999" />
+              <Ionicons name="close-circle" size={18} color={COLORS.faint} />
             </TouchableOpacity>
           )}
         </View>
@@ -370,7 +371,7 @@ export default function MapPickerScreen() {
               <Ionicons
                 name={config.icon}
                 size={18}
-                color={selectedType === key ? config.iconColor : "#999"}
+                color={selectedType === key ? config.iconColor : COLORS.faint}
               />
               <Text
                 style={[
@@ -390,7 +391,7 @@ export default function MapPickerScreen() {
           value={placeName}
           onChangeText={setPlaceName}
           placeholder="Place name (e.g., Home, Office)"
-          placeholderTextColor="#bbb"
+          placeholderTextColor={COLORS.faint}
         />
 
         {/* Address */}
@@ -415,11 +416,11 @@ export default function MapPickerScreen() {
           disabled={!selectedLocation || !placeName.trim() || saving}
         >
           {saving ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color={COLORS.white} />
           ) : (
             <>
               <Text style={styles.confirmButtonText}>Save Place</Text>
-              <Ionicons name="checkmark" size={18} color="#fff" />
+              <Ionicons name="checkmark" size={18} color={COLORS.white} />
             </>
           )}
         </TouchableOpacity>
@@ -464,7 +465,7 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -474,7 +475,7 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 15,
-    color: "#1a1a1a",
+    color: COLORS.ink,
   },
 
   predictionsContainer: {
@@ -483,7 +484,7 @@ const styles = StyleSheet.create({
     left: 16,
     right: 16,
     zIndex: 20,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     borderRadius: 12,
     maxHeight: 250,
     shadowColor: "#000",
@@ -506,11 +507,11 @@ const styles = StyleSheet.create({
   predictionMain: {
     fontSize: 14,
     fontWeight: "500",
-    color: "#1a1a1a",
+    color: COLORS.ink,
   },
   predictionSecondary: {
     fontSize: 12,
-    color: "#888",
+    color: COLORS.muted,
     marginTop: 2,
   },
 
@@ -523,7 +524,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   markerPin: {
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     borderRadius: 20,
     padding: 4,
     shadowColor: "#000",
@@ -547,7 +548,7 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     justifyContent: "center",
     alignItems: "center",
     shadowColor: "#000",
@@ -562,7 +563,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: "#fff",
+    backgroundColor: COLORS.white,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     paddingHorizontal: 20,
@@ -594,22 +595,22 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 10,
     borderWidth: 1.5,
-    borderColor: "#eee",
-    backgroundColor: "#fff",
+    borderColor: COLORS.line,
+    backgroundColor: COLORS.white,
     gap: 4,
   },
   typeLabel: {
     fontSize: 11,
-    color: "#888",
+    color: COLORS.muted,
   },
 
   nameInput: {
-    backgroundColor: "#F5F5F5",
+    backgroundColor: COLORS.surface,
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 12,
     fontSize: 15,
-    color: "#1a1a1a",
+    color: COLORS.ink,
     marginBottom: 10,
   },
 
@@ -626,7 +627,7 @@ const styles = StyleSheet.create({
   addressText: {
     flex: 1,
     fontSize: 13,
-    color: "#666",
+    color: COLORS.muted,
     lineHeight: 18,
   },
 
@@ -640,10 +641,10 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   confirmButtonDisabled: {
-    backgroundColor: "#ccc",
+    backgroundColor: COLORS.lineStrong,
   },
   confirmButtonText: {
-    color: "#fff",
+    color: COLORS.white,
     fontSize: 16,
     fontWeight: "700",
   },

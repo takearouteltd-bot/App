@@ -12,9 +12,10 @@ import SubscriptionScreen from "../screens/Driver/Subscription/SubscriptionScree
 import DriverSubscriptionStack from "./Driver/DriverSubscriptionStack";
 import DriverProfileScreen from "../screens/Driver/DriverProfile/DriverProfileScreen";
 import DriverProfileStack from "./Driver/DriverProfileStack";
+import { COLORS } from '../components/ui/kit';
 
 const Tab = createBottomTabNavigator();
-const PRIMARY = "#79B531";
+const PRIMARY = COLORS.green;
 
 export default function DriverTabs() {
     return (

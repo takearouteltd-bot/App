@@ -4,6 +4,7 @@ import { ActivityIndicator, SafeAreaView, Text } from "react-native";
 
 import RiderTabs from "./RiderTabs";
 import RiderOnboardingStack from "./RiderOnboardingStack";
+import { COLORS } from '../components/ui/kit';
 
 const Stack = createNativeStackNavigator();
 
@@ -12,7 +13,7 @@ export default function RiderNavigator({ onboardingStatus, setOnboardingStatus }
   if (!onboardingStatus || onboardingStatus === "not_started") {
     return (
       <SafeAreaView style={{ flex:1, justifyContent:"center", alignItems:"center" }}>
-        <ActivityIndicator size={'small'} color={'#79B431'} />
+        <ActivityIndicator size={'small'} color={COLORS.green} />
       </SafeAreaView>
     );
   }

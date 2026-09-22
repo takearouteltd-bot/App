@@ -15,6 +15,7 @@ import { StripeProvider } from "@stripe/stripe-react-native";
 import SplashScreen from "./Splash/SplashScreen";
 import { startAppConfigSync } from "./utils/appConfig";
 import { registerForPushNotifications } from "./utils/notifications";
+import { COLORS } from './components/ui/kit';
 
 const Stack = createNativeStackNavigator();
 
@@ -134,18 +135,18 @@ export default function App() {
 
   if (isBlocked) {
     return (
-      <View style={{ flex: 1, backgroundColor: "#fff", alignItems: "center", justifyContent: "center", padding: 28 }}>
-        <Text style={{ fontSize: 22, fontWeight: "800", color: "#1A1A1A", textAlign: "center", marginBottom: 10 }}>
+      <View style={{ flex: 1, backgroundColor: COLORS.white, alignItems: "center", justifyContent: "center", padding: 28 }}>
+        <Text style={{ fontSize: 22, fontWeight: "800", color: COLORS.ink, textAlign: "center", marginBottom: 10 }}>
           Account suspended
         </Text>
-        <Text style={{ fontSize: 15, lineHeight: 22, color: "#666", textAlign: "center", marginBottom: 24 }}>
+        <Text style={{ fontSize: 15, lineHeight: 22, color: COLORS.muted, textAlign: "center", marginBottom: 24 }}>
           Your TakeARoute account has been suspended. Please contact support if you think this is a mistake.
         </Text>
         <TouchableOpacity
           onPress={() => signOut(auth).catch(() => {})}
-          style={{ backgroundColor: "#235594", paddingVertical: 14, paddingHorizontal: 28, borderRadius: 14 }}
+          style={{ backgroundColor: COLORS.blue, paddingVertical: 14, paddingHorizontal: 28, borderRadius: 14 }}
         >
-          <Text style={{ color: "#fff", fontSize: 15, fontWeight: "700" }}>Sign out</Text>
+          <Text style={{ color: COLORS.white, fontSize: 15, fontWeight: "700" }}>Sign out</Text>
         </TouchableOpacity>
       </View>
     );

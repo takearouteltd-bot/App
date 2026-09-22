@@ -15,10 +15,11 @@ import MapView, { Marker, Polyline } from 'react-native-maps';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 import { currencySymbol } from '../../../utils/appConfig';
+import { COLORS, Avatar } from '../../../components/ui/kit';
 
-const PRIMARY = '#79B531';
-const SECONDARY = '#235594';
-const DANGER = '#DC2626';
+const PRIMARY = COLORS.green;
+const SECONDARY = COLORS.blue;
+const DANGER = COLORS.red;
 
 export default function DriverTripDetailsScreen() {
   const navigation = useNavigation();
@@ -42,8 +43,8 @@ export default function DriverTripDetailsScreen() {
           const riderData = riderDoc.data();
           setRider({
             name: riderData.name || riderData.fullName || 'Rider',
-            image: riderData.profileImage || riderData.selfieUrl || 'https://randomuser.me/api/portraits/men/45.jpg',
-            rating: riderData.rating || riderData.averageRating || 4.9,
+            image: riderData.profileImage || riderData.selfieUrl,
+            rating: riderData.rating || riderData.averageRating || null,
             phone: riderData.phone || '',
           });
         }
@@ -69,6 +70,11 @@ export default function DriverTripDetailsScreen() {
   // Pickup & dropoff from nested location objects
   const pickup = trip.pickupLocation || {};
   const dropoff = trip.dropoffLocation || {};
+  const hasRouteCoords =
+    typeof pickup.latitude === 'number' &&
+    typeof pickup.longitude === 'number' &&
+    typeof dropoff.latitude === 'number' &&
+    typeof dropoff.longitude === 'number';
 
   // Route stats from nested route object
   const routeInfo = trip.route || {};
@@ -107,13 +113,15 @@ export default function DriverTripDetailsScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        {/* Map */}
+        {/* Map. Trips without saved coordinates simply have no map, rather
+            than falling back to a fixed point on the other side of the world. */}
+        {hasRouteCoords ? (
         <View style={styles.mapContainer}>
           <MapView
             style={styles.map}
             initialRegion={{
-              latitude: pickup.latitude || 33.993657,
-              longitude: pickup.longitude || 71.505161,
+              latitude: pickup.latitude,
+              longitude: pickup.longitude,
               latitudeDelta: 0.02,
               longitudeDelta: 0.02,
             }}
@@ -122,16 +130,16 @@ export default function DriverTripDetailsScreen() {
           >
             <Marker
               coordinate={{
-                latitude: pickup.latitude || 33.993657,
-                longitude: pickup.longitude || 71.505161,
+                latitude: pickup.latitude,
+                longitude: pickup.longitude,
               }}
               pinColor={PRIMARY}
             />
 
             <Marker
               coordinate={{
-                latitude: dropoff.latitude || 33.993927,
-                longitude: dropoff.longitude || 71.503440,
+                latitude: dropoff.latitude,
+                longitude: dropoff.longitude,
               }}
               pinColor={DANGER}
             />
@@ -139,12 +147,12 @@ export default function DriverTripDetailsScreen() {
             <Polyline
               coordinates={[
                 {
-                  latitude: pickup.latitude || 33.993657,
-                  longitude: pickup.longitude || 71.505161,
+                  latitude: pickup.latitude,
+                  longitude: pickup.longitude,
                 },
                 {
-                  latitude: dropoff.latitude || 33.993927,
-                  longitude: dropoff.longitude || 71.503440,
+                  latitude: dropoff.latitude,
+                  longitude: dropoff.longitude,
                 },
               ]}
               strokeColor={SECONDARY}
@@ -152,13 +160,14 @@ export default function DriverTripDetailsScreen() {
             />
           </MapView>
         </View>
+        ) : null}
 
         {/* Status Badge */}
         <View style={styles.statusRow}>
           <View style={[
             styles.statusBadge,
             {
-              backgroundColor: isCompleted ? '#E9F5DD' : isCancelled ? '#FDECEC' : '#E6F0FA',
+              backgroundColor: isCompleted ? COLORS.greenSoft : isCancelled ? '#FDECEC' : '#E6F0FA',
             }
           ]}>
             <Text style={[
@@ -204,10 +213,7 @@ export default function DriverTripDetailsScreen() {
             </View>
           ) : (
             <>
-              <Image 
-                source={{ uri: rider?.image || 'https://randomuser.me/api/portraits/men/45.jpg' }} 
-                style={styles.riderImage} 
-              />
+              <Avatar uri={rider?.image} name={rider?.name} size={52} />
 
               <View style={{ marginLeft: 12, flex: 1 }}>
                 <Text style={styles.riderName}>{rider?.name || 'Rider'}</Text>
@@ -215,8 +221,8 @@ export default function DriverTripDetailsScreen() {
               </View>
 
               <View style={styles.riderRating}>
-                <Ionicons name="star" size={16} color="#FACC15" />
-                <Text style={styles.ratingText}>{rider?.rating || '4.9'}</Text>
+                <Ionicons name="star" size={16} color={COLORS.star} />
+                <Text style={styles.ratingText}>{rider?.rating || 'New'}</Text>
               </View>
             </>
           )}
@@ -288,7 +294,7 @@ export default function DriverTripDetailsScreen() {
             reporterType: 'driver'
           })}
         style={styles.dangerBtn}>
-          <MaterialIcons name="report-problem" size={20} color="#fff" />
+          <MaterialIcons name="report-problem" size={20} color={COLORS.white} />
           <Text style={styles.primaryBtnText}>Report an Issue</Text>
         </TouchableOpacity>
 
@@ -300,7 +306,7 @@ export default function DriverTripDetailsScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
   },
   header: {
     flexDirection: 'row',
@@ -347,7 +353,7 @@ const styles = StyleSheet.create({
   },
   dateText: {
     fontSize: 13,
-    color: '#888',
+    color: COLORS.muted,
     fontWeight: '500',
   },
   locationRow: {
@@ -362,7 +368,7 @@ const styles = StyleSheet.create({
   locationLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#888',
+    color: COLORS.muted,
     marginBottom: 2,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
@@ -370,7 +376,7 @@ const styles = StyleSheet.create({
   locationValue: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#1A1A1A',
+    color: COLORS.ink,
     lineHeight: 20,
   },
   divider: {
@@ -381,7 +387,7 @@ const styles = StyleSheet.create({
   riderCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F8F9FA',
+    backgroundColor: COLORS.surface,
     borderRadius: 16,
     padding: 14,
     marginBottom: 16,
@@ -394,7 +400,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 14,
-    color: '#888',
+    color: COLORS.muted,
     fontWeight: '500',
   },
   riderImage: {
@@ -402,23 +408,23 @@ const styles = StyleSheet.create({
     height: 52,
     borderRadius: 26,
     borderWidth: 2,
-    borderColor: '#fff',
+    borderColor: COLORS.white,
   },
   riderName: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#1A1A1A',
+    color: COLORS.ink,
   },
   riderSubtext: {
     fontSize: 13,
-    color: '#888',
+    color: COLORS.muted,
     marginTop: 2,
     fontWeight: '500',
   },
   riderRating: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#fff',
+    backgroundColor: COLORS.white,
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 12,
@@ -427,7 +433,7 @@ const styles = StyleSheet.create({
   ratingText: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#1A1A1A',
+    color: COLORS.ink,
   },
   statsRow: {
     flexDirection: 'row',
@@ -436,7 +442,7 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: COLORS.surface,
     borderRadius: 14,
     padding: 14,
     alignItems: 'center',
@@ -444,17 +450,17 @@ const styles = StyleSheet.create({
   statLabel: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#888',
+    color: COLORS.muted,
     marginBottom: 6,
     letterSpacing: 0.5,
   },
   statValue: {
     fontSize: 18,
     fontWeight: '800',
-    color: '#1A1A1A',
+    color: COLORS.ink,
   },
   paymentCard: {
-    backgroundColor: '#F8F9FA',
+    backgroundColor: COLORS.surface,
     borderRadius: 16,
     padding: 18,
     marginBottom: 16,
@@ -462,7 +468,7 @@ const styles = StyleSheet.create({
   paymentTitle: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#1A1A1A',
+    color: COLORS.ink,
     marginBottom: 14,
   },
   paymentRow: {
@@ -472,13 +478,13 @@ const styles = StyleSheet.create({
   },
   paymentLabel: {
     fontSize: 14,
-    color: '#666',
+    color: COLORS.muted,
     fontWeight: '500',
   },
   paymentValue: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#1A1A1A',
+    color: COLORS.ink,
   },
   totalRow: {
     flexDirection: 'row',
@@ -491,7 +497,7 @@ const styles = StyleSheet.create({
   totalLabel: {
     fontSize: 16,
     fontWeight: '800',
-    color: '#1A1A1A',
+    color: COLORS.ink,
   },
   totalValue: {
     fontSize: 18,
@@ -509,7 +515,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   primaryBtnText: {
-    color: '#fff',
+    color: COLORS.white,
     fontWeight: '800',
     fontSize: 16,
   },

@@ -105,7 +105,7 @@ export default function ReportDetailScreen({ navigation, route }) {
 
           {report.outcome ? (
             <Card tone="success" style={{ marginTop: 20 }}>
-              <Text style={[TYPE.heading, { color: '#3F6F12', marginBottom: 4 }]}>Outcome</Text>
+              <Text style={[TYPE.heading, { color: COLORS.success, marginBottom: 4 }]}>Outcome</Text>
               <Text style={TYPE.body}>{report.outcome}</Text>
             </Card>
           ) : null}
@@ -152,7 +152,7 @@ export default function ReportDetailScreen({ navigation, route }) {
             <TextInput
               style={styles.input}
               placeholder="Write a message to support"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={COLORS.faint}
               value={text}
               onChangeText={setText}
               multiline

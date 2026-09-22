@@ -1,18 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ActivityIndicator,
-  Alert,
-} from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { View, Text, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { currencySymbol, money, useAppConfig } from '../../../utils/appConfig';
+import { money, useAppConfig } from '../../../utils/appConfig';
+import {
+  COLORS,
+  TYPE,
+  SPACE,
+  Card,
+  Button,
+  Banner,
+  ScreenHeader,
+} from '../../../components/ui/kit';
 
 export default function WithdrawScreen() {
   const navigation = useNavigation();
@@ -29,22 +30,14 @@ export default function WithdrawScreen() {
   const driverId = auth.currentUser ? auth.currentUser.uid : null;
 
   useEffect(() => {
-    if (!driverId) return;
+    if (!driverId) return undefined;
 
-    // Listen to wallet
-    const walletRef = doc(db, 'driverWallets', driverId);
-    const unsubscribeWallet = onSnapshot(walletRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setWallet(snapshot.data());
-      }
+    const unsubscribeWallet = onSnapshot(doc(db, 'driverWallets', driverId), (snap) => {
+      if (snap.exists()) setWallet(snap.data());
     });
 
-    // Listen to driver profile (for bank details)
-    const driverRef = doc(db, 'drivers', driverId);
-    const unsubscribeDriver = onSnapshot(driverRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setDriver(snapshot.data());
-      }
+    const unsubscribeDriver = onSnapshot(doc(db, 'drivers', driverId), (snap) => {
+      if (snap.exists()) setDriver(snap.data());
       setLoading(false);
     });
 
@@ -52,352 +45,156 @@ export default function WithdrawScreen() {
       unsubscribeWallet();
       unsubscribeDriver();
     };
-  }, [driverId]);
+  }, [db, driverId]);
 
-  const availableBalance = wallet ? wallet.availableBalance : 0;
+  const availableBalance = wallet ? wallet.availableBalance || 0 : 0;
   // Minimum set on the dashboard (Settings, Drivers). Also enforced server-side.
   const minimumPayout = appConfig.drivers.minimumPayout;
   const belowMinimum = availableBalance < minimumPayout;
-  const withdrawAmount = availableBalance; // Default to full balance
 
-  const accountDetails = driver && driver.accountDetails ? driver.accountDetails : {};
+  const accountDetails = (driver && driver.accountDetails) || {};
   const accountHolder = accountDetails.accountHolder || '';
   const accountNumber = accountDetails.accountNumber || '';
   const sortCode = accountDetails.sortCode || '';
+  const hasBank = Boolean(accountNumber && sortCode);
 
-  // Mask account number for display (show last 4 digits)
-  const maskedAccountNumber = accountNumber.length > 4
-    ? '******' + accountNumber.slice(-4)
-    : accountNumber;
-
-  // Determine bank name from sort code (basic UK mapping)
-  const getBankNameFromSortCode = (code) => {
-    if (!code) return 'Bank Account';
-    const firstTwo = code.replace(/-/g, '').substring(0, 2);
-    
-    const bankMap = {
-      '01': 'Bank of England',
-      '04': 'Monzo',
-      '07': 'AIB',
-      '09': 'Santander',
-      '12': 'HSBC',
-      '16': 'RBS',
-      '18': 'Coutts',
-      '20': 'Barclays',
-      '23': 'Barclays',
-      '30': 'Lloyds',
-      '40': 'HSBC',
-      '50': 'NatWest',
-      '56': 'Santander',
-      '57': 'NatWest',
-      '60': 'NatWest',
-      '77': 'Lloyds',
-      '80': 'Barclays',
-      '83': 'Royal Bank of Scotland',
-    };
-    
-    return bankMap[firstTwo] || 'Bank Account';
-  };
-
-  const bankName = getBankNameFromSortCode(sortCode);
+  const maskedAccountNumber =
+    accountNumber.length > 4 ? `······${accountNumber.slice(-4)}` : accountNumber;
 
   const handleWithdraw = async () => {
     if (availableBalance <= 0) {
-      Alert.alert('Error', 'You have no balance to withdraw');
+      Alert.alert('Nothing to withdraw', 'Your available balance is zero.');
       return;
     }
-
     if (belowMinimum) {
-      Alert.alert('Not enough to withdraw', `The minimum withdrawal is ${money(minimumPayout)}.`);
+      Alert.alert('Below the minimum', `The smallest withdrawal is ${money(minimumPayout)}.`);
       return;
     }
-
-    if (!accountNumber || !sortCode) {
-      Alert.alert('Error', 'Bank details not found. Please update your profile.');
+    if (!hasBank) {
+      Alert.alert(
+        'No bank details',
+        'We do not have your bank details on file. Contact support to add them.'
+      );
       return;
     }
 
     setRequesting(true);
-
     try {
       const requestPayout = httpsCallable(functions, 'requestDriverPayout');
-      const result = await requestPayout({
-        driverId: driverId,
-        amount: withdrawAmount,
+      const result = await requestPayout({ driverId, amount: availableBalance });
+
+      navigation.replace('WithdrawSuccess', {
+        payoutId: result.data?.payoutId || null,
+        amount: result.data?.amount ?? availableBalance,
+        accountNumber: maskedAccountNumber,
+        accountHolder,
       });
-
-      Alert.alert(
-        'Success',
-        'Payout request submitted. It will be processed by admin shortly.',
-        [{ text: 'OK', onPress: () => navigation.goBack() }]
-      );
-
     } catch (error) {
       console.error('Withdrawal failed:', error);
-      Alert.alert(
-        'Error',
-        error.message || 'Failed to request payout. Please try again.'
-      );
-    } finally {
+      Alert.alert('Could not request', error.message || 'Please try again.');
       setRequesting(false);
     }
   };
 
   if (loading) {
     return (
-      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-        <ActivityIndicator size="large" color="#235594" />
-      </View>
+      <SafeAreaView style={[styles.safe, styles.centered]}>
+        <ActivityIndicator size="large" color={COLORS.green} />
+      </SafeAreaView>
     );
   }
 
   return (
-    <View style={styles.container}>
-      {/* Upper Blue Section */}
-      <View style={styles.upperContainer}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={24} color="#fff" />
-          </TouchableOpacity>
+    <SafeAreaView style={styles.safe}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <ScreenHeader title="Withdraw" onBack={() => navigation.goBack()} />
 
-          <Text style={styles.headerTitle}>Withdraw Funds</Text>
+        <Card tone="dark" style={styles.balance}>
+          <Text style={styles.balanceLabel}>Available to withdraw</Text>
+          <Text style={styles.balanceValue}>{money(availableBalance)}</Text>
+          {wallet?.totalEarned ? (
+            <Text style={styles.balanceSub}>{money(wallet.totalEarned)} earned in total</Text>
+          ) : null}
+        </Card>
 
-          <TouchableOpacity>
-            <Ionicons name="help-circle-outline" size={24} color="#fff" />
-          </TouchableOpacity>
-        </View>
+        {belowMinimum && availableBalance > 0 ? (
+          <Banner
+            tone="warning"
+            title={`Minimum is ${money(minimumPayout)}`}
+            body="Keep earning and you will be able to withdraw."
+          />
+        ) : null}
 
-        <View style={styles.balanceCard}>
-          <Text style={styles.balanceLabel}>AVAILABLE BALANCE</Text>
-          <Text style={styles.balanceValue}>
-            {currencySymbol()}{availableBalance.toFixed(2)}
-          </Text>
-        </View>
-      </View>
-
-      {/* Lower Section */}
-      <View style={styles.bottomContainer}>
-        
-        {/* Amount to Withdraw */}
-        <View style={styles.card}>
-          <View style={styles.rowBetween}>
-            <Text style={styles.label}>Amount to Withdraw</Text>
-
-            <View style={styles.maxBadge}>
-              <Text style={styles.maxText}>MAX</Text>
-            </View>
-          </View>
-
-          <Text style={styles.amount}>
-            {currencySymbol()}{withdrawAmount.toFixed(2)}
-          </Text>
-        </View>
-
-        {/* Bank Details */}
-        <View style={styles.card}>
-          <View style={styles.rowBetween}>
-            <View>
-              <Text style={styles.label}>Bank Account</Text>
-              <Text style={styles.bankName}>{bankName}</Text>
-              <Text style={styles.accountNumber}>{maskedAccountNumber}</Text>
-              <Text style={styles.accountHolder}>{accountHolder}</Text>
-            </View>
-
-            <TouchableOpacity onPress={() => navigation.navigate('EditBankDetails')}>
-              <Text style={styles.changeBtn}>Change</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Processing Time */}
-        <View style={styles.card}>
-          <Text style={styles.label}>Processing Time</Text>
-          <Text style={styles.value}>
-            Manual processing (1-2 business days)
-          </Text>
-        </View>
-
-        {/* Transaction Fee */}
-        <View style={styles.card}>
-          <Text style={styles.label}>Transaction Fee</Text>
-          <Text style={styles.freeText}>{money(0)}</Text>
-          <Text style={styles.subNote}>
-            Free withdrawal
-          </Text>
-        </View>
-      </View>
-
-      {/* Sticky Bottom Button */}
-      <View style={styles.footer}>
-        <TouchableOpacity
-          onPress={handleWithdraw}
-          disabled={requesting || availableBalance <= 0 || belowMinimum}
-          style={[
-            styles.confirmBtn,
-            (requesting || availableBalance <= 0 || belowMinimum) && { opacity: 0.5 }
-          ]}
-        >
-          {requesting ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.confirmText}>
-              Confirm Withdrawal
+        {!hasBank ? (
+          <Banner
+            tone="danger"
+            title="No bank details on file"
+            body="We cannot pay you out until your bank details are added. Contact support and they will set them up for you."
+          />
+        ) : (
+          <Card style={{ marginTop: SPACE[4] }}>
+            <Text style={TYPE.label}>Paying into</Text>
+            <Text style={styles.bankValue}>{maskedAccountNumber}</Text>
+            <Text style={TYPE.small}>
+              Sort code {sortCode}
+              {accountHolder ? ` · ${accountHolder}` : ''}
             </Text>
-          )}
-        </TouchableOpacity>
-      </View>
-    </View>
+            <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>
+              To change these, contact support. Bank details cannot be edited in the app for
+              security.
+            </Text>
+          </Card>
+        )}
+
+        <Card style={{ marginTop: SPACE[3] }}>
+          <View style={styles.row}>
+            <Text style={TYPE.body}>Amount</Text>
+            <Text style={styles.rowValue}>{money(availableBalance)}</Text>
+          </View>
+          <View style={styles.divider} />
+          <View style={styles.row}>
+            <Text style={TYPE.body}>Fee</Text>
+            <Text style={styles.rowValue}>{money(0)}</Text>
+          </View>
+          <View style={styles.divider} />
+          <View style={styles.row}>
+            <Text style={TYPE.body}>You receive</Text>
+            <Text style={[styles.rowValue, { color: COLORS.navy }]}>{money(availableBalance)}</Text>
+          </View>
+        </Card>
+
+        {/* Payouts are reviewed and sent by hand, so this does not promise a
+            bank transfer that has not happened yet. */}
+        <Text style={[TYPE.small, { marginTop: SPACE[4] }]}>
+          Withdrawals are checked by our team before the transfer is sent, usually within 1 to 2
+          working days.
+        </Text>
+
+        <Button
+          title="Request withdrawal"
+          onPress={handleWithdraw}
+          loading={requesting}
+          disabled={!hasBank || belowMinimum || availableBalance <= 0}
+          style={{ marginTop: SPACE[6] }}
+        />
+      </ScrollView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
+  safe: { flex: 1, backgroundColor: COLORS.surface },
+  centered: { alignItems: 'center', justifyContent: 'center' },
+  content: { padding: SPACE[5], paddingBottom: SPACE[12] },
 
-  upperContainer: {
-    backgroundColor: '#235594',
-    height: '28%',
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-    paddingHorizontal: 16,
-    paddingTop: 50,
-  },
+  balance: { marginTop: SPACE[5], marginBottom: SPACE[4] },
+  balanceLabel: { ...TYPE.small, color: COLORS.onDark },
+  balanceValue: { fontSize: 38, fontWeight: '800', color: COLORS.white, letterSpacing: -1.2, marginTop: 2 },
+  balanceSub: { ...TYPE.small, color: COLORS.onDark, marginTop: 2 },
 
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
+  bankValue: { fontSize: 18, fontWeight: '700', color: COLORS.ink, letterSpacing: 1, marginVertical: SPACE[1] },
 
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#fff',
-  },
-
-  balanceCard: {
-    backgroundColor: '#D0E6FF',
-    borderRadius: 18,
-    padding: 18,
-  },
-
-  balanceLabel: {
-    fontSize: 12,
-    color: '#6B7280',
-    fontWeight: '600',
-  },
-
-  balanceValue: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#111827',
-    marginTop: 4,
-  },
-
-  bottomContainer: {
-    flex: 1,
-    padding: 16,
-  },
-
-  card: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 14,
-  },
-
-  label: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#6B7280',
-    marginBottom: 6,
-  },
-
-  amount: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#235594',
-    marginTop: 6,
-  },
-
-  bankName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-  },
-
-  accountNumber: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginTop: 4,
-  },
-
-  accountHolder: {
-    fontSize: 12,
-    color: '#9CA3AF',
-    marginTop: 2,
-  },
-
-  changeBtn: {
-    color: '#235594',
-    fontWeight: '600',
-  },
-
-  rowBetween: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-
-  value: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#111827',
-  },
-
-  freeText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#16A34A',
-  },
-
-  subNote: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 4,
-  },
-
-  maxBadge: {
-    backgroundColor: '#79B531',
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 12,
-  },
-
-  maxText: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-
-  footer: {
-    padding: 16,
-    backgroundColor: '#f5f5f5',
-  },
-
-  confirmBtn: {
-    backgroundColor: '#79B531',
-    paddingVertical: 16,
-    borderRadius: 30,
-    alignItems: 'center',
-  },
-
-  confirmText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 16,
-  },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: SPACE[2] },
+  rowValue: { fontSize: 16, fontWeight: '700', color: COLORS.ink },
+  divider: { height: StyleSheet.hairlineWidth, backgroundColor: COLORS.line },
 });
