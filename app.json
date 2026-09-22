@@ -15,7 +15,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.hassanjamil.takearoute",
+      "bundleIdentifier": "com.takearoute.app",
       "googleServicesFile": "./GoogleService-Info.plist",
       "config": {
         "googleMapsApiKey": "AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ"
@@ -45,12 +45,6 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "extra": {
-      "eas": {
-        "projectId": "46f9ef2f-9dd6-4e57-b2f0-52d1ae0bcd60"
-      }
-    },
-    "owner": "hassanjamil",
     "plugins": [
       "@react-native-firebase/app",
       "@react-native-firebase/auth",
@@ -65,8 +59,6 @@
           }
         }
       ],
-      "expo-web-browser",
-      "@react-native-google-signin/google-signin",
       [
         "expo-image-picker",
         {
