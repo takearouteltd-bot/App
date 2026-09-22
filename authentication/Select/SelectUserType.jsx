@@ -10,10 +10,10 @@ import {
   ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { auth, db, functions } from "../../config/firebase";
-import { doc, setDoc, getDoc, serverTimestamp } from "firebase/firestore";
-
-import { httpsCallable } from "firebase/functions";
+import { auth, db } from "../../config/firebase";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { ensureDriverProfile, ensureRiderProfile } from "../../utils/modeSwitch";
+import { COLORS } from '../../components/ui/kit';
 
 export default function SelectUserTypeScreen({
   setUserRole,
@@ -38,47 +38,19 @@ const handleContinue = async () => {
     }
 
     const uid = user.uid;
-    const email = user.email || `${uid}@phone.user`;
     const userRef = doc(db, "users", uid);
 
-    // Role-specific setup first
+    // Role-specific setup first. These are the same helpers the account
+    // screens use when someone switches mode later, so a passenger record
+    // always comes with a Stripe customer however it was created.
     if (selected === "driver") {
-      await setDoc(
-        doc(db, "drivers", uid),
-        {
-          createdAt: serverTimestamp(),
-          approved: false,
-          onboardingComplete: false,
-        },
-        { merge: true }
-      );
+      await ensureDriverProfile(uid);
+    } else {
+      await ensureRiderProfile(uid);
     }
 
-    if (selected === "rider") {
-      await setDoc(
-        doc(db, "riders", uid),
-        {
-          createdAt: serverTimestamp(),
-          fullName: "",
-          locationEnabled: false,
-          onboardingComplete: false,
-        },
-        { merge: true }
-      );
-
-      // Stripe customers are only used for rider payments; the backend
-      // stores the id on riders/{uid}, so check there to avoid duplicates.
-      const riderSnap = await getDoc(doc(db, "riders", uid));
-      if (!riderSnap.data()?.stripeCustomerId) {
-        const createStripeCustomer = httpsCallable(functions, "createStripeCustomer");
-        const res = await createStripeCustomer({ email, uid });
-        if (!res.data?.customerId) {
-          throw new Error("Failed to set up payments. Please try again.");
-        }
-      }
-    }
-
-    // Then save the user role — App.js's listener picks this up
+    // Then save the starting mode — App.js's listener picks this up. It is not
+    // a permanent choice: either mode can be added later from Account.
     await setDoc(
       userRef,
       {
@@ -128,13 +100,13 @@ const handleContinue = async () => {
             <Ionicons
               name="car-sport"
               size={28}
-              color={selected === "driver" ? "#fff" : "#22c55e"}
+              color={selected === "driver" ? COLORS.white : "#22c55e"}
             />
             <View style={{ marginLeft: 15 }}>
               <Text
                 style={[
                   styles.optionTitle,
-                  selected === "driver" && { color: "#fff" },
+                  selected === "driver" && { color: COLORS.white },
                 ]}
               >
                 Driver
@@ -142,7 +114,7 @@ const handleContinue = async () => {
               <Text
                 style={[
                   styles.optionSubtitle,
-                  selected === "driver" && { color: "#e5e7eb" },
+                  selected === "driver" && { color: COLORS.line },
                 ]}
               >
                 Earn on your schedule
@@ -163,13 +135,13 @@ const handleContinue = async () => {
             <Ionicons
               name="person"
               size={28}
-              color={selected === "rider" ? "#fff" : "#22c55e"}
+              color={selected === "rider" ? COLORS.white : "#22c55e"}
             />
             <View style={{ marginLeft: 15 }}>
               <Text
                 style={[
                   styles.optionTitle,
-                  selected === "rider" && { color: "#fff" },
+                  selected === "rider" && { color: COLORS.white },
                 ]}
               >
                 Passenger
@@ -177,7 +149,7 @@ const handleContinue = async () => {
               <Text
                 style={[
                   styles.optionSubtitle,
-                  selected === "rider" && { color: "#e5e7eb" },
+                  selected === "rider" && { color: COLORS.line },
                 ]}
               >
                 Book a ride instantly
@@ -195,7 +167,7 @@ const handleContinue = async () => {
           onPress={handleContinue}
         >
           {loading ? (
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator color={COLORS.white} />
           ) : (
             <Text style={styles.buttonText}>Continue</Text>
           )}
@@ -206,7 +178,7 @@ const handleContinue = async () => {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
+  container: { flex: 1, backgroundColor: COLORS.white },
   content: {
     flexGrow: 1,
     paddingHorizontal: 25,
@@ -216,12 +188,12 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 32,
     fontWeight: "bold",
-    color: "#111827",
+    color: COLORS.ink,
     marginBottom: 40,
     textAlign: "center",
   },
   optionCard: {
-    backgroundColor: "#f3f4f6",
+    backgroundColor: COLORS.surface,
     borderRadius: 16,
     padding: 20,
     marginBottom: 20,
@@ -236,22 +208,22 @@ const styles = StyleSheet.create({
   optionTitle: {
     fontSize: 20,
     fontWeight: "bold",
-    color: "#111827",
+    color: COLORS.ink,
   },
   optionSubtitle: {
     fontSize: 14,
-    color: "#6b7280",
+    color: COLORS.muted,
     marginTop: 4,
   },
   button: {
-    backgroundColor: "#79B531",
+    backgroundColor: COLORS.green,
     paddingVertical: 18,
     borderRadius: 12,
     alignItems: "center",
     marginBottom: 30,
   },
   buttonText: {
-    color: "#fff",
+    color: COLORS.white,
     fontSize: 18,
     fontWeight: "bold",
   },

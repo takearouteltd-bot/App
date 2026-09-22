@@ -26,12 +26,14 @@ import {
 } from "firebase/firestore";
 import { money } from '../../../utils/appConfig';
 import { COLORS, TYPE, Card, ListRow, StatusPill, Button, Loading } from '../../../components/ui/kit';
+import ModeSwitchRow from '../../../components/ModeSwitchRow';
+import { openTerms, openPrivacy } from '../../../utils/legal';
 import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocuments';
 
-const PRIMARY = "#79B531";
-const SECONDARY = "#235594";
-const DANGER = "#D32F2F";
-const BG = "#F6F7F9";
+const PRIMARY = COLORS.green;
+const SECONDARY = COLORS.blue;
+const DANGER = COLORS.red;
+const BG = COLORS.surface;
 
 export default function DriverProfileScreen() {
   const navigation = useNavigation();
@@ -182,7 +184,7 @@ export default function DriverProfileScreen() {
                 <Text style={styles.initial}>{(driver?.fullName || driver?.firstName || "D").charAt(0).toUpperCase()}</Text>
               </View>
             )}
-            <View style={[styles.presence, { backgroundColor: isOnline ? COLORS.green : "#9CA3AF" }]} />
+            <View style={[styles.presence, { backgroundColor: isOnline ? COLORS.green : COLORS.faint }]} />
           </View>
           <Text style={styles.name}>{driver?.fullName || [driver?.firstName, driver?.lastName].filter(Boolean).join(" ") || "Driver"}</Text>
           <View style={{ marginTop: 8 }}>
@@ -219,7 +221,7 @@ export default function DriverProfileScreen() {
             <Text style={styles.earningsValue}>{money(availableBalance)}</Text>
             <Text style={styles.earningsSub}>{money(totalEarned)} earned in total</Text>
           </View>
-          <Ionicons name="chevron-forward" size={22} color="#C9D6EA" />
+          <Ionicons name="chevron-forward" size={22} color={COLORS.onDark} />
         </TouchableOpacity>
 
         {documentAlerts.length ? (
@@ -246,10 +248,17 @@ export default function DriverProfileScreen() {
           { icon: "mail-outline", title: "Messages", detail: "Updates from TakeARoute", onPress: () => navigation.navigate("Inbox", { role: "driver" }) },
         ])}
 
+        {/* Same account, other mode. Hidden until it knows what to offer. */}
+        <View style={{ marginTop: 26 }}>
+          <ModeSwitchRow uid={user?.uid} currentRole="driver" />
+        </View>
+
         <Text style={styles.groupTitle}>Help and safety</Text>
         {group([
           { icon: "chatbubbles-outline", title: "My reports", detail: "Issues, lost property and replies from support", onPress: () => navigation.navigate("MyReports", { role: "driver" }) },
           { icon: "shield-checkmark-outline", iconColor: COLORS.red, title: "Safety", detail: driver?.emergencyContact?.name ? `Emergency contact: ${driver.emergencyContact.name}` : "Add your next of kin", onPress: () => navigation.navigate("EmergencyContact", { role: "driver" }) },
+          { icon: "document-text-outline", title: "Terms of use", onPress: openTerms },
+          { icon: "lock-closed-outline", title: "Privacy policy", onPress: openPrivacy },
         ])}
 
         <Button title="Sign out" variant="secondary" style={{ marginTop: 28 }} loading={loggingOut} onPress={handleLogout} />
@@ -282,9 +291,9 @@ const styles = StyleSheet.create({
     flexDirection: "row", alignItems: "center", backgroundColor: COLORS.navy,
     borderRadius: 22, padding: 22,
   },
-  earningsLabel: { fontSize: 14, fontWeight: "600", color: "#C9D6EA" },
+  earningsLabel: { fontSize: 14, fontWeight: "600", color: COLORS.onDark },
   earningsValue: { fontSize: 36, fontWeight: "800", color: COLORS.white, letterSpacing: -1, marginTop: 2 },
-  earningsSub: { fontSize: 13, color: "#C9D6EA", marginTop: 2 },
+  earningsSub: { fontSize: 13, color: COLORS.onDark, marginTop: 2 },
   groupTitle: { ...TYPE.heading, marginTop: 26, marginBottom: 10 },
   footer: { alignItems: "center", marginTop: 36 },
 });
