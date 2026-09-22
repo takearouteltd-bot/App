@@ -689,10 +689,16 @@ exports.stripeWebhook = functions
           case "payment_intent.succeeded": {
             if (!rideId) break;
 
+            // Deliberately does NOT touch walletProcessed. That field is the
+            // guard creditDriverWalletOnRideCompletion uses to decide whether
+            // the driver has already been paid for this ride. Stripe fires
+            // this webhook off the same capture that sets paymentStatus, so
+            // whichever landed first won: if the webhook won, the credit
+            // function saw walletProcessed already true and skipped, and the
+            // driver was never paid for a ride the passenger was charged for.
             await db.collection("rides").doc(rideId).update({
               "payment.status": "paid",
               "payment.transactionId": object.id,
-              "walletProcessed": true,
             });
 
             console.log("✅ Payment succeeded:", rideId);
@@ -976,6 +982,17 @@ exports.creditDriverWalletOnRideCompletion = functions.firestore
 
       try {
         await db.runTransaction(async (transaction) => {
+          // Re-read the ride inside the transaction. The walletProcessed check
+          // above is on the trigger's snapshot, which is a point-in-time copy;
+          // Cloud Functions delivers at least once, so two deliveries of the
+          // same event can both see it false and both credit the driver. This
+          // is the check that actually makes the credit happen once.
+          const rideSnap = await transaction.get(rideRef);
+          if (!rideSnap.exists || rideSnap.data().walletProcessed === true) {
+            console.log("Wallet already credited for", rideId, "— skipping");
+            return;
+          }
+
           const walletSnap = await transaction.get(walletRef);
 
           if (!walletSnap.exists) {
@@ -1316,8 +1333,23 @@ exports.detachPaymentMethod = functions
             "Login required");
       }
 
+      if (!paymentMethodId) {
+        throw new functions.https.HttpsError("invalid-argument",
+            "Missing paymentMethodId");
+      }
+
+      const uid = context.auth.uid;
+
       try {
-        // Verify this payment method belongs to the user
+        const riderSnap = await db.collection("riders").doc(uid).get();
+        const stripeCustomerId = riderSnap.exists ?
+          riderSnap.data().stripeCustomerId : null;
+
+        if (!stripeCustomerId) {
+          throw new functions.https.HttpsError("failed-precondition",
+              "No payment profile for this account.");
+        }
+
         const pm = await stripe.paymentMethods.retrieve(paymentMethodId);
 
         if (!pm || !pm.customer) {
@@ -1325,12 +1357,41 @@ exports.detachPaymentMethod = functions
               "Payment method not found");
         }
 
-        // Optional: check pm.customer matches the user's Stripe customer ID
+        // The card must belong to the caller. Without this, any signed-in
+        // user who knew or guessed a pm_... id could detach somebody else's
+        // card, and the owner's next booking would fail at the hold with no
+        // explanation. Stripe expands `customer` to an object in some API
+        // versions, so compare against either shape.
+        const owner = typeof pm.customer === "string" ?
+          pm.customer : pm.customer.id;
+
+        if (owner !== stripeCustomerId) {
+          console.warn(
+              `Refused detach of ${paymentMethodId} by ${uid}: card belongs ` +
+              "to another customer",
+          );
+          // Deliberately the same error as a card that does not exist, so
+          // this cannot be used to test whether a given id is real.
+          throw new functions.https.HttpsError("not-found",
+              "Payment method not found");
+        }
 
         await stripe.paymentMethods.detach(paymentMethodId);
 
+        // If this was the card rides are charged to, stop pointing at it.
+        // The app reassigns the default, but if that half fails the record
+        // would otherwise reference a detached card and every booking would
+        // fail when the hold is attempted.
+        if (riderSnap.data().defaultPaymentMethodId === paymentMethodId) {
+          await db.collection("riders").doc(uid).set(
+              {defaultPaymentMethodId: null},
+              {merge: true},
+          ).catch(() => null);
+        }
+
         return {success: true};
       } catch (error) {
+        if (error instanceof functions.https.HttpsError) throw error;
         console.error("Stripe detach error:", error);
         throw new functions.https.HttpsError("internal", error.message);
       }
