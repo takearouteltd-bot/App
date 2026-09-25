@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, SafeAreaView, ActivityIndicator, ScrollView } from 'react-native';
 import { Alert } from '../../../components/ui/alert';
-import { auth, db } from '../../../config/firebase';
-import { doc, getDoc, updateDoc, Timestamp } from 'firebase/firestore';
+import { auth, db, functions } from '../../../config/firebase';
+import { doc, getDoc, updateDoc, Timestamp, collection, onSnapshot } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { useNavigation } from '@react-navigation/native';
 import { money, useAppConfig } from '../../../utils/appConfig';
 import {
@@ -27,6 +28,42 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
   const [subscription, setSubscription] = useState(null);
   const navigation = useNavigation();
   const driverId = auth.currentUser?.uid;
+
+  // The card on the account, used when the wallet cannot cover a renewal.
+  const [card, setCard] = useState(null);
+  const [paying, setPaying] = useState(false);
+  useEffect(() => {
+    if (!driverId) return undefined;
+    return onSnapshot(
+      collection(db, 'riders', driverId, 'cards'),
+      (snap) => {
+        const cards = snap.docs.map((d) => d.data());
+        setCard(cards.find((c) => c.isDefault) || cards[0] || null);
+      },
+      () => setCard(null)
+    );
+  }, [driverId]);
+
+  const openCards = () =>
+    navigation.navigate(card ? 'AllPaymentMethods' : 'AddPaymentMethod');
+
+  const payByCard = async () => {
+    if (!card) {
+      openCards();
+      return;
+    }
+    setPaying(true);
+    try {
+      const pay = httpsCallable(functions, 'payDriverMembership');
+      const res = await pay({ cardOnly: true });
+      Alert.alert('Membership paid', `${money(res.data?.amount ?? MONTHLY_PRICE)} was charged to your card.`);
+      await loadSubscription();
+    } catch (error) {
+      Alert.alert('Payment did not go through', error.message || 'Please try again.');
+    } finally {
+      setPaying(false);
+    }
+  };
 
   const loadSubscription = useCallback(async () => {
     if (!driverId) {
@@ -130,7 +167,59 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
   }
 
   /* ================= ACTIVE ================= */
-  if (subscription && subscription.status === 'active') {
+  const status = subscription?.status;
+  const cardLabel = card ? `${(card.brand || 'Card').toUpperCase()} ···· ${card.last4}` : null;
+  const cardRow = (
+    <Card flush style={{ marginTop: SPACE[4] }}>
+      <ListRow
+        icon="card-outline"
+        title="Card for membership"
+        detail={cardLabel || 'Used if your wallet is short at renewal'}
+        onPress={openCards}
+        last
+      />
+    </Card>
+  );
+
+  if (status === 'suspended') {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+          <ScreenHeader title="Membership" />
+
+          {status === 'past_due' ? (
+            <Banner
+              tone="warning"
+              title="Payment due"
+              body={`We could not take this month's ${money(MONTHLY_PRICE)} from your wallet or card. Pay by ${formatDate(subscription.graceUntil)} to keep driving.`}
+              action={
+                <Button
+                  title={card ? 'Pay by card now' : 'Add a card'}
+                  size="small"
+                  onPress={payByCard}
+                  loading={paying}
+                />
+              }
+            />
+          ) : null}
+          <Banner
+            tone="danger"
+            title="Your account is paused"
+            body={`Your membership of ${money(Number(subscription.debtAmount) || MONTHLY_PRICE)} is unpaid, so you cannot go online. Pay now to start driving again straight away, or it is taken automatically once your wallet can cover it.`}
+          />
+          <Button
+            title={card ? `Pay ${money(Number(subscription.debtAmount) || MONTHLY_PRICE)} by card` : 'Add a card to pay'}
+            onPress={payByCard}
+            loading={paying}
+            style={{ marginTop: SPACE[4] }}
+          />
+          {cardRow}
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  if (subscription && (status === 'active' || status === 'past_due')) {
     const debtAmount = Number(subscription.debtAmount) || 0;
 
     return (
@@ -172,8 +261,9 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
 
           <Banner
             tone="info"
-            body="Your membership renews every month and comes out of your wallet. If there is not enough in it, your account is suspended until you have earned enough."
+            body="Your membership renews every month from your wallet. If there is not enough in it, we charge the card below. If neither works, you have a few days to pay before your account is paused."
           />
+          {cardRow}
         </ScrollView>
       </SafeAreaView>
     );

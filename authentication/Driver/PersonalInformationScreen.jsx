@@ -5,6 +5,8 @@ import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db, auth } from "../../config/firebase";
 import { Banner, Field, SPACE } from "../../components/ui/kit";
 import { DRIVER_STEPS, OnboardingFrame, StepSection } from "../../components/onboarding/kit";
+import SelectField from "../../components/ui/SelectField";
+import { useCities } from "../../utils/cities";
 
 // UK National Insurance number: 2 prefix letters + 6 digits + 1 suffix letter.
 // Excludes invalid prefixes/letters per HMRC rules.
@@ -51,6 +53,9 @@ export default function PersonalInformationScreen({ navigation, setOnboardingSta
   const [dob, setDob] = useState("");
   const [nin, setNin] = useState("");
   const [address, setAddress] = useState("");
+  // Where they will take jobs. Required once the dashboard lists any cities.
+  const cities = useCities();
+  const [workingCityId, setWorkingCityId] = useState(null);
   const [saving, setSaving] = useState(false);
   // Field errors appear only after a first attempt to continue, not while
   // someone is still typing.
@@ -93,6 +98,7 @@ export default function PersonalInformationScreen({ navigation, setOnboardingSta
         setDob(data.dob || "");
         setNin(data.nin || "");
         setAddress(data.address || "");
+        setWorkingCityId(data.workingCityId || null);
 
         const reached = Math.min(Number(data.onboardingStep) || 1, DRIVER_STEPS.length);
         if (reached > 1 && !resumed.current) {
@@ -124,6 +130,7 @@ export default function PersonalInformationScreen({ navigation, setOnboardingSta
       ? "That doesn't look right, e.g. AB123456C"
       : null,
     address: !address.trim() ? "Enter your home address" : null,
+    workingCityId: cities.length && !workingCityId ? "Choose the city you will drive in" : null,
   };
   const show = (key) => (tried ? errors[key] : null);
 
@@ -148,6 +155,8 @@ export default function PersonalInformationScreen({ navigation, setOnboardingSta
           dob,
           nin,
           address: address.trim(),
+          workingCityId: workingCityId || null,
+          workingCityName: cities.find((c) => c.id === workingCityId)?.name || null,
 
           onboardingStep: 2,
           onboardingComplete: false,
@@ -240,6 +249,20 @@ export default function PersonalInformationScreen({ navigation, setOnboardingSta
           error={show("address")}
         />
       </StepSection>
+
+      {cities.length ? (
+        <StepSection title="Where you'll drive" hint="You'll only be offered jobs picked up in this city. You can change it later in your account.">
+          <SelectField
+            label="Working city"
+            title="Choose your city"
+            placeholder="Choose a city"
+            value={workingCityId}
+            onChange={setWorkingCityId}
+            options={cities.map((c) => ({ value: c.id, label: c.name }))}
+            error={show("workingCityId")}
+          />
+        </StepSection>
+      ) : null}
 
       <Banner
         tone="info"

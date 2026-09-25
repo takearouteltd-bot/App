@@ -23,10 +23,13 @@ import {
   where,
   getDocs,
   onSnapshot,
+  setDoc,
 } from "firebase/firestore";
 import { money } from '../../../utils/appConfig';
 import { COLORS, TYPE, Card, ListRow, StatusPill, Button, Loading } from '../../../components/ui/kit';
 import ModeSwitchRow from '../../../components/ModeSwitchRow';
+import SelectField from '../../../components/ui/SelectField';
+import { useCities } from '../../../utils/cities';
 import { openTerms, openPrivacy } from '../../../utils/legal';
 import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocuments';
 
@@ -47,6 +50,21 @@ export default function DriverProfileScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+
+  const cities = useCities();
+  const saveWorkingCity = async (cityId) => {
+    if (!user?.uid) return;
+    const city = cities.find((c) => c.id === cityId);
+    try {
+      await setDoc(
+        doc(db, "drivers", user.uid),
+        { workingCityId: cityId, workingCityName: city?.name || null },
+        { merge: true }
+      );
+    } catch (error) {
+      Alert.alert("Could not change city", "Please try again.");
+    }
+  };
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -239,8 +257,30 @@ export default function DriverProfileScreen() {
         {group([
           { icon: "car-outline", title: vehicle || "Vehicle", detail: driver?.registrationNumber ? driver.registrationNumber.toUpperCase() : "Add your vehicle details", onPress: () => navigation.navigate("VehicleInformation") },
           { icon: "folder-open-outline", title: "My documents", detail: documentAlerts.length ? `${documentAlerts.length} need${documentAlerts.length === 1 ? "s" : ""} updating` : "Licence, insurance, MOT and more", onPress: () => navigation.navigate("DriverDocuments") },
-          { icon: "ribbon-outline", title: "Subscription", detail: driver?.subscription?.status === "active" ? "Active" : driver?.subscription?.status === "suspended" ? "Suspended, top up your wallet" : "Not set up", onPress: () => navigation.navigate("SubscriptionDetails") },
+          { icon: "ribbon-outline", title: "Membership", detail: ({ active: "Active", past_due: "Payment due", suspended: "Paused, payment needed" })[driver?.subscription?.status] || "Not set up", onPress: () => navigation.navigate("SubscriptionDetails") },
         ])}
+
+        {/* Working city: jobs are only offered from here once chosen. Hidden
+            until the dashboard lists at least one city. */}
+        {cities.length ? (
+          <SelectField
+            title="Where do you want to work?"
+            value={driver?.workingCityId || null}
+            options={cities.map((c) => ({ value: c.id, label: c.name }))}
+            onChange={saveWorkingCity}
+            renderTrigger={(open, selected) => (
+              <Card flush style={{ marginTop: 12 }}>
+                <ListRow
+                  icon="navigate-outline"
+                  title="Working city"
+                  detail={selected ? `${selected.label} · jobs picked up here only` : "Any area, choose a city"}
+                  onPress={open}
+                  last
+                />
+              </Card>
+            )}
+          />
+        ) : null}
 
         <Text style={styles.groupTitle}>Account</Text>
         {group([

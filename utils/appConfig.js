@@ -33,6 +33,7 @@ export const DEFAULT_APP_CONFIG = {
   },
   subscription: {
     monthlyPrice: 99.99,
+    graceDays: 3,
   },
   // Busy-time pricing. 1 means normal fares; 1.5 means 50% more.
   surge: {

@@ -28,6 +28,7 @@ import {
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { useAppConfig, currencySymbol, surgeMultiplier, cashEnabled } from '../../utils/appConfig';
+import { useCities, cityFor } from '../../utils/cities';
 import {
   COLORS,
   TYPE,
@@ -62,6 +63,8 @@ export default function FareEstimationScreen({ route }) {
   const currentUser = auth.currentUser;
 
   const appConfig = useAppConfig();
+  // Which working city the pickup is in, so only that city's drivers get it.
+  const cities = useCities();
   const [distance, setDistance] = useState(0);
   const [duration, setDuration] = useState(0);
   const [selectedRide, setSelectedRide] = useState('RouteMini');
@@ -243,6 +246,8 @@ export default function FareEstimationScreen({ route }) {
         },
 
         fareEstimate: fareDetails.total,
+        cityId: cityFor(cities, origin)?.id || null,
+        cityName: cityFor(cities, origin)?.name || null,
         currency: appConfig.currency,
         blockedDriverIds,
 

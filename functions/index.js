@@ -53,7 +53,7 @@ const stripe = new Proxy({}, {
 const CONFIG_DEFAULTS = {
   currency: "GBP",
   waiting: {freeMinutes: 5, ratePerMinute: 0.25, maxCharge: 10},
-  subscription: {monthlyPrice: 99.99},
+  subscription: {monthlyPrice: 99.99, graceDays: 3},
   drivers: {minimumPayout: 10},
   dispatch: {searchRadiusKm: 50, requestTimeoutSeconds: 20},
   cancellation: {fee: 0, freeMinutes: 2, driverSharePercent: 100},
@@ -97,6 +97,8 @@ async function loadAppConfig() {
     subscription: {
       monthlyPrice: numSetting(data.subscription, "monthlyPrice",
           d.subscription.monthlyPrice),
+      graceDays: numSetting(data.subscription, "graceDays",
+          d.subscription.graceDays),
     },
     drivers: {
       minimumPayout: numSetting(data.drivers, "minimumPayout",
@@ -301,20 +303,9 @@ exports.createSetupIntent = functions
       const uid = context.auth.uid;
 
       try {
-        const userDoc = await db.collection("riders").doc(uid).get();
-
-        if (!userDoc.exists) {
-          throw new functions.https.HttpsError("not-found", "User not found");
-        }
-
-        const stripeCustomerId = userDoc.data().stripeCustomerId;
-
-        if (!stripeCustomerId) {
-          throw new functions.https.HttpsError(
-              "failed-precondition",
-              "Stripe customer missing",
-          );
-        }
+        // A driver-only account has no Stripe customer yet; make one the
+        // first time they add a card (for their membership).
+        const stripeCustomerId = await ensureStripeCustomer(uid);
 
         const setupIntent = await stripe.setupIntents.create({
           customer: stripeCustomerId,
@@ -1574,7 +1565,15 @@ exports.autoDeductSubscription = functions
       // Price set on the dashboard (Settings, Subscription).
       const MONTHLY_PRICE = (await loadAppConfig()).subscription.monthlyPrice;
 
-      if (sub.status !== "active" || sub.paymentMethod !== "wallet_deduction") {
+      if (!["active", "past_due", "suspended"].includes(sub.status) ||
+        sub.paymentMethod !== "wallet_deduction") {
+        return null;
+      }
+
+      // Behind on payment: as soon as the wallet can cover it, take it and
+      // reinstate them.
+      if (sub.status !== "active") {
+        await collectMembership(driverId);
         return null;
       }
 
@@ -1663,18 +1662,207 @@ exports.autoDeductSubscription = functions
 
         console.log("Monthly sub £" + MONTHLY_PRICE +
           " deducted from driver " + driverId);
-      } else {
-      // Insufficient balance — suspend
-        await driverRef.update({
-          "subscription.status": "suspended",
-        });
-
-        console.log("Driver " + driverId + " suspended — insufficient balance");
       }
+      // Not enough in the wallet: leave it to renewDriverMemberships, which
+      // tries the card and gives a grace period before suspending.
 
       return null;
     });
 
+
+/* ======================================
+   DRIVER MEMBERSHIP: RENEWAL, CARD PAYMENT, GRACE
+   The membership is paid from the driver's wallet. A driver who works
+   mostly in cash may not have enough there, so a due renewal falls back to
+   the card saved on the account, then to a grace period (days set on the
+   dashboard) with a notification, and only then to suspension. Renewals
+   are checked daily, not only when money lands in the wallet.
+====================================== */
+
+/**
+ * Stripe customer for an account, created if it does not exist yet.
+ * Cards live on riders/{uid} whichever side of the app added them.
+ * @param {string} uid Account id.
+ * @return {Promise<string>} Stripe customer id.
+ */
+async function ensureStripeCustomer(uid) {
+  const ref = db.collection("riders").doc(uid);
+  const snap = await ref.get();
+  const existing = snap.exists ? snap.data().stripeCustomerId : null;
+  if (existing) return existing;
+  const customer = await stripe.customers.create({metadata: {uid}},
+      {idempotencyKey: `customer_${uid}`});
+  await ref.set({stripeCustomerId: customer.id}, {merge: true});
+  return customer.id;
+}
+
+/**
+ * Takes one membership payment for a driver: wallet first, then card.
+ * @param {string} driverId Driver id.
+ * @param {Object} opts {cardOnly: pay by card even if the wallet could}.
+ * @return {Promise<Object>} {paid, method, amount, reason}.
+ */
+async function collectMembership(driverId, opts = {}) {
+  const cfg = await loadAppConfig();
+  const price = cfg.subscription.monthlyPrice;
+  const driverRef = db.collection("drivers").doc(driverId);
+  const driverSnap = await driverRef.get();
+  if (!driverSnap.exists) return {paid: false, reason: "no_driver"};
+  const sub = driverSnap.data().subscription || {};
+  const debt = Number(sub.debtAmount) || 0;
+  const amount = Math.round((debt > 0 ? debt : price) * 100) / 100;
+  if (!(amount > 0)) return {paid: false, reason: "nothing_due"};
+
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const next = new Date();
+  next.setMonth(next.getMonth() + 1);
+  const paidFields = {
+    "subscription.status": "active",
+    "subscription.debtAmount": 0,
+    "subscription.lastPaidAt": now,
+    "subscription.graceUntil": null,
+    "subscription.nextBillingDate": admin.firestore.Timestamp.fromDate(next),
+  };
+
+  // 1. Wallet, in a transaction so two runs cannot both spend it.
+  if (!opts.cardOnly) {
+    const walletRef = db.collection("driverWallets").doc(driverId);
+    const fromWallet = await db.runTransaction(async (tx) => {
+      const w = await tx.get(walletRef);
+      const balance = w.exists ? Number(w.data().availableBalance) || 0 : 0;
+      if (balance < amount) return false;
+      tx.update(walletRef, {
+        availableBalance: admin.firestore.FieldValue.increment(-amount),
+        totalWithdrawn: admin.firestore.FieldValue.increment(amount),
+        updatedAt: now,
+      });
+      tx.set(walletRef.collection("transactions").doc(), {
+        amount: -amount,
+        description: "Monthly membership",
+        type: "subscription_deduction",
+        status: "completed",
+        createdAt: now,
+        updatedAt: now,
+      });
+      tx.update(driverRef, paidFields);
+      return true;
+    });
+    if (fromWallet) return {paid: true, method: "wallet", amount};
+  }
+
+  // 2. The card saved on the account.
+  const riderSnap = await db.collection("riders").doc(driverId).get();
+  const r = riderSnap.exists ? riderSnap.data() : {};
+  if (!r.stripeCustomerId || !r.defaultPaymentMethodId) {
+    return {paid: false, reason: "no_card", amount};
+  }
+  try {
+    const period = new Date().toISOString().slice(0, 7);
+    const intent = await stripe.paymentIntents.create({
+      amount: Math.round(amount * 100),
+      currency: cfg.currency.toLowerCase(),
+      customer: r.stripeCustomerId,
+      payment_method: r.defaultPaymentMethodId,
+      confirm: true,
+      off_session: true,
+      metadata: {driverId, type: "membership"},
+    }, {idempotencyKey: `membership_${driverId}_${period}_${amount}`});
+    await driverRef.update(paidFields);
+    await db.collection("driverWallets").doc(driverId)
+        .collection("transactions").doc().set({
+          amount: 0,
+          cardAmount: amount,
+          description: "Monthly membership, paid by card",
+          type: "subscription_card_payment",
+          paymentIntentId: intent.id,
+          status: "completed",
+          createdAt: now,
+          updatedAt: now,
+        });
+    return {paid: true, method: "card", amount};
+  } catch (error) {
+    console.error("Membership card charge failed:", driverId, error.message);
+    return {paid: false, reason: "card_declined", amount};
+  }
+}
+
+/* Daily: renew due memberships, and suspend when a grace period has run
+   out. Runs whether or not the wallet has moved. */
+exports.renewDriverMemberships = functions
+    .runWith({secrets: STRIPE_SECRETS})
+    .pubsub.schedule("every day 06:00").timeZone("Europe/London")
+    .onRun(async () => {
+      const cfg = await loadAppConfig();
+      const graceMs = cfg.subscription.graceDays * 24 * 3600 * 1000;
+      const now = Date.now();
+      const due = await db.collection("drivers")
+          .where("subscription.nextBillingDate", "<=",
+              admin.firestore.Timestamp.fromMillis(now))
+          .get();
+
+      for (const doc of due.docs) {
+        const sub = doc.data().subscription || {};
+        if (!["active", "past_due"].includes(sub.status)) continue;
+        if (sub.paymentMethod && sub.paymentMethod !== "wallet_deduction") {
+          continue;
+        }
+
+        const result = await collectMembership(doc.id);
+        if (result.paid) {
+          await sendPush([doc.id], {
+            title: "Membership renewed",
+            body: result.method === "card" ?
+              "Your wallet was short, so we charged your card." :
+              "Taken from your wallet. You're all set for another month.",
+            channelId: "general",
+          }).catch(() => null);
+          continue;
+        }
+
+        const graceUntil = toMillis(sub.graceUntil);
+        if (sub.status === "active" || !graceUntil) {
+          await doc.ref.update({
+            "subscription.status": "past_due",
+            "subscription.graceUntil":
+              admin.firestore.Timestamp.fromMillis(now + graceMs),
+          });
+          await sendPush([doc.id], {
+            title: "Membership payment due",
+            body: "Add money to your wallet or a card within " +
+              `${cfg.subscription.graceDays} days to keep driving.`,
+            channelId: "general",
+          }).catch(() => null);
+        } else if (graceUntil <= now) {
+          await doc.ref.update({"subscription.status": "suspended"});
+          await sendPush([doc.id], {
+            title: "Account paused",
+            body: "Your membership is unpaid. Pay from the Membership " +
+              "screen to go online again.",
+            channelId: "general",
+          }).catch(() => null);
+        }
+      }
+      return null;
+    });
+
+/* The driver pays now, by card, from the Membership screen. */
+exports.payDriverMembership = functions
+    .runWith({secrets: STRIPE_SECRETS})
+    .https.onCall(async (data, context) => {
+      if (!context.auth) {
+        throw new functions.https.HttpsError("unauthenticated",
+            "Please sign in.");
+      }
+      const result = await collectMembership(context.auth.uid,
+          {cardOnly: data && data.cardOnly === true});
+      if (result.paid) return result;
+      const message = {
+        no_card: "Add a card first, then try again.",
+        card_declined: "Your card was declined. Try another card.",
+        nothing_due: "Nothing is due right now.",
+      }[result.reason] || "Payment did not go through. Please try again.";
+      throw new functions.https.HttpsError("failed-precondition", message);
+    });
 
 /* ======================================
    PUSH NOTIFICATIONS
@@ -1818,6 +2006,9 @@ async function offerRideToDrivers(rideId, ride) {
       return;
     }
     if (!canServe(d.vehicleType, ride.rideType)) return;
+    // A driver who chose a working city only gets that city's jobs.
+    // Same rule as servesCity() in the app's utils/cities.js.
+    if (d.workingCityId && d.workingCityId !== ride.cityId) return;
     const km = distanceKm(d.location, ride.pickupLocation);
     if (km <= cfg.dispatch.searchRadiusKm) nearby.push(snap.id);
   });

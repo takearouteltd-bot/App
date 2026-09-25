@@ -155,3 +155,20 @@ match /driverLocations/{driverId} {
 ```
 
 Without this rule the app keeps working, it just shows no nearby cars.
+
+## Working cities
+
+Managed on the dashboard (Settings, Working cities). Everyone signed in reads
+the list (drivers pick from it, bookings are tagged with it); only admins
+change it.
+
+```
+match /cities/{cityId} {
+  allow read: if request.auth != null;
+  allow write: if isAdmin();   // your existing admin check
+}
+```
+
+Drivers set their own `workingCityId` and `workingCityName` on
+`drivers/{uid}`. If you deployed the change-request lock (above), make sure
+these two fields stay editable by the driver.
