@@ -34,6 +34,7 @@ import { useAppConfig, currencySymbol } from '../../../utils/appConfig';
 import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocuments';
 import { canServe, classLabel } from '../../../constants/vehicleClasses';
 import { servesCity } from '../../../utils/cities';
+import { biddingEnabled, counterSteps, offerSeconds, sendCounterOffer } from '../../../utils/bidding';
 import { clearJobAlerts } from '../../../utils/notifications';
 import { COLORS, TYPE, SPACE, RADIUS, SHADOW } from '../../../components/ui/kit';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -62,7 +63,8 @@ export default function DriverHomeScreen() {
   const navigation = useNavigation();
 
   const [location, setLocation] = useState(null);
-  const { dispatch: dispatchConfig, drivers: driverConfig } = useAppConfig();
+  const appConfig = useAppConfig();
+  const { dispatch: dispatchConfig, drivers: driverConfig } = appConfig;
   const maxShiftHours = driverConfig.maxShiftHours; // 0 means unlimited
   const searchRadiusKm = dispatchConfig.searchRadiusKm;
 
@@ -78,6 +80,12 @@ export default function DriverHomeScreen() {
   const [membershipStatus, setMembershipStatus] = useState(null);
   const [workingCityId, setWorkingCityId] = useState(null);
   const [femaleVerified, setFemaleVerified] = useState(false);
+  // What a passenger sees on this driver's counter-offers.
+  const [driverCard, setDriverCard] = useState(null);
+  // Counter-offers sent, by ride id, so the card can say it is waiting.
+  const [sentOffers, setSentOffers] = useState({});
+  const [sending, setSending] = useState(false);
+  const takenOver = useRef(false);
   const [loading, setLoading] = useState(true);
 
   const [rideRequests, setRideRequests] = useState([]);
@@ -149,6 +157,13 @@ export default function DriverHomeScreen() {
       setMembershipStatus(data.subscription?.status || null);
       setWorkingCityId(data.workingCityId || null);
       setFemaleVerified(data.femaleVerified === true);
+      setDriverCard({
+        name: data.firstName || (data.fullName || '').split(' ')[0] || 'Driver',
+        rating: data.rating || null,
+        ratingCount: data.ratingCount || 0,
+        vehicle: [data.vehicleColor, data.makeModel].filter(Boolean).join(' ') || null,
+        photoUrl: data.selfieUrl || null,
+      });
       setDocumentAlerts(expiryAlertsFor(data));
       const started = data.shiftStartedAt?.toMillis?.() ?? null;
       setShiftStartedAt(started);
@@ -446,7 +461,12 @@ export default function DriverHomeScreen() {
   useEffect(() => {
     if (!rideRequests.length) return undefined;
 
-    setTimer(Math.max(5, Math.round(dispatchConfig.requestTimeoutSeconds || 15)));
+    const waitingOnCounter = sentOffers[rideRequests[currentIndex]?.id];
+    setTimer(
+      waitingOnCounter
+        ? offerSeconds(appConfig)
+        : Math.max(5, Math.round(dispatchConfig.requestTimeoutSeconds || 15))
+    );
 
     const interval = setInterval(() => {
       setTimer((prev) => {
@@ -460,10 +480,52 @@ export default function DriverHomeScreen() {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [currentIndex, rideRequests, dispatchConfig.requestTimeoutSeconds, advanceQueue]);
+  }, [currentIndex, rideRequests, dispatchConfig.requestTimeoutSeconds, advanceQueue, sentOffers, appConfig]);
+
+  /* Bidding: offer the passenger a higher price instead of accepting theirs. */
+  const handleCounter = async (ride, price) => {
+    if (!driverId || !driverCard || sending) return;
+    setSending(true);
+    try {
+      await sendCounterOffer(ride.id, { id: driverId, ...driverCard }, price, appConfig);
+      setSentOffers((m) => ({ ...m, [ride.id]: price }));
+    } catch (error) {
+      Alert.alert('Offer not sent', 'Please try again.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  /* A passenger took this driver's counter-offer: the ride now names them as
+     the driver. Claim it on the driver record and start the trip, just as
+     accepting a fare does. */
+  useEffect(() => {
+    if (!driverId) return undefined;
+    return onSnapshot(
+      query(collection(db, 'rides'), where('driverId', '==', driverId), where('status', '==', 'accepted')),
+      async (snap) => {
+        const mine = snap.docs[0];
+        if (!mine || takenOver.current || isAccepting) return;
+        takenOver.current = true;
+        try {
+          await setDoc(
+            doc(db, 'drivers', driverId),
+            { isOnRide: true, currentRideId: mine.id, status: 'on_ride' },
+            { merge: true }
+          );
+        } catch (error) {
+          console.log('Could not claim the ride on the driver record:', error);
+        }
+        clearJobAlerts();
+        navigation.replace('DriverRideInProgress', { rideId: mine.id });
+      },
+      () => {}
+    );
+  }, [driverId, navigation, isAccepting]);
 
   const handleAcceptRide = async (ride) => {
     if (isAccepting) return;
+    takenOver.current = true;
     setIsAccepting(true);
 
     try {
@@ -507,6 +569,7 @@ export default function DriverHomeScreen() {
       navigation.replace('DriverRideInProgress', { rideId: ride.id });
     } catch (error) {
       console.log(error);
+      takenOver.current = false;
       Alert.alert('Job not taken', error?.message || 'This job is no longer available.');
       advanceQueue();
     } finally {
@@ -553,6 +616,9 @@ export default function DriverHomeScreen() {
         }
 
         if (navigateTo) {
+          // Only one of this and the assignment listener may navigate.
+          if (takenOver.current) return;
+          takenOver.current = true;
           navigation.replace(navigateTo, { rideId: driverData.currentRideId });
           return; // leaving this screen
         }
@@ -781,9 +847,40 @@ export default function DriverHomeScreen() {
             accessibilityRole="button"
           >
             <Text style={styles.acceptText}>
-              {isAccepting ? 'Accepting…' : `Accept · ${timer}s`}
+              {isAccepting
+                ? 'Accepting…'
+                : currentRide.bidding
+                ? `Accept ${currencySymbol()}${Number(currentRide.fareEstimate || 0).toFixed(2)} · ${timer}s`
+                : `Accept · ${timer}s`}
             </Text>
           </TouchableOpacity>
+
+          {/* Bidding: counter with a higher price instead. */}
+          {currentRide.bidding && biddingEnabled(appConfig) ? (
+            sentOffers[currentRide.id] ? (
+              <Text style={styles.counterSent}>
+                You offered {currencySymbol()}
+                {Number(sentOffers[currentRide.id]).toFixed(2)}. Waiting for the passenger…
+              </Text>
+            ) : (
+              <View style={styles.counterRow}>
+                {counterSteps(Number(currentRide.fareEstimate || 0), appConfig).map((price) => (
+                  <TouchableOpacity
+                    key={price}
+                    style={[styles.counterChip, sending && { opacity: 0.6 }]}
+                    onPress={() => handleCounter(currentRide, price)}
+                    disabled={sending}
+                    accessibilityLabel={`Offer ${price.toFixed(2)}`}
+                  >
+                    <Text style={styles.counterChipText}>
+                      {currencySymbol()}
+                      {price.toFixed(2)}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )
+          ) : null}
 
           <TouchableOpacity style={styles.decline} onPress={advanceQueue} activeOpacity={0.7}>
             <Text style={styles.declineText}>Decline</Text>
@@ -914,5 +1011,13 @@ const styles = StyleSheet.create({
   },
   acceptText: { fontSize: 16, fontWeight: '800', color: COLORS.white, letterSpacing: -0.2 },
   decline: { alignItems: 'center', paddingVertical: SPACE[4] },
+  counterRow: { flexDirection: 'row', gap: SPACE[2], marginTop: SPACE[3] },
+  counterChip: {
+    flex: 1, height: 44, borderRadius: RADIUS.sm,
+    borderWidth: 1.5, borderColor: COLORS.green, backgroundColor: COLORS.greenSoft,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  counterChipText: { fontSize: 15, fontWeight: '800', color: COLORS.navy },
+  counterSent: { ...TYPE.small, textAlign: 'center', marginTop: SPACE[3], color: COLORS.navy, fontWeight: '600' },
   declineText: { fontSize: 15, fontWeight: '700', color: COLORS.muted },
 });

@@ -172,3 +172,33 @@ match /cities/{cityId} {
 Drivers set their own `workingCityId` and `workingCityName` on
 `drivers/{uid}`. If you deployed the change-request lock (above), make sure
 these two fields stay editable by the driver.
+
+## Bidding: counter-offers (rides/{rideId}/offers/{driverId})
+
+A driver writes one offer per ride, under their own uid. The passenger reads
+the offers on their own ride and marks the one they take as accepted (in the
+same transaction that assigns the ride).
+
+```
+match /rides/{rideId}/offers/{driverId} {
+  allow read: if request.auth != null && (
+    request.auth.uid == driverId ||
+    get(/databases/$(database)/documents/rides/$(rideId)).data.riderId == request.auth.uid
+  );
+  // A driver may create or replace only their own offer, and only while the
+  // ride is still looking for a driver.
+  allow create, update: if request.auth != null && (
+      (request.auth.uid == driverId
+        && request.resource.data.driverId == driverId
+        && request.resource.data.status == 'pending'
+        && get(/databases/$(database)/documents/rides/$(rideId)).data.status == 'searching')
+      || (get(/databases/$(database)/documents/rides/$(rideId)).data.riderId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']))
+  );
+}
+```
+
+The passenger's accept also updates the ride (status, driverId, price) from
+the passenger's side. Your `rides/{rideId}` update rule must allow the
+ride's own passenger to move it from `searching` to `accepted` with the
+driverId of an offer on it.

@@ -52,6 +52,13 @@ export const DEFAULT_APP_CONFIG = {
     enabled: 1,
     waitSeconds: 60,
   },
+  // inDrive-style bidding (utils/bidding.js). 0 keeps fixed fares.
+  bidding: {
+    enabled: 0,
+    minOfferPercent: 100,
+    maxCounterPercent: 50,
+    offerSeconds: 60,
+  },
   // 1 lets passengers choose to pay the driver in cash.
   payments: {
     cashEnabled: 0,
@@ -83,6 +90,7 @@ export function normaliseAppConfig(raw) {
     cancellation: mergeSection(DEFAULT_APP_CONFIG.cancellation, data.cancellation),
     payments: mergeSection(DEFAULT_APP_CONFIG.payments, data.payments),
     femaleDriver: mergeSection(DEFAULT_APP_CONFIG.femaleDriver, data.femaleDriver),
+    bidding: mergeSection(DEFAULT_APP_CONFIG.bidding, data.bidding),
   };
 }
 

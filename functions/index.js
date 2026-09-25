@@ -2036,6 +2036,31 @@ exports.notifyDriversOfNewRide = functions.firestore
       return offerRideToDrivers(context.params.rideId, ride);
     });
 
+/* Bidding: a driver countered the passenger's offer. Tell the passenger,
+   since they may have put the phone down while waiting. */
+exports.notifyRiderOfCounterOffer = functions.firestore
+    .document("rides/{rideId}/offers/{driverId}")
+    .onWrite(async (change, context) => {
+      const offer = change.after.exists ? change.after.data() : null;
+      if (!offer || offer.status !== "pending") return null;
+      const before = change.before.exists ? change.before.data() : null;
+      if (before && before.price === offer.price) return null;
+
+      const rideSnap = await db.collection("rides")
+          .doc(context.params.rideId).get();
+      const ride = rideSnap.exists ? rideSnap.data() : null;
+      if (!ride || ride.status !== "searching" || !ride.riderId) return null;
+
+      await sendPush([ride.riderId], {
+        title: `${offer.driverName || "A driver"} offered ` +
+          emailMoney(offer.price, rideCurrency(ride).toUpperCase()),
+        body: "Open TakeARoute to accept or wait for more offers.",
+        channelId: "trip-updates",
+        data: {type: "counter_offer", rideId: context.params.rideId},
+      });
+      return null;
+    });
+
 /* The passenger gave up on a female driver: offer the job to everyone who
    was held back the first time. */
 exports.reofferWhenPreferenceDropped = functions.firestore

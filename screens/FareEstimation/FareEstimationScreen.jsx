@@ -29,6 +29,7 @@ import {
 import { getAuth } from 'firebase/auth';
 import { useAppConfig, currencySymbol, surgeMultiplier, cashEnabled, femaleDriverEnabled } from '../../utils/appConfig';
 import { useCities, cityFor } from '../../utils/cities';
+import { biddingEnabled, minOffer, fareAtPrice } from '../../utils/bidding';
 import {
   COLORS,
   TYPE,
@@ -76,6 +77,11 @@ export default function FareEstimationScreen({ route }) {
   // Card unless the dashboard allows cash and the passenger picks it.
   const [paymentMethod, setPaymentMethod] = useState('card');
   const allowCash = cashEnabled(appConfig);
+
+  // Bidding: the passenger names their price, from the recommended fare up.
+  const bidding = biddingEnabled(appConfig);
+  const [offer, setOffer] = useState(null);
+  useEffect(() => setOffer(null), [selectedRide, distance, duration, promoApplied]);
 
   // Female driver: starts from the passenger's saved preference.
   const allowFemaleOnly = femaleDriverEnabled(appConfig);
@@ -212,7 +218,12 @@ export default function FareEstimationScreen({ route }) {
 
     try {
       const selectedOption = RIDE_OPTIONS.find((r) => r.id === selectedRide);
-      const fareDetails = calculateFareDetails(selectedOption.multiplier);
+      const recommendedFare = calculateFareDetails(selectedOption.multiplier);
+      // With bidding, the ride is priced at the passenger's offer; the
+      // recommendation is kept on the fare for reference.
+      const fareDetails = bidding
+        ? fareAtPrice(recommendedFare, Math.max(offer ?? recommendedFare.total, minOffer(recommendedFare.total, appConfig)))
+        : recommendedFare;
 
       // Drivers this passenger asked not to be matched with again.
       let blockedDriverIds = [];
@@ -256,6 +267,8 @@ export default function FareEstimationScreen({ route }) {
         },
 
         fareEstimate: fareDetails.total,
+        bidding,
+        offeredFare: bidding ? fareDetails.total : null,
         femaleDriverOnly: allowFemaleOnly && femaleOnly,
         cityId: cityFor(cities, origin)?.id || null,
         cityName: cityFor(cities, origin)?.name || null,
@@ -317,6 +330,10 @@ export default function FareEstimationScreen({ route }) {
 
   const selectedOption = RIDE_OPTIONS.find((r) => r.id === selectedRide);
   const fare = calculateFareDetails(selectedOption.multiplier);
+  const floor = minOffer(fare.total, appConfig);
+  const offerValue = Math.max(offer ?? fare.total, floor);
+  const nudgeOffer = (delta) =>
+    setOffer(Math.max(floor, Math.round((offerValue + delta) * 2) / 2));
   const money = (n) => `${currencySymbol()}${Number(n).toFixed(2)}`;
 
   // Averaging a missing coordinate gives NaN, and the map opens on 0,0.
@@ -439,6 +456,33 @@ export default function FareEstimationScreen({ route }) {
           </ScrollView>
 
           <Text style={styles.classDescription}>{selectedOption.description}</Text>
+
+          {bidding && routeCalculated ? (
+            <View style={styles.offerBox}>
+              <View style={{ flex: 1 }}>
+                <Text style={TYPE.label}>Your offer</Text>
+                <Text style={styles.offerValue}>{money(offerValue)}</Text>
+                <Text style={TYPE.caption}>
+                  Recommended {money(fare.total)}. Drivers can accept or offer more.
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.offerStep, offerValue <= floor && { opacity: 0.35 }]}
+                onPress={() => nudgeOffer(-0.5)}
+                disabled={offerValue <= floor}
+                accessibilityLabel="Lower your offer"
+              >
+                <Ionicons name="remove" size={22} color={COLORS.navy} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.offerStep}
+                onPress={() => nudgeOffer(0.5)}
+                accessibilityLabel="Raise your offer"
+              >
+                <Ionicons name="add" size={22} color={COLORS.navy} />
+              </TouchableOpacity>
+            </View>
+          ) : null}
 
           {/* Payment. Cash appears only when the dashboard allows it. */}
           {allowCash ? (
@@ -600,10 +644,14 @@ export default function FareEstimationScreen({ route }) {
           ) : (
             <>
               <Text style={styles.confirmText}>
-                {routeCalculated ? `Book ${selectedOption.label}` : 'Working out your route…'}
+                {!routeCalculated
+                  ? 'Working out your route…'
+                  : bidding
+                  ? `Offer for ${selectedOption.label}`
+                  : `Book ${selectedOption.label}`}
               </Text>
               {routeCalculated ? (
-                <Text style={styles.confirmPrice}>{money(fare.total)}</Text>
+                <Text style={styles.confirmPrice}>{money(bidding ? offerValue : fare.total)}</Text>
               ) : null}
             </>
           )}
@@ -682,6 +730,17 @@ const styles = StyleSheet.create({
   },
   payLabel: { ...TYPE.callout },
   payChoice: { flexDirection: 'row', gap: SPACE[3], paddingTop: SPACE[3] },
+  offerBox: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
+    padding: SPACE[4], marginBottom: SPACE[4],
+    borderRadius: RADIUS.md, backgroundColor: COLORS.greenSoft,
+  },
+  offerValue: { fontSize: 26, fontWeight: '800', color: COLORS.navy, letterSpacing: -0.6, marginVertical: 2 },
+  offerStep: {
+    width: 44, height: 44, borderRadius: 22, backgroundColor: COLORS.white,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.lineStrong,
+  },
   payOption: {
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACE[2],
     height: 44, borderRadius: RADIUS.md,

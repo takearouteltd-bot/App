@@ -14,10 +14,11 @@ import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import MapViewDirections from 'react-native-maps-directions';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
-import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { getAuth } from 'firebase/auth';
-import { currencySymbol, useAppConfig } from '../../utils/appConfig';
+import { currencySymbol, useAppConfig, money } from '../../utils/appConfig';
+import { acceptCounterOffer, raiseOffer } from '../../utils/bidding';
 import {
   COLORS, TYPE, SPACE, RADIUS, SHADOW, IconButton, RouteLine,
   MapUnavailable, isCoord, validCoords, regionCovering,
@@ -65,6 +66,47 @@ export default function RideRequestScreen() {
   const [widening, setWidening] = useState(false);
   const askToWiden =
     isSearching && rideData?.femaleDriverOnly === true && elapsed >= keepWaitingUntil;
+
+  // Bidding: drivers' counter-offers for this ride, live.
+  const [offers, setOffers] = useState([]);
+  const [taking, setTaking] = useState(null);
+  const [raising, setRaising] = useState(false);
+  useEffect(() => {
+    if (!rideId || !rideData?.bidding) return undefined;
+    return onSnapshot(collection(db, 'rides', rideId, 'offers'), (snap) =>
+      setOffers(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    );
+  }, [rideId, rideData?.bidding]);
+
+  // `elapsed` ticks every second, so expired offers drop out on their own.
+  const liveOffers = offers
+    .filter((o) => o.status === 'pending' && Number(o.expiresAtMs) > Date.now())
+    .sort((a, b) => a.price - b.price)
+    .slice(0, 4);
+
+  const takeOffer = async (offer) => {
+    setTaking(offer.driverId);
+    try {
+      await acceptCounterOffer(rideId, offer);
+      // The ride listener hands over to tracking.
+    } catch (error) {
+      Alert.alert('Could not take that offer', error.message || 'Please try again.');
+    } finally {
+      setTaking(null);
+    }
+  };
+
+  const bumpOffer = async (by) => {
+    if (!rideData) return;
+    setRaising(true);
+    try {
+      await raiseOffer(rideId, rideData, Number(rideData.offeredFare || rideData.fareEstimate) + by);
+    } catch (error) {
+      Alert.alert('Could not raise your offer', 'Please try again.');
+    } finally {
+      setRaising(false);
+    }
+  };
 
   const findAnyDriver = async () => {
     setWidening(true);
@@ -283,6 +325,60 @@ export default function RideRequestScreen() {
               </View>
             ) : null}
 
+            {rideData.bidding ? (
+              <View style={styles.bid}>
+                <View style={styles.bidRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={TYPE.label}>Your offer</Text>
+                    <Text style={styles.bidValue}>{money(rideData.offeredFare ?? fareEstimate, rideData.currency)}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.raise, raising && { opacity: 0.6 }]}
+                    onPress={() => bumpOffer(1)}
+                    disabled={raising}
+                  >
+                    <Text style={styles.raiseText}>Raise {money(1, rideData.currency)}</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {liveOffers.length ? (
+                  <Text style={[TYPE.label, { marginTop: SPACE[3] }]}>Drivers offering</Text>
+                ) : (
+                  <Text style={[TYPE.small, { marginTop: SPACE[2] }]}>
+                    Nearby drivers can accept your offer or come back with theirs.
+                  </Text>
+                )}
+                {liveOffers.map((o) => {
+                  const left = Math.max(0, Math.round((Number(o.expiresAtMs) - Date.now()) / 1000));
+                  return (
+                    <View key={o.id} style={styles.driverOffer}>
+                      <View style={styles.offerAvatar}>
+                        <Text style={styles.offerInitial}>{(o.driverName || 'D').charAt(0).toUpperCase()}</Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.offerName} numberOfLines={1}>
+                          {o.driverName}{o.rating ? `  ★ ${Number(o.rating).toFixed(1)}` : ''}
+                        </Text>
+                        <Text style={TYPE.caption} numberOfLines={1}>
+                          {[o.vehicle, `${left}s left`].filter(Boolean).join(' · ')}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={[styles.takeOffer, taking && { opacity: 0.6 }]}
+                        onPress={() => takeOffer(o)}
+                        disabled={!!taking}
+                        accessibilityLabel={`Accept ${o.driverName}'s offer of ${money(o.price, rideData.currency)}`}
+                      >
+                        <Text style={styles.takeOfferText}>
+                          {taking === o.driverId ? '…' : money(o.price, rideData.currency)}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </View>
+            ) : null}
+
             <View style={styles.facts}>
               <Fact icon="card-outline" text={`${currencySymbol()}${fareEstimate}`} />
               <Fact icon="navigate-outline" text={`${distanceKm} km`} />
@@ -349,6 +445,34 @@ function Fact({ icon, text }) {
 }
 
 const styles = StyleSheet.create({
+  bid: { alignSelf: 'stretch', marginTop: SPACE[4] },
+  bidRow: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
+    padding: SPACE[4], borderRadius: RADIUS.md, backgroundColor: COLORS.greenSoft,
+  },
+  bidValue: { fontSize: 24, fontWeight: '800', color: COLORS.navy, letterSpacing: -0.5, marginTop: 2 },
+  raise: {
+    height: 40, paddingHorizontal: SPACE[4], borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.white, borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.lineStrong,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  raiseText: { fontSize: 14, fontWeight: '700', color: COLORS.navy },
+  driverOffer: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
+    paddingVertical: SPACE[3],
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.line,
+  },
+  offerAvatar: {
+    width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.blueSoft,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  offerInitial: { fontSize: 16, fontWeight: '800', color: COLORS.navy },
+  offerName: { ...TYPE.callout, color: COLORS.navy },
+  takeOffer: {
+    minWidth: 84, height: 42, paddingHorizontal: SPACE[3], borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.green, alignItems: 'center', justifyContent: 'center',
+  },
+  takeOfferText: { fontSize: 15, fontWeight: '800', color: COLORS.white },
   widen: {
     alignSelf: 'stretch', marginTop: SPACE[4], padding: SPACE[4],
     borderRadius: RADIUS.md, backgroundColor: COLORS.amberSoft,
