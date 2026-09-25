@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, SafeAreaView, ActivityIndicator, ScrollView } from 'react-native';
 import { Alert } from '../../../components/ui/alert';
 import { auth, db, functions } from '../../../config/firebase';
-import { doc, getDoc, updateDoc, Timestamp, collection, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, collection, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { useNavigation } from '@react-navigation/native';
 import { money, useAppConfig } from '../../../utils/appConfig';
@@ -84,6 +84,9 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
     loadSubscription();
   }, [loadSubscription]);
 
+  // Activation runs on the server (activateDriverMembership), which sets
+  // the membership up and takes the first month from the wallet or card.
+  // The app used to write the wallet balance itself.
   const handleActivate = async () => {
     if (!driverId) {
       Alert.alert('Not signed in', 'Please sign in again.');
@@ -91,49 +94,19 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
     }
     setLoading(true);
     try {
-      const driverRef = doc(db, 'drivers', driverId);
-      const driverSnap = await getDoc(driverRef);
-      if (!driverSnap.exists()) throw new Error('Driver profile not found.');
-
-      const walletRef = doc(db, 'driverWallets', driverId);
-      const walletSnap = await getDoc(walletRef);
-      if (!walletSnap.exists()) throw new Error('Wallet not found.');
-
-      const walletData = walletSnap.data();
-      const available = walletData.availableBalance || 0;
-      const now = new Date();
-      const nextBilling = new Date(now.getFullYear(), now.getMonth() + 1, now.getDate());
-      const payingNow = available >= MONTHLY_PRICE;
-
-      if (payingNow) {
-        await updateDoc(walletRef, {
-          availableBalance: available - MONTHLY_PRICE,
-          totalWithdrawn: (walletData.totalWithdrawn || 0) + MONTHLY_PRICE,
-          updatedAt: Timestamp.now(),
-        });
-      }
-
-      await updateDoc(driverRef, {
-        subscription: {
-          status: 'active',
-          tier: 'monthly',
-          amount: MONTHLY_PRICE,
-          nextBillingDate: Timestamp.fromDate(nextBilling),
-          lastPaidAt: payingNow ? Timestamp.now() : null,
-          paymentMethod: 'wallet_deduction',
-          debtAmount: payingNow ? 0 : MONTHLY_PRICE,
-        },
-        // The field App.js and the profile screen actually read. This used to
-        // write "onboardingCompleted", which nothing has ever read.
-        onboardingComplete: true,
-      });
+      const activate = httpsCallable(functions, 'activateDriverMembership');
+      const { data } = await activate({});
 
       setOnboardingStatus?.('complete');
 
       Alert.alert(
-        'Subscription active',
-        payingNow
-          ? `${money(MONTHLY_PRICE)} has been taken from your wallet. You are all set.`
+        'Membership active',
+        data?.alreadyActive
+          ? 'Your membership is already active.'
+          : data?.paid
+          ? data.method === 'card'
+            ? `${money(MONTHLY_PRICE)} was charged to your card. You are all set.`
+            : `${money(MONTHLY_PRICE)} has been taken from your wallet. You are all set.`
           : `${money(MONTHLY_PRICE)} will come out of your earnings as soon as your wallet reaches that amount.`
       );
 

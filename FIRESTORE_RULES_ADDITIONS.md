@@ -202,3 +202,31 @@ The passenger's accept also updates the ride (status, driverId, price) from
 the passenger's side. Your `rides/{rideId}` update rule must allow the
 ride's own passenger to move it from `searching` to `accepted` with the
 driverId of an offer on it.
+
+## Money is written by the server only
+
+Wallets, membership activation, renewals, withdrawals and fees now all run in
+Cloud Functions (which bypass these rules). The app only reads them, so
+clients can be refused outright: a driver must never be able to give
+themselves a balance or mark their membership paid.
+
+```
+match /driverWallets/{driverId} {
+  allow read: if request.auth != null && request.auth.uid == driverId;
+  allow write: if false;
+  match /transactions/{tx} {
+    allow read: if request.auth != null && request.auth.uid == driverId;
+    allow write: if false;
+  }
+}
+
+// Inside your existing match /drivers/{driverId}: a driver may not change
+// their own membership, verification or approval.
+allow update: if request.auth.uid == driverId
+  && !request.resource.data.diff(resource.data).affectedKeys()
+       .hasAny(['subscription', 'femaleVerified', 'approved', 'blocked'])
+  // ... plus your existing conditions
+```
+
+(Admins' own rule for the dashboard, and your existing admin read of wallet
+transactions for the revenue panel, stay as they are.)

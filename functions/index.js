@@ -1845,6 +1845,54 @@ exports.renewDriverMemberships = functions
       return null;
     });
 
+/* First activation, from the Membership screen. This used to be done by
+   the app writing the driver's own wallet balance and subscription, which
+   the phone should never be trusted to do. Now the server sets the
+   membership up and takes the first month the same way as a renewal:
+   wallet, then saved card. If neither covers it, the membership starts with
+   the month owed, taken as soon as the wallet can pay it (as before). */
+exports.activateDriverMembership = functions
+    .runWith({secrets: STRIPE_SECRETS})
+    .https.onCall(async (data, context) => {
+      if (!context.auth) {
+        throw new functions.https.HttpsError("unauthenticated",
+            "Please sign in.");
+      }
+      const uid = context.auth.uid;
+      const driverRef = db.collection("drivers").doc(uid);
+      const snap = await driverRef.get();
+      if (!snap.exists) {
+        throw new functions.https.HttpsError("not-found",
+            "Driver profile not found.");
+      }
+      const current = (snap.data().subscription || {}).status;
+      if (["active", "past_due"].includes(current)) {
+        return {alreadyActive: true};
+      }
+
+      const cfg = await loadAppConfig();
+      const price = cfg.subscription.monthlyPrice;
+      const next = new Date();
+      next.setMonth(next.getMonth() + 1);
+      await driverRef.set({
+        subscription: {
+          status: "active",
+          tier: "monthly",
+          amount: price,
+          paymentMethod: "wallet_deduction",
+          debtAmount: price,
+          lastPaidAt: null,
+          graceUntil: null,
+          nextBillingDate: admin.firestore.Timestamp.fromDate(next),
+          activatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        onboardingComplete: true,
+      }, {merge: true});
+
+      const result = await collectMembership(uid);
+      return {paid: result.paid, method: result.method || null, amount: price};
+    });
+
 /* The driver pays now, by card, from the Membership screen. */
 exports.payDriverMembership = functions
     .runWith({secrets: STRIPE_SECRETS})
