@@ -834,6 +834,9 @@ export default function DriverHomeScreen() {
                 <Text style={styles.away}>
                   {currentRide.route?.distanceKm || 0} km ·{' '}
                   {Math.ceil(currentRide.route?.durationMinutes || 0)} min trip
+                  {currentRide.stops?.length
+                    ? ` · ${currentRide.stops.length} stop${currentRide.stops.length === 1 ? '' : 's'}`
+                    : ''}
                 </Text>
               </View>
             </View>

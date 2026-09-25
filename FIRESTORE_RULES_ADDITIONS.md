@@ -230,3 +230,9 @@ allow update: if request.auth.uid == driverId
 
 (Admins' own rule for the dashboard, and your existing admin read of wallet
 transactions for the revenue panel, stay as they are.)
+
+## Via stops
+
+Rides carry `stops` (set by the passenger when booking) and `stopsCompleted`
+(increased by the ride's driver as they reach each stop). Make sure your
+rides update rule lets the assigned driver change `stopsCompleted`.

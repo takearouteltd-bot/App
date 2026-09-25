@@ -11,6 +11,7 @@ import {
 import { Alert } from '../../components/ui/alert';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import CarMarker from '../../components/CarMarker';
+import { remainingStops } from '../../utils/stops';
 import MapViewDirections from 'react-native-maps-directions';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -247,6 +248,7 @@ export default function RideInProgressScreen() {
           <MapViewDirections
             origin={routeFrom}
             destination={dropoffLocation}
+            waypoints={remainingStops(ride)}
             apikey={GOOGLE_MAPS_API_KEY}
             strokeWidth={4}
             strokeColor={COLORS.green}

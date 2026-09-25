@@ -19,6 +19,7 @@ import polyline from '@mapbox/polyline';
 import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 import { currencySymbol, money, waitingCharge } from '../../../utils/appConfig';
+import { navigationUrl, remainingStops, stopsOf, waypointsParam } from '../../../utils/stops';
 import SafetyButton from '../../../components/SafetyButton';
 import { confirmMaskedCall } from '../../../utils/calling';
 import { COLORS, TYPE, SPACE, RADIUS, SHADOW, Avatar, IconButton, isCoord } from '../../../components/ui/kit';
@@ -128,10 +129,11 @@ export default function DriverRideToDropoffScreen() {
   }, [ride?.riderId]);
 
   /* ================= ROUTE ================= */
-  const fetchRoute = useCallback(async (start, destination) => {
+  // Through any stops not reached yet; the ETA shown is to the next point.
+  const fetchRoute = useCallback(async (start, destination, stops = []) => {
     try {
       const res = await fetch(
-        `https://maps.googleapis.com/maps/api/directions/json?origin=${start.latitude},${start.longitude}&destination=${destination.latitude},${destination.longitude}&key=${GOOGLE_MAPS_API_KEY}`
+        `https://maps.googleapis.com/maps/api/directions/json?origin=${start.latitude},${start.longitude}&destination=${destination.latitude},${destination.longitude}${waypointsParam(stops)}&key=${GOOGLE_MAPS_API_KEY}`
       );
       const data = await res.json();
       if (!data.routes?.length) return;
@@ -153,8 +155,8 @@ export default function DriverRideToDropoffScreen() {
     const now = Date.now();
     if (now - lastRouteAt.current < ROUTE_REFRESH_MS) return;
     lastRouteAt.current = now;
-    fetchRoute(driverLocation, ride.dropoffLocation);
-  }, [driverLocation, ride?.dropoffLocation, fetchRoute]);
+    fetchRoute(driverLocation, ride.dropoffLocation, remainingStops(ride));
+  }, [driverLocation, ride?.dropoffLocation, ride?.stopsCompleted, fetchRoute]);
 
   /* ================= DISTANCE ================= */
   const metresBetween = (a, b) => {
@@ -310,9 +312,25 @@ export default function DriverRideToDropoffScreen() {
   const handleNavigate = () => {
     const point = ride?.dropoffLocation;
     if (!point?.latitude) return;
-    Linking.openURL(
-      `https://www.google.com/maps/dir/?api=1&destination=${point.latitude},${point.longitude}&travelmode=driving`
-    ).catch(() => Alert.alert('Could not open maps', 'No maps app is available.'));
+    Linking.openURL(navigationUrl(point, remainingStops(ride))).catch(() =>
+      Alert.alert('Could not open maps', 'No maps app is available.')
+    );
+  };
+
+  /* Stops: the driver ticks each one off as they reach it. */
+  const [markingStop, setMarkingStop] = useState(false);
+  const markStopReached = async () => {
+    if (markingStop) return;
+    setMarkingStop(true);
+    try {
+      await updateDoc(doc(db, 'rides', rideId), {
+        stopsCompleted: (Number(ride?.stopsCompleted) || 0) + 1,
+      });
+    } catch (error) {
+      Alert.alert('Could not update', 'Please try again.');
+    } finally {
+      setMarkingStop(false);
+    }
   };
 
   if (!ride || !isCoord(driverLocation) || !isCoord(ride.dropoffLocation)) {
@@ -327,6 +345,9 @@ export default function DriverRideToDropoffScreen() {
   }
 
   const destination = ride.dropoffLocation;
+  const allStops = stopsOf(ride);
+  const nextStop = remainingStops(ride)[0] || null;
+  const stopNumber = (Number(ride.stopsCompleted) || 0) + 1;
 
   return (
     <View style={styles.container}>
@@ -355,6 +376,14 @@ export default function DriverRideToDropoffScreen() {
             </View>
           </View>
         </Marker>
+
+        {remainingStops(ride).map((s, i) => (
+          <Marker key={`stop-${i}`} coordinate={s} anchor={{ x: 0.5, y: 0.5 }}>
+            <View style={styles.stopMarker}>
+              <Text style={styles.stopMarkerText}>{(Number(ride.stopsCompleted) || 0) + i + 1}</Text>
+            </View>
+          </Marker>
+        ))}
 
         {isCoord(destination) ? (
           <Marker coordinate={destination} anchor={{ x: 0.5, y: 1 }}>
@@ -402,11 +431,27 @@ export default function DriverRideToDropoffScreen() {
         <View style={styles.headRow}>
           <View style={{ flex: 1 }}>
             <Text style={TYPE.heading}>
-              {arrived ? 'At the drop-off' : 'Driving to drop-off'}
+              {nextStop
+                ? `Stop ${stopNumber} of ${allStops.length}`
+                : arrived
+                ? 'At the drop-off'
+                : 'Driving to drop-off'}
             </Text>
             <Text style={[TYPE.small, { marginTop: 2 }]} numberOfLines={2}>
-              {destination?.address || 'Unknown destination'}
+              {nextStop ? nextStop.address : destination?.address || 'Unknown destination'}
             </Text>
+            {nextStop ? (
+              <TouchableOpacity
+                style={styles.stopDone}
+                onPress={markStopReached}
+                disabled={markingStop}
+                accessibilityRole="button"
+              >
+                <Text style={styles.stopDoneText}>
+                  {markingStop ? 'Saving…' : `Arrived at stop ${stopNumber}`}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
           </View>
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={styles.fare}>
@@ -500,6 +545,17 @@ const customMapStyle = [
 ];
 
 const styles = StyleSheet.create({
+  stopDone: {
+    alignSelf: 'flex-start', marginTop: SPACE[3],
+    paddingHorizontal: SPACE[4], height: 40, borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.navy, justifyContent: 'center',
+  },
+  stopDoneText: { fontSize: 14, fontWeight: '700', color: COLORS.white },
+  stopMarker: {
+    width: 24, height: 24, borderRadius: 12, backgroundColor: COLORS.navy,
+    borderWidth: 2, borderColor: COLORS.white, alignItems: 'center', justifyContent: 'center',
+  },
+  stopMarkerText: { fontSize: 11, fontWeight: '800', color: COLORS.white },
   cashTag: {
     marginTop: 4, fontSize: 11, fontWeight: '800', letterSpacing: 0.5,
     color: COLORS.amber, backgroundColor: COLORS.amberSoft,

@@ -35,7 +35,10 @@ const PICKUP = {
 };
 
 export default function DestinationSearchScreen({ navigation, route }) {
-  const { origin, pickupType = 'current' } = route.params || {};
+  const { origin, pickupType = 'current', mode } = route.params || {};
+  // Opened from the fare screen's "Add stop": the chosen place comes back
+  // there as a stop instead of starting a new booking.
+  const addingStop = mode === 'stop';
   const searchRef = useRef(null);
 
   const [currentAddress, setCurrentAddress] = useState('');
@@ -104,6 +107,10 @@ export default function DestinationSearchScreen({ navigation, route }) {
   };
 
   const goToFare = (destination) => {
+    if (addingStop) {
+      navigation.navigate({ name: 'FareEstimation', params: { addStop: destination }, merge: true });
+      return;
+    }
     navigation.navigate('FareEstimation', { origin, destination });
   };
 
@@ -160,7 +167,7 @@ export default function DestinationSearchScreen({ navigation, route }) {
           <View style={styles.searchWrap}>
             <GooglePlacesAutocomplete
               ref={searchRef}
-              placeholder="Search a destination"
+              placeholder={addingStop ? 'Search for a stop' : 'Search a destination'}
               minLength={2}
               autoFocus
               returnKeyType="search"

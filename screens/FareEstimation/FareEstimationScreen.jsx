@@ -30,6 +30,7 @@ import { getAuth } from 'firebase/auth';
 import { useAppConfig, currencySymbol, surgeMultiplier, cashEnabled, femaleDriverEnabled } from '../../utils/appConfig';
 import { useCities, cityFor } from '../../utils/cities';
 import { biddingEnabled, minOffer, fareAtPrice } from '../../utils/bidding';
+import { MAX_STOPS } from '../../utils/stops';
 import {
   COLORS,
   TYPE,
@@ -59,6 +60,18 @@ const RIDE_OPTIONS = [
 export default function FareEstimationScreen({ route }) {
   const navigation = useNavigation();
   const { origin, destination } = route.params;
+
+  // Stops on the way, in order. The route (and so the fare, which is priced
+  // on distance and time) goes through every one.
+  const [stops, setStops] = useState([]);
+  useEffect(() => {
+    const added = route.params?.addStop;
+    if (!added) return;
+    setStops((list) => (list.length < MAX_STOPS ? [...list, added] : list));
+    navigation.setParams({ addStop: undefined });
+  }, [route.params?.addStop, navigation]);
+  const removeStop = (index) => setStops((list) => list.filter((_, i) => i !== index));
+  const addStop = () => navigation.navigate('DestinationSearch', { origin, mode: 'stop' });
   const mapRef = useRef(null);
   const auth = getAuth();
   const currentUser = auth.currentUser;
@@ -247,6 +260,13 @@ export default function FareEstimationScreen({ route }) {
           address: origin.address || 'Pickup location',
         },
 
+        stops: stops.map((s) => ({
+          latitude: s.latitude,
+          longitude: s.longitude,
+          address: s.description || s.address || 'Stop',
+        })),
+        stopsCompleted: 0,
+
         dropoffLocation: {
           latitude: destination.latitude,
           longitude: destination.longitude,
@@ -363,10 +383,19 @@ export default function FareEstimationScreen({ route }) {
             </Marker>
           ) : null}
 
+          {stops.map((s, i) => (
+            <Marker key={`stop-${i}`} coordinate={s} anchor={{ x: 0.5, y: 0.5 }}>
+              <View style={styles.stopMarker}>
+                <Text style={styles.stopMarkerText}>{i + 1}</Text>
+              </View>
+            </Marker>
+          ))}
+
           {isCoord(origin) && isCoord(destination) ? (
           <MapViewDirections
             origin={origin}
             destination={destination}
+            waypoints={stops.map((s) => ({ latitude: s.latitude, longitude: s.longitude }))}
             apikey={GOOGLE_MAPS_API_KEY}
             strokeWidth={4}
             strokeColor={COLORS.green}
@@ -408,6 +437,31 @@ export default function FareEstimationScreen({ route }) {
             pickup={origin.address}
             dropoff={destination.description || destination.address}
           />
+
+          {/* Stops on the way. The fare follows the route through all of them. */}
+          {stops.map((s, i) => (
+            <View key={`stop-row-${i}`} style={styles.stopRow}>
+              <View style={styles.stopDot}>
+                <Text style={styles.stopDotText}>{i + 1}</Text>
+              </View>
+              <Text style={styles.stopText} numberOfLines={1}>
+                {s.description || s.address}
+              </Text>
+              <TouchableOpacity
+                onPress={() => removeStop(i)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel={`Remove stop ${i + 1}`}
+              >
+                <Ionicons name="close-circle" size={20} color={COLORS.faint} />
+              </TouchableOpacity>
+            </View>
+          ))}
+          {stops.length < MAX_STOPS ? (
+            <TouchableOpacity style={styles.addStop} onPress={addStop} accessibilityRole="button">
+              <Ionicons name="add-circle-outline" size={18} color={COLORS.blue} />
+              <Text style={styles.addStopText}>{stops.length ? 'Add another stop' : 'Add a stop'}</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         <ScrollView showsVerticalScrollIndicator={false} style={{ flexGrow: 0 }}>
@@ -730,6 +784,20 @@ const styles = StyleSheet.create({
   },
   payLabel: { ...TYPE.callout },
   payChoice: { flexDirection: 'row', gap: SPACE[3], paddingTop: SPACE[3] },
+  stopRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[3], marginTop: SPACE[3] },
+  stopDot: {
+    width: 20, height: 20, borderRadius: 10, backgroundColor: COLORS.navy,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  stopDotText: { fontSize: 11, fontWeight: '800', color: COLORS.white },
+  stopText: { flex: 1, ...TYPE.small, color: COLORS.ink },
+  addStop: { flexDirection: 'row', alignItems: 'center', gap: SPACE[2], marginTop: SPACE[3] },
+  addStopText: { fontSize: 14, fontWeight: '700', color: COLORS.blue },
+  stopMarker: {
+    width: 24, height: 24, borderRadius: 12, backgroundColor: COLORS.navy,
+    borderWidth: 2, borderColor: COLORS.white, alignItems: 'center', justifyContent: 'center',
+  },
+  stopMarkerText: { fontSize: 11, fontWeight: '800', color: COLORS.white },
   offerBox: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
     padding: SPACE[4], marginBottom: SPACE[4],
