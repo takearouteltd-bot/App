@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, Alert, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, SafeAreaView, ActivityIndicator, ScrollView } from 'react-native';
+import { Alert } from '../../../components/ui/alert';
 import { auth, db } from '../../../config/firebase';
 import { doc, getDoc, updateDoc, Timestamp } from 'firebase/firestore';
 import { useNavigation } from '@react-navigation/native';
@@ -135,7 +136,7 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
     return (
       <SafeAreaView style={styles.safe}>
         <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <ScreenHeader title="Membership" onBack={() => navigation.goBack()} />
+          <ScreenHeader title="Membership" />
 
           <Card tone="dark" style={styles.hero}>
             <View style={styles.heroTop}>
@@ -185,7 +186,6 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
         <ScreenHeader
           title="Activate your account"
           subtitle="One monthly fee, taken from what you earn."
-          onBack={() => navigation.goBack()}
         />
 
         <Card tone="dark" style={styles.hero}>

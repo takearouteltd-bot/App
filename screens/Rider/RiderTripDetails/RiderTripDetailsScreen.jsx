@@ -8,8 +8,8 @@ import {
   ScrollView,
   Image,
   ActivityIndicator,
-  Alert,
 } from 'react-native';
+import { Alert } from '../../../components/ui/alert';
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, Polyline } from 'react-native-maps';

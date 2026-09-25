@@ -1,35 +1,29 @@
 import React, { useState, useEffect } from "react";
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  SafeAreaView,
-  ScrollView,
-  KeyboardAvoidingView,
-  Platform,
-} from "react-native";
+import { View, Text, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
-import { db, auth } from "../../config/firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { COLORS, RADIUS } from '../../components/ui/kit';
-
-const TOTAL_STEPS = 5;
-const PRIMARY = COLORS.green;
+import { db, auth } from "../../config/firebase";
+import { Alert } from "../../components/ui/alert";
+import { COLORS, Field, RADIUS, SPACE, TYPE } from "../../components/ui/kit";
+import { ConsentRow, OnboardingFrame, StepSection } from "../../components/onboarding/kit";
+import { openTerms } from "../../utils/legal";
 
 // UK sort code: 6 digits shown as XX-XX-XX.
 const isValidSortCode = (value) => /^\d{2}-\d{2}-\d{2}$/.test(value);
+// UK account numbers are 8 digits; a few older ones have 7 and are written
+// with a leading 0.
+const isValidAccountNumber = (value) => /^\d{8}$/.test(value);
 
 export default function PayoutDetailsScreen({ navigation }) {
-  const [currentStep, setCurrentStep] = useState(4);
   const [driverId, setDriverId] = useState(null);
 
   const [accountHolder, setAccountHolder] = useState("");
   const [sortCode, setSortCode] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
-  const [acceptedTerms, setAcceptedTerms] = useState(false); // <-- checkbox state
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [tried, setTried] = useState(false);
 
   // Auto-format sort code as XX-XX-XX (dash after every 2 digits).
   const handleSortCodeChange = (text) => {
@@ -38,7 +32,6 @@ export default function PayoutDetailsScreen({ navigation }) {
     setSortCode(parts.join("-"));
   };
 
-  // Listen for auth state
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) setDriverId(user.uid);
@@ -46,255 +39,139 @@ export default function PayoutDetailsScreen({ navigation }) {
     return () => unsubscribe();
   }, []);
 
+  // Bring back what they entered before, if they return to this step.
   useEffect(() => {
-    const fetchStep = async () => {
-      if (!driverId) return;
-      const snap = await getDoc(doc(db, "drivers", driverId));
-      if (snap.exists()) {
-        setCurrentStep(snap.data().onboardingStep || 4);
-      }
-    };
-    fetchStep();
+    if (!driverId) return;
+    getDoc(doc(db, "drivers", driverId))
+      .then((snap) => {
+        const saved = snap.exists() ? snap.data().accountDetails : null;
+        if (!saved) return;
+        setAccountHolder(saved.accountHolder || "");
+        setSortCode(saved.sortCode || "");
+        setAccountNumber(saved.accountNumber || "");
+        setAcceptedTerms(!!saved.acceptedTerms);
+      })
+      .catch(() => {});
   }, [driverId]);
 
-const handleContinue = async () => {
-  try {
+  const errors = {
+    accountHolder: !accountHolder.trim() ? "Enter the name on the account" : null,
+    sortCode: !isValidSortCode(sortCode) ? "Six digits, e.g. 12-34-56" : null,
+    accountNumber: !isValidAccountNumber(accountNumber)
+      ? "Eight digits. If yours has seven, add a 0 at the start."
+      : null,
+  };
+  const show = (key) => (tried ? errors[key] : null);
+
+  const handleContinue = async () => {
     if (!driverId) {
-      alert("User not authenticated");
+      Alert.alert("Not signed in", "Please sign in again to continue.");
       return;
     }
+    setTried(true);
 
-    // Basic validation
-    if (!accountHolder || !sortCode || !accountNumber) {
-      alert("Please fill all fields");
+    const firstError = Object.values(errors).find(Boolean);
+    if (firstError) {
+      Alert.alert("Check your bank details", firstError);
       return;
     }
-
-    if (!isValidSortCode(sortCode)) {
-      alert("Enter a valid 6-digit sort code in the format XX-XX-XX");
-      return;
-    }
-
     if (!acceptedTerms) {
-      alert("You must accept the terms and conditions");
+      Alert.alert("One more thing", "Please accept the payout terms to continue.");
       return;
     }
-    
 
-    const driverRef = doc(db, "drivers", driverId);
+    setSaving(true);
+    try {
+      await updateDoc(doc(db, "drivers", driverId), {
+        accountDetails: {
+          accountHolder: accountHolder.trim(),
+          sortCode,
+          accountNumber,
+          acceptedTerms,
+          updatedAt: new Date(),
+        },
+        onboardingStep: 5,
+        onboardingComplete: false,
+      });
 
-    await updateDoc(driverRef, {
-      accountDetails: {
-        accountHolder,
-        sortCode,
-        accountNumber,
-        acceptedTerms,
-        updatedAt: new Date(),
-      },
-      onboardingStep: 5, // move to next step
-      onboardingComplete: false
-    });
-
-    navigation.navigate("FinalReview");
-  } catch (error) {
-    console.log("Error saving payout details:", error);
-    alert("Failed to save payout details. Please try again.");
-  }
-};
+      navigation.navigate("FinalReview");
+    } catch (error) {
+      console.log("Error saving payout details:", error);
+      Alert.alert("Could not save", "Your bank details were not saved. Check your connection and try again.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-      >
-        <ScrollView contentContainerStyle={styles.container}>
-          {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => navigation.goBack()}>
-              <Ionicons name="arrow-back" size={24} color="black" />
-            </TouchableOpacity>
+    <OnboardingFrame
+      step={4}
+      title="Where should we pay you?"
+      subtitle="Your earnings go straight to this UK bank account when you withdraw."
+      action={{ title: "Continue", onPress: handleContinue, loading: saving, icon: "arrow-forward" }}
+    >
+      <View style={styles.secure}>
+        <Ionicons name="shield-checkmark" size={18} color={COLORS.success} />
+        <Text style={styles.secureText}>Encrypted and only used to pay you</Text>
+      </View>
 
-            <Text style={styles.stepText}>
-              Step {currentStep} of {TOTAL_STEPS}
-            </Text>
-
-            <View style={{ width: 24 }} />
-          </View>
-
-          {/* Progress Bar */}
-          <View style={styles.progressBarBg}>
-            <View
-              style={[
-                styles.progressBarFill,
-                { width: `${(currentStep / TOTAL_STEPS) * 100}%` },
-              ]}
-            />
-          </View>
-
-          <Text style={styles.title}>Where should we send your earnings?</Text>
-
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>SECURE & ENCRYPTED</Text>
-          </View>
-
-          {/* Inputs */}
-          <Text style={styles.label}>Account Holder Name</Text>
-          <TextInput
-            placeholder="Enter account holder name"
-            value={accountHolder}
-            onChangeText={setAccountHolder}
-            style={styles.input}
-          />
-
-          <Text style={styles.label}>Sort Code</Text>
-          <TextInput
-            placeholder="XX-XX-XX"
+      <StepSection title="Bank account">
+        <Field
+          label="Name on the account"
+          value={accountHolder}
+          onChangeText={setAccountHolder}
+          placeholder="Jane Smith"
+          autoCapitalize="words"
+          error={show("accountHolder")}
+        />
+        <View style={styles.row}>
+          <Field
+            label="Sort code"
             value={sortCode}
             onChangeText={handleSortCodeChange}
-            style={styles.input}
+            placeholder="12-34-56"
             keyboardType="number-pad"
             maxLength={8}
+            error={show("sortCode")}
+            style={styles.sort}
           />
-
-          <Text style={styles.label}>Account Number</Text>
-          <TextInput
-            placeholder="Enter account number"
+          <Field
+            label="Account number"
             value={accountNumber}
-            onChangeText={setAccountNumber}
-            style={styles.input}
-            keyboardType="numeric"
+            onChangeText={(t) => setAccountNumber(t.replace(/\D/g, "").slice(0, 8))}
+            placeholder="12345678"
+            keyboardType="number-pad"
+            maxLength={8}
+            error={show("accountNumber")}
+            style={styles.account}
           />
+        </View>
+      </StepSection>
 
-          {/* Checkbox */}
-          <TouchableOpacity
-            style={styles.checkboxContainer}
-            onPress={() => setAcceptedTerms(!acceptedTerms)}
-          >
-            <View style={[styles.checkbox, acceptedTerms && styles.checked]}>
-              {acceptedTerms && <Ionicons name="checkmark" size={16} color="white" />}
-            </View>
-            <Text style={styles.termsText}>
-              I accept the <Text style={{fontWeight: '700', textDecorationLine: 'underline'}}>Payout terms and conditions</Text>
-            </Text>
-          </TouchableOpacity>
-
-          {/* Continue Button */}
-          <TouchableOpacity style={styles.button} onPress={handleContinue}>
-            <Text style={styles.buttonText}>Continue</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+      <ConsentRow
+        checked={acceptedTerms}
+        onToggle={() => setAcceptedTerms((v) => !v)}
+        text="I accept the "
+        link={{ label: "payout terms and conditions", onPress: openTerms }}
+      />
+    </OnboardingFrame>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.white },
-  container: { padding: 20, paddingBottom: 40 },
-
-  header: {
+  secure: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-  },
-
-  stepText: {
-    fontSize: 16,
-    fontWeight: "600",
-  },
-
-  progressBarBg: {
-    height: 6,
-    backgroundColor: "#E5E5E5",
-    borderRadius: 10,
-    marginTop: 10,
-    marginBottom: 25,
-  },
-
-  progressBarFill: {
-    height: 6,
-    backgroundColor: PRIMARY,
-    borderRadius: 10,
-  },
-
-  title: {
-    fontSize: 22,
-    fontWeight: "bold",
-    marginBottom: 10,
-  },
-
-  badge: {
-    backgroundColor: "#E6F4D9",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
+    gap: SPACE[2],
     alignSelf: "flex-start",
-    marginBottom: 20,
+    backgroundColor: COLORS.greenSoft,
+    paddingHorizontal: SPACE[3],
+    paddingVertical: SPACE[2],
+    borderRadius: RADIUS.pill,
+    marginBottom: SPACE[5],
   },
-
-  badgeText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: PRIMARY,
-  },
-
-  label: {
-    fontSize: 14,
-    fontWeight: "600",
-    marginBottom: 6,
-    marginLeft: 4,
-    color: COLORS.inkSoft,
-  },
-
-  input: {
-    backgroundColor: "#F4F4F4",
-    borderRadius: 30,
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    fontSize: 16,
-    marginBottom: 15,
-  },
-
-  checkboxContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginVertical: 20,
-  },
-
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderWidth: 2,
-    borderColor: PRIMARY,
-    borderRadius: 4,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 10,
-  },
-
-  checked: {
-    backgroundColor: PRIMARY,
-    borderColor: PRIMARY,
-  },
-
-  termsText: {
-    fontSize: 13,
-    color: "gray",
-    flexShrink: 1,
-  },
-
-  button: {
-    backgroundColor: PRIMARY,
-    paddingVertical: 16,
-    borderRadius: RADIUS.md,
-    alignItems: "center",
-    marginTop: 10,
-  },
-
-  buttonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "bold",
-  },
+  secureText: { ...TYPE.small, color: COLORS.success, fontWeight: "700" },
+  row: { flexDirection: "row", gap: SPACE[3] },
+  sort: { width: 130 },
+  account: { flex: 1 },
 });

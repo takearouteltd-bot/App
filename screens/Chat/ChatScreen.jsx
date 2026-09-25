@@ -13,8 +13,8 @@ import {
   StatusBar,
   KeyboardAvoidingView,
   Modal,
-  Alert,
 } from 'react-native';
+import { Alert } from '../../components/ui/alert';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import {

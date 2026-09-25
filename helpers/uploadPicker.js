@@ -1,6 +1,8 @@
-import { Alert } from "react-native";
+import { Alert } from "../components/ui/alert";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { storage } from "../config/firebase";
 
 // Live selfie: opens the front camera only. No gallery option, so a driver
 // cannot submit an old or borrowed photo.
@@ -132,4 +134,15 @@ export function uriToBlob(uri) {
     xhr.open("GET", uri, true);
     xhr.send(null);
   });
+}
+
+// Uploads a picked file to drivers/{uid}/{name}.{ext} and returns its
+// download URL. Driver sign-up and the documents screen share this, so every
+// upload goes through the Android-safe uriToBlob and sends a content type.
+export async function uploadDriverFile(driverId, name, asset) {
+  const blob = await uriToBlob(asset.uri);
+  const extension = inferUploadExtension(asset.name, asset.mimeType);
+  const fileRef = ref(storage, `drivers/${driverId}/${name}.${extension}`);
+  await uploadBytes(fileRef, blob, asset.mimeType ? { contentType: asset.mimeType } : undefined);
+  return getDownloadURL(fileRef);
 }

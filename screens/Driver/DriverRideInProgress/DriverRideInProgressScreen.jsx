@@ -9,10 +9,10 @@ import {
   Animated,
   Dimensions,
   StatusBar,
-  Alert,
   Linking,
   ScrollView,
 } from 'react-native';
+import { Alert } from '../../../components/ui/alert';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import MapViewDirections from 'react-native-maps-directions';
 import { Ionicons } from '@expo/vector-icons';

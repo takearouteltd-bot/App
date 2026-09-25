@@ -8,11 +8,11 @@ import {
   View,
   Text,
   Image,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
 } from 'react-native';
+import { Alert } from '../../../components/ui/alert';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../../../config/firebase';
 import { submitChangeRequest, useChangeRequests } from '../../../utils/changeRequests';

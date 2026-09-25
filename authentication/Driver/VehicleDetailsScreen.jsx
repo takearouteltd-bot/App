@@ -1,74 +1,34 @@
 import React, { useState, useEffect } from "react";
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  SafeAreaView,
-  ScrollView,
-  KeyboardAvoidingView,
-  Platform,
-  Alert,
-  Image,
-} from "react-native";
-import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { View, StyleSheet } from "react-native";
+import { Alert } from "../../components/ui/alert";
 import { doc, getDoc, setDoc } from "firebase/firestore";
-import { db, auth, storage } from "../../config/firebase";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import {
-  inferUploadExtension,
-  isPdfUpload,
-  selectUploadAsset,
-} from "../../helpers/uploadPicker";
-import { COLORS } from '../../components/ui/kit';
+import { db, auth } from "../../config/firebase";
+import { selectUploadAsset, uploadDriverFile } from "../../helpers/uploadPicker";
+import { VEHICLE_CLASSES } from "../../constants/vehicleClasses";
+import { Field, SPACE } from "../../components/ui/kit";
+import { ChoiceCard, OnboardingFrame, StepSection, UploadTile } from "../../components/onboarding/kit";
 
-const TOTAL_STEPS = 5;
-const PRIMARY = COLORS.green;
-const DARK = COLORS.ink;
-const VEHICLE_TYPES = [
-  {
-    id: "RouteMini",
-    label: "RouteMini",
-    description: "Affordable everyday rides",
-    icon: "car",
-    passengers: 4,
-  },
-  {
-    id: "RoutePlus",
-    label: "RoutePlus",
-    description: "Comfortable sedans",
-    icon: "car",
-    passengers: 4,
-  },
-  {
-    id: "RouteXL",
-    label: "RouteXL",
-    description: "Spacious SUVs for groups",
-    icon: "car-estate",
-    passengers: 6,
-  },
-  {
-    id: "RouteEco",
-    label: "RouteEco",
-    description: "Eco-friendly hybrid rides",
-    icon: "leaf",
-    passengers: 4,
-  },
-  {
-    id: "RouteExecutive",
-    label: "Executive",
-    description: "Premium luxury experience",
-    icon: "car-wash",
-    passengers: 4,
-  },
-];
+// The icon for each class; ids, names and seats come from constants/vehicleClasses
+// so what a driver picks here matches what passengers book.
+const CLASS_ICON = {
+  RouteMini: "car-hatchback",
+  RoutePlus: "car-side",
+  RouteXL: "van-passenger",
+  RouteEco: "leaf",
+  RouteExecutive: "car-estate",
+};
 
-export default function VehicleDetailsScreen({
-  navigation,
-  setOnboardingStatus,
-}) {
-  const [currentStep, setCurrentStep] = useState(3);
+// Upload name (drivers/{uid}/{name}.ext) → the field it is saved as.
+const DOC_FIELD = {
+  motCert: "motUrl",
+  phvInsurance: "insuranceUrl",
+  companyAgreement: "companyAgreementUrl",
+};
+
+const thisYear = new Date().getFullYear();
+const isValidYear = (y) => /^\d{4}$/.test(y) && Number(y) >= 1990 && Number(y) <= thisYear + 1;
+
+export default function VehicleDetailsScreen({ navigation, setOnboardingStatus }) {
   const driverId = auth.currentUser?.uid;
 
   const [makeModel, setMakeModel] = useState("");
@@ -77,32 +37,29 @@ export default function VehicleDetailsScreen({
   const [vehicleType, setVehicleType] = useState("");
   const [ownershipType, setOwnershipType] = useState(null); // "company" | "private"
 
-  const [motUrl, setMotUrl] = useState(null);
-  const [insuranceUrl, setInsuranceUrl] = useState(null);
-  const [companyAgreementUrl, setCompanyAgreementUrl] = useState(null);
+  const [urls, setUrls] = useState({});
+  const [uploading, setUploading] = useState(null);
+  const [saving, setSaving] = useState(false);
 
-  // Fetch existing data
   useEffect(() => {
     const fetchData = async () => {
       if (!driverId) return;
 
       try {
         const snap = await getDoc(doc(db, "drivers", driverId));
+        if (!snap.exists()) return;
 
-        if (snap.exists()) {
-          const data = snap.data();
-
-          setCurrentStep(data.onboardingStep || 3);
-          setMakeModel(data.makeModel || "");
-          setYear(data.year || "");
-          setRegistrationNumber(data.registrationNumber || "");
-          setVehicleType(data.vehicleType || "");
-          setOwnershipType(data.ownershipType || null);
-
-          setMotUrl(data.motUrl || null);
-          setInsuranceUrl(data.insuranceUrl || null);
-          setCompanyAgreementUrl(data.companyAgreementUrl || null);
-        }
+        const data = snap.data();
+        setMakeModel(data.makeModel || "");
+        setYear(data.year || "");
+        setRegistrationNumber(data.registrationNumber || "");
+        setVehicleType(data.vehicleType || "");
+        setOwnershipType(data.ownershipType || null);
+        setUrls({
+          motCert: data.motUrl || null,
+          phvInsurance: data.insuranceUrl || null,
+          companyAgreement: data.companyAgreementUrl || null,
+        });
       } catch (error) {
         console.log("Error fetching vehicle data:", error);
       }
@@ -111,7 +68,7 @@ export default function VehicleDetailsScreen({
     fetchData();
   }, [driverId]);
 
-  // Upload + Save instantly
+  // Upload, then save the link straight away.
   const pickDocument = async (type) => {
     if (!driverId) return;
 
@@ -119,76 +76,48 @@ export default function VehicleDetailsScreen({
     if (!asset) return;
 
     if (asset.error) {
-      Alert.alert("Permission required", asset.error);
+      Alert.alert("Permission needed", asset.error);
       return;
     }
 
+    setUploading(type);
     try {
-      const response = await fetch(asset.uri);
-      const blob = await response.blob();
-      const extension = inferUploadExtension(asset.name, asset.mimeType);
-
-      const storageRef = ref(storage, `drivers/${driverId}/${type}.${extension}`);
-      await uploadBytes(storageRef, blob);
-
-      const downloadUrl = await getDownloadURL(storageRef);
-
-      let updateData = {};
-
-      switch (type) {
-        case "motCert":
-          setMotUrl(downloadUrl);
-          updateData.motUrl = downloadUrl;
-          break;
-        case "phvInsurance":
-          setInsuranceUrl(downloadUrl);
-          updateData.insuranceUrl = downloadUrl;
-          break;
-        case "companyAgreement":
-          setCompanyAgreementUrl(downloadUrl);
-          updateData.companyAgreementUrl = downloadUrl;
-          break;
-      }
-
-      await setDoc(doc(db, "drivers", driverId), updateData, { merge: true });
-
-      console.log(`${type} uploaded`);
+      const downloadUrl = await uploadDriverFile(driverId, type, asset);
+      await setDoc(doc(db, "drivers", driverId), { [DOC_FIELD[type]]: downloadUrl }, { merge: true });
+      setUrls((u) => ({ ...u, [type]: downloadUrl }));
     } catch (error) {
       console.log("Upload error:", error);
-      Alert.alert("Upload failed");
+      Alert.alert("Upload failed", "That file did not upload. Check your connection and try again.");
+    } finally {
+      setUploading(null);
     }
   };
 
-  const isFormComplete = () => {
-    const baseComplete =
-      makeModel &&
-      year &&
-      registrationNumber &&
-      vehicleType &&
-      ownershipType &&
-      motUrl &&
-      insuranceUrl;
-
-    if (ownershipType === "company") {
-      return baseComplete && !!companyAgreementUrl;
-    }
-
-    return baseComplete;
-  };
+  const missing = [
+    !makeModel.trim() && "the make and model",
+    !isValidYear(year) && "the year it was made",
+    !registrationNumber.trim() && "the registration",
+    !vehicleType && "a vehicle class",
+    !ownershipType && "who owns the vehicle",
+    !urls.motCert && "the MOT certificate",
+    !urls.phvInsurance && "your PHV insurance",
+    ownershipType === "company" && !urls.companyAgreement && "the company agreement",
+  ].filter(Boolean);
 
   const handleContinue = async () => {
-    if (!isFormComplete()) {
-      Alert.alert("Missing info", "Please complete all fields & uploads.");
+    if (missing.length) {
+      Alert.alert("Almost there", `Please add ${missing.join(", ")}.`);
       return;
     }
 
+    setSaving(true);
     try {
       await setDoc(
         doc(db, "drivers", driverId),
         {
-          makeModel,
+          makeModel: makeModel.trim(),
           year,
-          registrationNumber,
+          registrationNumber: registrationNumber.replace(/\s+/g, " ").trim().toUpperCase(),
           vehicleType,
           ownershipType,
           onboardingStep: 4,
@@ -202,580 +131,121 @@ export default function VehicleDetailsScreen({
       navigation.navigate("PayoutDetails");
     } catch (error) {
       console.log("Error saving vehicle:", error);
-      Alert.alert("Error saving data");
+      Alert.alert("Could not save", "Check your connection and try again.");
+    } finally {
+      setSaving(false);
     }
   };
 
-  const renderUploadCard = (title, stateVar, type, icon) => {
-    const isUploaded = !!stateVar;
-
-    return (
-      <TouchableOpacity
-        style={[styles.uploadCard, isUploaded && styles.uploadCardDone]}
-        onPress={() => pickDocument(type)}
-        activeOpacity={0.8}
-      >
-        <View style={styles.uploadPreview}>
-          {isUploaded && !isPdfUpload(stateVar) ? (
-            <Image source={{ uri: stateVar }} style={styles.uploadThumb} />
-          ) : isUploaded ? (
-            <View style={styles.uploadPlaceholder}>
-              <MaterialCommunityIcons
-                name="file-pdf-box"
-                size={28}
-                color={PRIMARY}
-              />
-            </View>
-          ) : (
-            <View style={styles.uploadPlaceholder}>
-              <MaterialCommunityIcons name={icon} size={28} color={PRIMARY} />
-            </View>
-          )}
-          {isUploaded && (
-            <View style={styles.uploadCheck}>
-              <Ionicons name="checkmark-circle" size={20} color={PRIMARY} />
-            </View>
-          )}
-        </View>
-
-        <View style={styles.uploadInfo}>
-          <Text style={[styles.uploadTitle, isUploaded && { color: PRIMARY }]}>
-            {title}
-          </Text>
-          <Text style={styles.uploadStatus}>
-            {isUploaded ? "Uploaded" : "Tap to upload"}
-          </Text>
-        </View>
-
-        <Ionicons
-          name={isUploaded ? "create-outline" : "add-circle-outline"}
-          size={22}
-          color={isUploaded ? PRIMARY : COLORS.lineStrong}
-        />
-      </TouchableOpacity>
-    );
-  };
-
   return (
-    <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-      >
-        <ScrollView
-          contentContainerStyle={styles.container}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity
-              style={styles.iconBtn}
-              onPress={() => navigation.goBack()}
-            >
-              <Ionicons name="arrow-back" size={22} color={DARK} />
-            </TouchableOpacity>
-
-            <Text style={styles.stepText}>
-              Step {currentStep} of {TOTAL_STEPS}
-            </Text>
-
-            <View style={{ width: 40 }} />
-          </View>
-
-          {/* Progress */}
-          <View style={styles.progressBarBg}>
-            <View
-              style={[
-                styles.progressBarFill,
-                { width: `${(currentStep / TOTAL_STEPS) * 100}%` },
-              ]}
-            />
-          </View>
-
-          <Text style={styles.title}>Vehicle Details</Text>
-          <Text style={styles.subtitle}>Enter your vehicle information</Text>
-
-          {/* Make & Model */}
-          <Text style={styles.label}>Make & Model</Text>
-          <TextInput
-            value={makeModel}
-            onChangeText={setMakeModel}
-            style={styles.input}
-            placeholder="e.g. Toyota Prius"
-            placeholderTextColor="#aaa"
-          />
-
-          {/* Year */}
-          <Text style={styles.label}>Year</Text>
-          <TextInput
+    <OnboardingFrame
+      step={3}
+      title="Your vehicle"
+      subtitle="The car you'll drive with TakeARoute. It sets which trips you're offered."
+      action={{ title: "Continue", onPress: handleContinue, loading: saving, icon: "arrow-forward" }}
+    >
+      <StepSection title="The car">
+        <Field
+          label="Make and model"
+          value={makeModel}
+          onChangeText={setMakeModel}
+          placeholder="Toyota Prius"
+          autoCapitalize="words"
+        />
+        <View style={styles.row}>
+          <Field
+            label="Year"
             value={year}
-            onChangeText={setYear}
-            style={styles.input}
-            placeholder="e.g. 2021"
-            placeholderTextColor="#aaa"
-            keyboardType="numeric"
+            onChangeText={(t) => setYear(t.replace(/\D/g, "").slice(0, 4))}
+            placeholder={String(thisYear - 3)}
+            keyboardType="number-pad"
             maxLength={4}
+            style={styles.year}
           />
+          <Field
+            label="Registration"
+            value={registrationNumber}
+            onChangeText={(t) => setRegistrationNumber(t.toUpperCase())}
+            placeholder="AB12 CDE"
+            autoCapitalize="characters"
+            autoCorrect={false}
+            maxLength={8}
+            style={styles.reg}
+          />
+        </View>
+      </StepSection>
 
-          {/* Registration Number */}
-          <Text style={styles.label}>Registration Number</Text>
-          <View style={styles.regRow}>
-            <Image
-              source={{ uri: "https://flagcdn.com/w40/gb.png" }}
-              style={styles.flag}
-            />
-            <TextInput
-              value={registrationNumber}
-              onChangeText={setRegistrationNumber}
-              style={styles.regInput}
-              placeholder="AB12 CDE"
-              placeholderTextColor="#aaa"
-              autoCapitalize="characters"
-              maxLength={8}
-            />
-          </View>
+      <StepSection
+        title="Vehicle class"
+        hint="You'll get trips for this class and any class below it."
+      >
+        {VEHICLE_CLASSES.map((c) => (
+          <ChoiceCard
+            key={c.id}
+            title={c.label}
+            detail={c.description}
+            meta={`${c.seats} seats`}
+            icon={CLASS_ICON[c.id] || "car"}
+            selected={vehicleType === c.id}
+            onPress={() => setVehicleType(c.id)}
+          />
+        ))}
+      </StepSection>
 
-          <Text style={styles.label}>Vehicle Type</Text>
-          <View style={styles.vehicleTypeList}>
-            {VEHICLE_TYPES.map((option) => {
-              const selected = vehicleType === option.id;
-              return (
-                <TouchableOpacity
-                  key={option.id}
-                  style={[
-                    styles.vehicleTypeCard,
-                    selected && styles.vehicleTypeCardSelected,
-                  ]}
-                  onPress={() => setVehicleType(option.id)}
-                  activeOpacity={0.85}
-                >
-                  <View style={styles.vehicleTypeLeft}>
-                    <View
-                      style={[
-                        styles.vehicleTypeIconWrap,
-                        selected && styles.vehicleTypeIconWrapSelected,
-                      ]}
-                    >
-                      <MaterialCommunityIcons
-                        name={option.icon}
-                        size={20}
-                        color={selected ? PRIMARY : DARK}
-                      />
-                    </View>
-                    <View style={styles.vehicleTypeContent}>
-                      <Text
-                        style={[
-                          styles.vehicleTypeTitle,
-                          selected && styles.vehicleTypeTitleSelected,
-                        ]}
-                      >
-                        {option.label}
-                      </Text>
-                      <Text style={styles.vehicleTypeDescription}>
-                        {option.description}
-                      </Text>
-                    </View>
-                  </View>
-                  <View style={styles.vehicleTypeMeta}>
-                    <Text style={styles.vehicleTypePassengers}>
-                      {option.passengers} seats
-                    </Text>
-                    {selected ? (
-                      <Ionicons name="checkmark-circle" size={22} color={PRIMARY} />
-                    ) : (
-                      <Ionicons name="ellipse-outline" size={20} color="#C7C7CC" />
-                    )}
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+      <StepSection title="Who owns it?">
+        <View style={styles.row}>
+          <ChoiceCard
+            title="I do"
+            icon="account-outline"
+            selected={ownershipType === "private"}
+            onPress={() => setOwnershipType("private")}
+            style={styles.half}
+          />
+          <ChoiceCard
+            title="A company"
+            icon="office-building-outline"
+            selected={ownershipType === "company"}
+            onPress={() => setOwnershipType("company")}
+            style={styles.half}
+          />
+        </View>
+      </StepSection>
 
-          {/* Vehicle Ownership */}
-          <Text style={styles.label}>Vehicle Ownership</Text>
-          <View style={styles.radioRow}>
-            <TouchableOpacity
-              style={[
-                styles.radioOption,
-                ownershipType === "company" && styles.radioOptionSelected,
-              ]}
-              onPress={() => setOwnershipType("company")}
-              activeOpacity={0.8}
-            >
-              <View style={styles.radioCircle}>
-                {ownershipType === "company" && (
-                  <View style={styles.radioFill} />
-                )}
-              </View>
-              <MaterialCommunityIcons
-                name="office-building-outline"
-                size={18}
-                color={ownershipType === "company" ? PRIMARY : COLORS.faint}
-                style={{ marginRight: 6 }}
-              />
-              <Text
-                style={[
-                  styles.radioLabel,
-                  ownershipType === "company" && styles.radioLabelSelected,
-                ]}
-              >
-                Company Car
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.radioOption,
-                ownershipType === "private" && styles.radioOptionSelected,
-              ]}
-              onPress={() => setOwnershipType("private")}
-              activeOpacity={0.8}
-            >
-              <View style={styles.radioCircle}>
-                {ownershipType === "private" && (
-                  <View style={styles.radioFill} />
-                )}
-              </View>
-              <MaterialCommunityIcons
-                name="car-outline"
-                size={18}
-                color={ownershipType === "private" ? PRIMARY : COLORS.faint}
-                style={{ marginRight: 6 }}
-              />
-              <Text
-                style={[
-                  styles.radioLabel,
-                  ownershipType === "private" && styles.radioLabelSelected,
-                ]}
-              >
-                Private Car
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Documents Section */}
-          <Text style={styles.sectionTitle}>Required Documents</Text>
-          <Text style={styles.sectionSub}>
-            Upload clear photos of each document
-          </Text>
-
-          <View style={styles.uploadGrid}>
-            {renderUploadCard(
-              "MOT Certificate",
-              motUrl,
-              "motCert",
-              "certificate-outline"
-            )}
-            {renderUploadCard(
-              "PHV Insurance",
-              insuranceUrl,
-              "phvInsurance",
-              "shield-check-outline"
-            )}
-            {ownershipType === "company" &&
-              renderUploadCard(
-                "Company Agreement",
-                companyAgreementUrl,
-                "companyAgreement",
-                "file-sign"
-              )}
-          </View>
-
-          <TouchableOpacity
-            style={[styles.button, !isFormComplete() && styles.buttonDisabled]}
-            onPress={handleContinue}
-            disabled={!isFormComplete()}
-          >
-            <Text style={styles.buttonText}>Continue</Text>
-            <Ionicons name="arrow-forward" size={18} color={COLORS.white} />
-          </TouchableOpacity>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+      <StepSection title="Documents" hint="A clear photo or PDF of each.">
+        <UploadTile
+          title="MOT certificate"
+          subtitle="Current and in date"
+          icon="certificate-outline"
+          url={urls.motCert}
+          uploading={uploading === "motCert"}
+          onPress={() => pickDocument("motCert")}
+        />
+        <UploadTile
+          title="PHV insurance"
+          subtitle="Hire and reward cover"
+          icon="shield-car"
+          url={urls.phvInsurance}
+          uploading={uploading === "phvInsurance"}
+          onPress={() => pickDocument("phvInsurance")}
+        />
+        {ownershipType === "company" ? (
+          <UploadTile
+            title="Company agreement"
+            subtitle="Showing you're allowed to drive it"
+            icon="file-sign"
+            url={urls.companyAgreement}
+            uploading={uploading === "companyAgreement"}
+            onPress={() => pickDocument("companyAgreement")}
+          />
+        ) : null}
+      </StepSection>
+    </OnboardingFrame>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.white },
-  container: { padding: 20, paddingBottom: 40 },
-
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 16,
-  },
-  flag: { width: 32, height: 20, marginRight: 10, resizeMode: "contain" },
-  iconBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: COLORS.surface,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  stepText: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: DARK,
-  },
-
-  progressBarBg: {
-    height: 6,
-    backgroundColor: COLORS.line,
-    borderRadius: 3,
-    marginBottom: 28,
-    overflow: "hidden",
-  },
-  progressBarFill: {
-    height: 6,
-    backgroundColor: PRIMARY,
-    borderRadius: 3,
-  },
-
-  title: {
-    fontSize: 26,
-    fontWeight: "800",
-    color: DARK,
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: COLORS.muted,
-    marginBottom: 24,
-  },
-
-  label: {
-    fontSize: 14,
-    fontWeight: "700",
-    marginBottom: 8,
-    marginLeft: 4,
-    color: DARK,
-  },
-  input: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 14,
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    fontSize: 16,
-    marginBottom: 18,
-    borderWidth: 1,
-    borderColor: COLORS.line,
-    color: DARK,
-  },
-
-  regRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 24,
-    gap: 10,
-  },
-  regInput: {
-    flex: 1,
-    backgroundColor: COLORS.surface,
-    borderRadius: 14,
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    fontSize: 18,
-    fontWeight: "700",
-    borderWidth: 1,
-    borderColor: COLORS.line,
-    color: DARK,
-    letterSpacing: 2,
-  },
-  vehicleTypeList: {
-    gap: 12,
-    marginBottom: 24,
-  },
-  vehicleTypeCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: COLORS.surface,
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderColor: COLORS.line,
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-  },
-  vehicleTypeCardSelected: {
-    borderColor: PRIMARY,
-    backgroundColor: "rgba(121,181,49,0.08)",
-  },
-  vehicleTypeLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-    marginRight: 12,
-  },
-  vehicleTypeIconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
-    backgroundColor: COLORS.white,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  vehicleTypeIconWrapSelected: {
-    backgroundColor: "rgba(121,181,49,0.14)",
-  },
-  vehicleTypeContent: {
-    flex: 1,
-  },
-  vehicleTypeTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: DARK,
-  },
-  vehicleTypeTitleSelected: {
-    color: PRIMARY,
-  },
-  vehicleTypeDescription: {
-    fontSize: 12,
-    color: "#777",
-    marginTop: 4,
-  },
-  vehicleTypeMeta: {
-    alignItems: "flex-end",
-    gap: 6,
-  },
-  vehicleTypePassengers: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#777",
-  },
-
-  /* Radio Buttons */
-  radioRow: {
-    flexDirection: "row",
-    gap: 12,
-    marginBottom: 28,
-  },
-  radioOption: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: COLORS.line,
-    backgroundColor: COLORS.surface,
-  },
-  radioOptionSelected: {
-    borderColor: PRIMARY,
-    backgroundColor: "rgba(121,181,49,0.06)",
-  },
-  radioCircle: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    borderWidth: 2,
-    borderColor: COLORS.lineStrong,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 8,
-  },
-  radioFill: {
-    width: 9,
-    height: 9,
-    borderRadius: 5,
-    backgroundColor: PRIMARY,
-  },
-  radioLabel: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: COLORS.muted,
-  },
-  radioLabelSelected: {
-    color: PRIMARY,
-  },
-
-  /* Upload Section */
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: DARK,
-    marginBottom: 4,
-  },
-  sectionSub: {
-    fontSize: 13,
-    color: COLORS.muted,
-    marginBottom: 16,
-  },
-  uploadGrid: {
-    gap: 12,
-  },
-  uploadCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: COLORS.white,
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1.5,
-    borderColor: COLORS.line,
-    borderStyle: "dashed",
-    gap: 14,
-  },
-  uploadCardDone: {
-    borderColor: PRIMARY,
-    borderStyle: "solid",
-    backgroundColor: "rgba(121,180,49,0.04)",
-  },
-  uploadPreview: {
-    position: "relative",
-  },
-  uploadThumb: {
-    width: 56,
-    height: 56,
-    borderRadius: 12,
-  },
-  uploadPlaceholder: {
-    width: 56,
-    height: 56,
-    borderRadius: 12,
-    backgroundColor: "#F0F7E6",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  uploadCheck: {
-    position: "absolute",
-    bottom: -4,
-    right: -4,
-    backgroundColor: COLORS.white,
-    borderRadius: 10,
-  },
-  uploadInfo: {
-    flex: 1,
-  },
-  uploadTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: DARK,
-    marginBottom: 2,
-  },
-  uploadStatus: {
-    fontSize: 12,
-    color: "#aaa",
-  },
-
-  button: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: PRIMARY,
-    paddingVertical: 16,
-    borderRadius: 16,
-    marginTop: 24,
-    gap: 8,
-  },
-  buttonDisabled: {
-    backgroundColor: COLORS.lineStrong,
-  },
-  buttonText: {
-    color: COLORS.white,
-    fontSize: 16,
-    fontWeight: "700",
-  },
+  row: { flexDirection: "row", gap: SPACE[3] },
+  half: { flex: 1 },
+  year: { width: 110 },
+  reg: { flex: 1 },
 });

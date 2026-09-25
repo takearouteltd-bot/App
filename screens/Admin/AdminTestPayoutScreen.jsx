@@ -6,9 +6,9 @@ import {
   TouchableOpacity,
   FlatList,
   TextInput,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
+import { Alert } from '../../components/ui/alert';
 import { Ionicons } from '@expo/vector-icons';
 import { getFirestore, collection, query, where, onSnapshot, doc, getDoc } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';

@@ -1,7 +1,8 @@
 // "Email receipt" for a completed trip. Sends to the passenger's own address,
 // or to another one they type in (for example an employer or accountant).
 import React, { useState } from 'react';
-import { Modal, View, Text, Pressable, Alert, StyleSheet } from 'react-native';
+import { Modal, View, Text, Pressable, StyleSheet } from 'react-native';
+import { Alert, AlertHost } from './ui/alert';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../config/firebase';
 import { COLORS, TYPE, Button, Field } from './ui/kit';
@@ -62,6 +63,7 @@ export default function EmailReceiptButton({ rideId, style, variant = 'secondary
           />
           <Button title="Close" variant="ghost" style={{ marginTop: 6 }} onPress={() => setOpen(false)} />
         </View>
+        <AlertHost />
       </Modal>
     </>
   );

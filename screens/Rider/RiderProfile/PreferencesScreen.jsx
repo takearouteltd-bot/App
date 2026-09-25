@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, Switch, Alert, Linking } from 'react-native';
+import { View, Text, StyleSheet, SafeAreaView, ScrollView, Switch, Linking } from 'react-native';
+import { Alert } from '../../../components/ui/alert';
 import { useNavigation } from '@react-navigation/native';
 import { auth } from '../../../config/firebase';
 import {

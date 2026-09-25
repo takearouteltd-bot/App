@@ -9,6 +9,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import { COLORS, TYPE, ListRow, Button } from './ui/kit';
 
+import { AlertHost } from './ui/alert';
 export default function SafetyButton({ role = 'rider', rideId, style }) {
   const [contact, setContact] = useState(null);
   const [open, setOpen] = useState(false);
@@ -60,6 +61,7 @@ export default function SafetyButton({ role = 'rider', rideId, style }) {
           ) : null}
           <Button title="Close" variant="secondary" style={{ marginTop: 16 }} onPress={() => setOpen(false)} />
         </View>
+        <AlertHost />
       </Modal>
     </>
   );

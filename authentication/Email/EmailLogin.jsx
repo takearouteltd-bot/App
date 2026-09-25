@@ -9,9 +9,9 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
-  Alert,
   ScrollView,
 } from "react-native";
+import { Alert } from "../../components/ui/alert";
 import { Ionicons } from "@expo/vector-icons";
 import {
   createUserWithEmailAndPassword,

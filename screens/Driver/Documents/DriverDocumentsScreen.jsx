@@ -3,8 +3,16 @@
 // live until an admin accepts the new one.
 import React, { useEffect, useState } from 'react';
 import {
-  SafeAreaView, ScrollView, View, Text, Alert, Linking, KeyboardAvoidingView, Platform, StyleSheet,
+  SafeAreaView,
+  ScrollView,
+  View,
+  Text,
+  Linking,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
 } from 'react-native';
+import { Alert } from '../../../components/ui/alert';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../../../config/firebase';
 import { selectUploadAsset } from '../../../helpers/uploadPicker';

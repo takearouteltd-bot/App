@@ -1,23 +1,10 @@
-import React, { useState, useEffect } from "react";
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  SafeAreaView,
-  ScrollView,
-  KeyboardAvoidingView,
-  Platform,
-  Alert,
-} from "react-native";
-import { Ionicons } from "@expo/vector-icons";
+import React, { useState, useEffect, useRef } from "react";
+import { View, StyleSheet } from "react-native";
+import { Alert } from "../../components/ui/alert";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db, auth } from "../../config/firebase";
-import { COLORS, RADIUS } from '../../components/ui/kit';
-
-const TOTAL_STEPS = 5;
-const PRIMARY = COLORS.green;
+import { Banner, Field, SPACE } from "../../components/ui/kit";
+import { DRIVER_STEPS, OnboardingFrame, StepSection } from "../../components/onboarding/kit";
 
 // UK National Insurance number: 2 prefix letters + 6 digits + 1 suffix letter.
 // Excludes invalid prefixes/letters per HMRC rules.
@@ -49,11 +36,7 @@ const isValidDob = (value) => {
   if (date > today) return false;
 
   // Must be at least 18 years old.
-  const eighteenth = new Date(
-    date.getFullYear() + 18,
-    date.getMonth(),
-    date.getDate()
-  );
+  const eighteenth = new Date(date.getFullYear() + 18, date.getMonth(), date.getDate());
   if (eighteenth > today) return false;
 
   // Sanity upper bound.
@@ -62,17 +45,17 @@ const isValidDob = (value) => {
   return true;
 };
 
-export default function PersonalInformationScreen({
-  navigation,
-  setOnboardingStatus,
-}) {
-  const [currentStep, setCurrentStep] = useState(1);
-
+export default function PersonalInformationScreen({ navigation, setOnboardingStatus }) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [dob, setDob] = useState("");
   const [nin, setNin] = useState("");
   const [address, setAddress] = useState("");
+  const [saving, setSaving] = useState(false);
+  // Field errors appear only after a first attempt to continue, not while
+  // someone is still typing.
+  const [tried, setTried] = useState(false);
+  const resumed = useRef(false);
 
   const driverId = auth.currentUser?.uid;
 
@@ -93,23 +76,31 @@ export default function PersonalInformationScreen({
     setNin(text.replace(/\s/g, "").toUpperCase().slice(0, 9));
   };
 
-  // ✅ Fetch existing data (if user returns)
+  // Load what they already entered, and pick up where they left off: a driver
+  // who reached step 3 last time lands on step 3, with steps 1 and 2 behind
+  // them so Back still works.
   useEffect(() => {
     const fetchData = async () => {
       if (!driverId) return;
 
       try {
         const snap = await getDoc(doc(db, "drivers", driverId));
+        if (!snap.exists()) return;
 
-        if (snap.exists()) {
-          const data = snap.data();
+        const data = snap.data();
+        setFirstName(data.firstName || "");
+        setLastName(data.lastName || "");
+        setDob(data.dob || "");
+        setNin(data.nin || "");
+        setAddress(data.address || "");
 
-          setCurrentStep(data.onboardingStep || 1);
-          setFirstName(data.firstName || "");
-          setLastName(data.lastName || "");
-          setDob(data.dob || "");
-          setNin(data.nin || "");
-          setAddress(data.address || "");
+        const reached = Math.min(Number(data.onboardingStep) || 1, DRIVER_STEPS.length);
+        if (reached > 1 && !resumed.current) {
+          resumed.current = true;
+          navigation.reset({
+            index: reached - 1,
+            routes: DRIVER_STEPS.slice(0, reached).map((s) => ({ name: s.route })),
+          });
         }
       } catch (error) {
         console.log("Error fetching driver data:", error);
@@ -117,43 +108,46 @@ export default function PersonalInformationScreen({
     };
 
     fetchData();
-  }, [driverId]);
+  }, [driverId, navigation]);
 
-  // ✅ Save data + move forward
+  const errors = {
+    firstName: !firstName.trim() ? "Enter your first name" : null,
+    lastName: !lastName.trim() ? "Enter your last name" : null,
+    dob: !dob
+      ? "Enter your date of birth"
+      : !isValidDob(dob)
+      ? "Use DD/MM/YYYY. You must be 18 or over."
+      : null,
+    nin: !nin
+      ? "Enter your National Insurance number"
+      : !isValidNino(nin)
+      ? "That doesn't look right, e.g. AB123456C"
+      : null,
+    address: !address.trim() ? "Enter your home address" : null,
+  };
+  const show = (key) => (tried ? errors[key] : null);
+
   const handleContinue = async () => {
     if (!driverId) return;
+    setTried(true);
 
-    if (!firstName || !lastName || !dob || !nin || !address) {
-      Alert.alert("Missing Fields", "Please fill all fields.");
+    const firstError = Object.values(errors).find(Boolean);
+    if (firstError) {
+      Alert.alert("Check your details", firstError);
       return;
     }
 
-    if (!isValidDob(dob)) {
-      Alert.alert(
-        "Invalid Date of Birth",
-        "Enter a valid date as DD/MM/YYYY. You must be at least 18 years old."
-      );
-      return;
-    }
-
-    if (!isValidNino(nin)) {
-      Alert.alert(
-        "Invalid National Insurance Number",
-        "Enter a valid UK NI number, e.g. AB123456C (2 letters, 6 digits, 1 letter)."
-      );
-      return;
-    }
-
+    setSaving(true);
     try {
       await setDoc(
         doc(db, "drivers", driverId),
         {
-          firstName,
-          lastName,
-          fullName: `${firstName} ${lastName}`,
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          fullName: `${firstName.trim()} ${lastName.trim()}`,
           dob,
           nin,
-          address,
+          address: address.trim(),
 
           onboardingStep: 2,
           onboardingComplete: false,
@@ -165,228 +159,99 @@ export default function PersonalInformationScreen({
           createdAt: new Date(),
           updatedAt: new Date(),
         },
-        { merge: true } // 🔥 important
+        { merge: true }
       );
 
-      // update global onboarding flow
       setOnboardingStatus("onboarding");
-
-      console.log("Personal info saved!");
-
       navigation.navigate("IdentityVerification");
     } catch (error) {
       console.log("Error saving personal info:", error);
-      Alert.alert("Error", "Failed to save info. Please try again.");
+      Alert.alert("Could not save", "Your details were not saved. Check your connection and try again.");
+    } finally {
+      setSaving(false);
     }
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-      >
-        <ScrollView
-          contentContainerStyle={styles.container}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => navigation.goBack()}>
-              <Ionicons name="arrow-back" size={24} color="black" />
-            </TouchableOpacity>
-
-            <Text style={styles.stepText}>
-              Step {currentStep} of {TOTAL_STEPS}
-            </Text>
-
-            <View style={{ width: 24 }} />
-          </View>
-
-          {/* Progress Bar */}
-          <View style={styles.progressBarBg}>
-            <View
-              style={[
-                styles.progressBarFill,
-                { width: `${(currentStep / TOTAL_STEPS) * 100}%` },
-              ]}
-            />
-          </View>
-
-          <Text style={styles.title}>Personal Information</Text>
-
-          {/* First Name */}
-          <Text style={styles.label}>First Name</Text>
-          <TextInput
-            placeholder="Enter first name"
+    <OnboardingFrame
+      step={1}
+      title="Tell us about you"
+      subtitle="As it appears on your driving licence. It takes about a minute."
+      action={{ title: "Continue", onPress: handleContinue, loading: saving, icon: "arrow-forward" }}
+    >
+      <StepSection title="Your name">
+        <View style={styles.row}>
+          <Field
+            label="First name"
             value={firstName}
             onChangeText={setFirstName}
-            style={styles.input}
+            placeholder="Jane"
+            autoCapitalize="words"
+            textContentType="givenName"
+            error={show("firstName")}
+            style={styles.half}
           />
-
-          {/* Last Name */}
-          <Text style={styles.label}>Last Name</Text>
-          <TextInput
-            placeholder="Enter last name"
+          <Field
+            label="Last name"
             value={lastName}
             onChangeText={setLastName}
-            style={styles.input}
+            placeholder="Smith"
+            autoCapitalize="words"
+            textContentType="familyName"
+            error={show("lastName")}
+            style={styles.half}
           />
+        </View>
+      </StepSection>
 
-          {/* DOB */}
-          <Text style={styles.label}>Date of Birth</Text>
-          <TextInput
-            placeholder="DD/MM/YYYY"
-            value={dob}
-            onChangeText={handleDobChange}
-            keyboardType="number-pad"
-            maxLength={10}
-            style={styles.input}
-          />
+      <StepSection title="Identity">
+        <Field
+          label="Date of birth"
+          value={dob}
+          onChangeText={handleDobChange}
+          placeholder="DD/MM/YYYY"
+          keyboardType="number-pad"
+          maxLength={10}
+          hint="You must be at least 18."
+          error={show("dob")}
+        />
+        <Field
+          label="National Insurance number"
+          value={nin}
+          onChangeText={handleNinChange}
+          placeholder="AB123456C"
+          autoCapitalize="characters"
+          autoCorrect={false}
+          maxLength={9}
+          hint="Two letters, six numbers, one letter."
+          error={show("nin")}
+        />
+      </StepSection>
 
-          {/* NIN */}
-          <Text style={styles.label}>National Insurance Number</Text>
-          <TextInput
-            placeholder="AB123456C"
-            value={nin}
-            onChangeText={handleNinChange}
-            autoCapitalize="characters"
-            autoCorrect={false}
-            maxLength={9}
-            style={styles.input}
-          />
+      <StepSection title="Home address">
+        <Field
+          label="Address"
+          value={address}
+          onChangeText={setAddress}
+          placeholder="House number, street, town, postcode"
+          autoCapitalize="words"
+          textContentType="fullStreetAddress"
+          multiline
+          error={show("address")}
+        />
+      </StepSection>
 
-          <Text style={styles.infoText}>
-            Required for verification. Your data is securely stored.
-          </Text>
-
-          {/* Address */}
-          <Text style={styles.label}>Home Address</Text>
-          <View style={styles.addressContainer}>
-            <TextInput
-              placeholder="Enter your address"
-              value={address}
-              onChangeText={setAddress}
-              style={styles.addressInput}
-            />
-            <TouchableOpacity style={styles.searchBtn}>
-              <Ionicons name="search" size={20} color="white" />
-            </TouchableOpacity>
-          </View>
-
-          <TouchableOpacity>
-            <Text style={styles.manualText}>Enter address manually</Text>
-          </TouchableOpacity>
-
-          {/* Continue Button */}
-          <TouchableOpacity style={styles.button} onPress={handleContinue}>
-            <Text style={styles.buttonText}>Continue</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+      <Banner
+        tone="info"
+        icon="lock-closed"
+        title="Kept private"
+        body="We only use these details to check you can drive with TakeARoute. They are never shown to passengers."
+      />
+    </OnboardingFrame>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.white },
-  container: { padding: 20, paddingBottom: 40 },
-
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-
-  stepText: {
-    fontSize: 16,
-    fontWeight: "600",
-  },
-
-  progressBarBg: {
-    height: 6,
-    backgroundColor: "#E5E5E5",
-    borderRadius: 10,
-    marginTop: 10,
-    marginBottom: 25,
-  },
-
-  progressBarFill: {
-    height: 6,
-    backgroundColor: PRIMARY,
-    borderRadius: 10,
-  },
-
-  title: {
-    fontSize: 22,
-    fontWeight: "bold",
-    marginBottom: 20,
-  },
-
-  label: {
-    fontSize: 14,
-    fontWeight: "600",
-    marginBottom: 6,
-    marginLeft: 4,
-    color: COLORS.inkSoft,
-  },
-
-  input: {
-    backgroundColor: "#F4F4F4",
-    borderRadius: 30,
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    fontSize: 16,
-    marginBottom: 15,
-  },
-
-  infoText: {
-    fontSize: 13,
-    color: "gray",
-    marginBottom: 20,
-  },
-
-  addressContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-
-  addressInput: {
-    flex: 1,
-    backgroundColor: "#F4F4F4",
-    borderTopLeftRadius: 30,
-    borderBottomLeftRadius: 30,
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    fontSize: 16,
-  },
-
-  searchBtn: {
-    backgroundColor: PRIMARY,
-    padding: 14,
-    borderTopRightRadius: 30,
-    borderBottomRightRadius: 30,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  manualText: {
-    color: PRIMARY,
-    fontWeight: "600",
-    marginBottom: 30,
-  },
-
-  button: {
-    backgroundColor: PRIMARY,
-    paddingVertical: 16,
-    borderRadius: RADIUS.md,
-    alignItems: "center",
-  },
-
-  buttonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "bold",
-  },
+  row: { flexDirection: "row", gap: SPACE[3] },
+  half: { flex: 1 },
 });

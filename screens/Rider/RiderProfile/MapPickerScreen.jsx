@@ -5,12 +5,12 @@ import {
   StyleSheet,
   TouchableOpacity,
   TextInput,
-  Alert,
   ActivityIndicator,
   FlatList,
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
+import { Alert } from "../../../components/ui/alert";
 import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useRoute } from "@react-navigation/native";

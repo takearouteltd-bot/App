@@ -1,68 +1,50 @@
 import React, { useState, useEffect } from "react";
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  SafeAreaView,
-  ScrollView,
-  Platform,
-  KeyboardAvoidingView,
-  Alert,
-  TextInput,
-} from "react-native";
-import { Ionicons, MaterialIcons } from "@expo/vector-icons";
+import { Alert } from "../../components/ui/alert";
 import { doc, getDoc, setDoc } from "firebase/firestore";
-import { db, auth, storage } from "../../config/firebase";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import {
-  captureSelfie,
-  inferUploadExtension,
-  selectUploadAsset,
-} from "../../helpers/uploadPicker";
-import { COLORS } from '../../components/ui/kit';
+import { db, auth } from "../../config/firebase";
+import { captureSelfie, selectUploadAsset, uploadDriverFile } from "../../helpers/uploadPicker";
+import { Banner, Field } from "../../components/ui/kit";
+import { OnboardingFrame, StepSection, UploadTile } from "../../components/onboarding/kit";
 
-const TOTAL_STEPS = 5;
-const PRIMARY = COLORS.green;
+// Each document: where it is stored (drivers/{uid}/{type}.ext, saved as
+// {type}Url on the driver) and how it is described.
+const LICENCE = [
+  { type: "driverLicenseFront", title: "Driving licence, front", subtitle: "Photo card, all four corners in view", icon: "card-account-details-outline" },
+  { type: "driverLicenseBack", title: "Driving licence, back", subtitle: "The side with the categories", icon: "card-bulleted-outline" },
+];
+const COMPLIANCE = [
+  { type: "pcoLicense", title: "PCO licence", subtitle: "Your private hire driver licence", icon: "certificate-outline" },
+  { type: "dbsCertificate", title: "Enhanced DBS certificate", subtitle: "Must be current", icon: "shield-check-outline", optional: true },
+];
 
-export default function IdentityVerificationScreen({
-  navigation,
-  setOnboardingStatus,
-}) {
-  const [currentStep, setCurrentStep] = useState(2);
+export default function IdentityVerificationScreen({ navigation, setOnboardingStatus }) {
   const driverId = auth.currentUser?.uid;
 
-  const [driverLicenseFrontUrl, setDriverLicenseFrontUrl] = useState(null);
-  const [driverLicenseBackUrl, setDriverLicenseBackUrl] = useState(null);
-  const [pcoLicenseUrl, setPcoLicenseUrl] = useState(null);
-  const [dbsCertificateUrl, setDbsCertificateUrl] = useState(null);
-  const [selfieUrl, setSelfieUrl] = useState(null);
+  const [urls, setUrls] = useState({});
+  const [uploading, setUploading] = useState(null);
   const [shareCode, setShareCode] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  // ✅ Fetch existing data (important!)
+  // Load anything already uploaded.
   useEffect(() => {
     const fetchData = async () => {
       if (!driverId) return;
 
       try {
         const snap = await getDoc(doc(db, "drivers", driverId));
+        if (!snap.exists()) return;
 
-        if (snap.exists()) {
-          const data = snap.data();
-          const legacyDriverLicenseUrl = data.driverLicenseUrl || null;
-
-          setCurrentStep(data.onboardingStep || 2);
-          setDriverLicenseFrontUrl(
-            data.driverLicenseFrontUrl || legacyDriverLicenseUrl
-          );
-          setDriverLicenseBackUrl(
-            data.driverLicenseBackUrl || legacyDriverLicenseUrl
-          );
-          setPcoLicenseUrl(data.pcoLicenseUrl || null);
-          setDbsCertificateUrl(data.dbsCertificateUrl || null);
-          setSelfieUrl(data.selfieUrl || null);
-          setShareCode(data.rightToWorkShareCode || "");
-        }
+        const data = snap.data();
+        // Older accounts stored a single licence image.
+        const legacy = data.driverLicenseUrl || null;
+        setUrls({
+          driverLicenseFront: data.driverLicenseFrontUrl || legacy,
+          driverLicenseBack: data.driverLicenseBackUrl || legacy,
+          pcoLicense: data.pcoLicenseUrl || null,
+          dbsCertificate: data.dbsCertificateUrl || null,
+          selfie: data.selfieUrl || null,
+        });
+        setShareCode(data.rightToWorkShareCode || "");
       } catch (error) {
         console.log("Error fetching identity data:", error);
       }
@@ -71,7 +53,8 @@ export default function IdentityVerificationScreen({
     fetchData();
   }, [driverId]);
 
-  // ✅ Upload + Save to Firestore
+  // Upload, then save the link straight away, so nothing is lost if they
+  // leave before pressing Continue.
   const pickDocument = async (type) => {
     if (!driverId) return;
 
@@ -80,317 +63,112 @@ export default function IdentityVerificationScreen({
     if (!asset) return;
 
     if (asset.error) {
-      Alert.alert("Permission required", asset.error);
+      Alert.alert("Permission needed", asset.error);
       return;
     }
 
+    setUploading(type);
     try {
-      const response = await fetch(asset.uri);
-      const blob = await response.blob();
-      const extension = inferUploadExtension(asset.name, asset.mimeType);
-
-      const storageRef = ref(storage, `drivers/${driverId}/${type}.${extension}`);
-
-      await uploadBytes(storageRef, blob);
-      const downloadUrl = await getDownloadURL(storageRef);
-
-      // 🔥 Save in Firestore immediately
-      const updateData = {};
-      updateData[`${type}Url`] = downloadUrl;
-
-      await setDoc(doc(db, "drivers", driverId), updateData, { merge: true });
-
-      // Update local state
-      if (type === "driverLicenseFront") setDriverLicenseFrontUrl(downloadUrl);
-      if (type === "driverLicenseBack") setDriverLicenseBackUrl(downloadUrl);
-      if (type === "pcoLicense") setPcoLicenseUrl(downloadUrl);
-      if (type === "dbsCertificate") setDbsCertificateUrl(downloadUrl);
-      if (type === "selfie") setSelfieUrl(downloadUrl);
-
-      console.log(`${type} uploaded!`);
+      const downloadUrl = await uploadDriverFile(driverId, type, asset);
+      await setDoc(doc(db, "drivers", driverId), { [`${type}Url`]: downloadUrl }, { merge: true });
+      setUrls((u) => ({ ...u, [type]: downloadUrl }));
     } catch (error) {
       console.log("Upload error:", error);
-      Alert.alert("Error", "Failed to upload document.");
+      Alert.alert("Upload failed", "That file did not upload. Check your connection and try again.");
+    } finally {
+      setUploading(null);
     }
   };
 
+  const missing = [
+    !urls.driverLicenseFront && "the front of your driving licence",
+    !urls.driverLicenseBack && "the back of your driving licence",
+    !urls.pcoLicense && "your PCO licence",
+    !urls.selfie && "a selfie",
+    !shareCode.trim() && "your Right to Work share code",
+  ].filter(Boolean);
+
   const handleContinue = async () => {
-    if (!driverLicenseFrontUrl || !driverLicenseBackUrl || !pcoLicenseUrl || !selfieUrl) {
-      Alert.alert("Missing Documents", "Please upload all required documents.");
+    if (missing.length) {
+      Alert.alert("Almost there", `Please add ${missing.join(", ")}.`);
       return;
     }
 
-    if (!shareCode.trim()) {
-      Alert.alert("Missing Share Code", "Please enter your Right to Work Share Code.");
-      return;
-    }
-
+    setSaving(true);
     try {
       await setDoc(
         doc(db, "drivers", driverId),
         {
           onboardingStep: 3,
           onboardingComplete: false,
-          rightToWorkShareCode: shareCode.trim(),
+          rightToWorkShareCode: shareCode.trim().toUpperCase(),
           updatedAt: new Date(),
         },
         { merge: true }
       );
 
       setOnboardingStatus("onboarding");
-
       navigation.navigate("VehicleDetails");
     } catch (error) {
       console.log("Error saving identity info:", error);
-      Alert.alert("Error", "Failed to continue.");
+      Alert.alert("Could not save", "Check your connection and try again.");
+    } finally {
+      setSaving(false);
     }
   };
 
-  const renderCard = (title, subtitle, icon, stateVar, type) => (
-    <View style={styles.card}>
-      <View style={styles.cardContent}>
-        <View style={styles.iconContainer}>{icon}</View>
-        <View style={{ flex: 1, marginLeft: 12 }}>
-          <Text style={styles.cardTitle}>{title}</Text>
-          <Text style={styles.cardSubtitle}>{subtitle}</Text>
-        </View>
-      </View>
-
-      <TouchableOpacity
-        style={styles.uploadBtn}
-        onPress={() => pickDocument(type)}
-      >
-        <Ionicons name="cloud-upload" size={18} color="white" />
-        <Text style={styles.uploadBtnText}> Upload</Text>
-      </TouchableOpacity>
-
-      {stateVar && <Text style={styles.uploadedText}>Uploaded ✅</Text>}
-    </View>
+  const tile = (d) => (
+    <UploadTile
+      key={d.type}
+      title={d.title}
+      subtitle={d.subtitle}
+      icon={d.icon}
+      optional={d.optional}
+      url={urls[d.type]}
+      uploading={uploading === d.type}
+      onPress={() => pickDocument(d.type)}
+    />
   );
+
+  const done = [urls.driverLicenseFront, urls.driverLicenseBack, urls.pcoLicense, urls.selfie].filter(Boolean).length;
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
-      >
-        <ScrollView contentContainerStyle={styles.container}>
-          {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity onPress={() => navigation.goBack()}>
-              <Ionicons name="arrow-back" size={24} color="black" />
-            </TouchableOpacity>
+    <OnboardingFrame
+      step={2}
+      title="Prove it's you"
+      subtitle="UK private hire rules require these before you can take passengers."
+      action={{ title: "Continue", onPress: handleContinue, loading: saving, icon: "arrow-forward" }}
+      footerNote={`${done} of 4 required documents added`}
+    >
+      <StepSection title="Driving licence" hint="Take the photo on a flat, well-lit surface.">
+        {LICENCE.map(tile)}
+      </StepSection>
 
-            <Text style={styles.stepText}>
-              Step {currentStep} of {TOTAL_STEPS}
-            </Text>
+      <StepSection title="Private hire">
+        {COMPLIANCE.map(tile)}
+      </StepSection>
 
-            <View style={{ width: 24 }} />
-          </View>
+      <StepSection title="Selfie" hint="Taken live with your front camera, so we can match you to your licence.">
+        {tile({ type: "selfie", title: "Take a selfie", subtitle: "Face the camera, no hat or sunglasses", icon: "camera-outline" })}
+      </StepSection>
 
-          {/* Progress */}
-          <View style={styles.progressBarBg}>
-            <View
-              style={[
-                styles.progressBarFill,
-                { width: `${(currentStep / TOTAL_STEPS) * 100}%` },
-              ]}
-            />
-          </View>
+      <StepSection title="Right to work" hint="Get a share code from gov.uk/prove-right-to-work. It must be under 28 days old.">
+        <Field
+          label="Share code"
+          value={shareCode}
+          onChangeText={(t) => setShareCode(t.toUpperCase())}
+          placeholder="ABC 123 DEF"
+          autoCapitalize="characters"
+          autoCorrect={false}
+          maxLength={11}
+        />
+      </StepSection>
 
-          <Text style={styles.title}>Identity & Compliance</Text>
-          <Text style={styles.subtitle}>
-            Please upload valid documents to verify your identity. These are required by the UK regulations.
-          </Text>
-
-          {renderCard(
-            "Driver's License (Front)",
-            "Upload the front side of your driving license",
-            <MaterialIcons name="card-membership" size={40} color={PRIMARY} />,
-            driverLicenseFrontUrl,
-            "driverLicenseFront"
-          )}
-
-          {renderCard(
-            "Driver's License (Back)",
-            "Upload the back side of your driving license",
-            <MaterialIcons name="flip-to-back" size={40} color={PRIMARY} />,
-            driverLicenseBackUrl,
-            "driverLicenseBack"
-          )}
-
-          {renderCard(
-            "PCO License",
-            "Required for ride-hailing",
-            <MaterialIcons name="description" size={40} color={PRIMARY} />,
-            pcoLicenseUrl,
-            "pcoLicense"
-          )}
-
-          {renderCard(
-            "Enhanced DBS Certificate",
-            "Ensure good lighting. Must be valid",
-            <MaterialIcons name="description" size={40} color={PRIMARY} />,
-            dbsCertificateUrl,
-            "dbsCertificate"
-          )}
-
-          {renderCard(
-            "Selfie Verification",
-            "Match with your ID",
-            <Ionicons name="camera" size={40} color={PRIMARY} />,
-            selfieUrl,
-            "selfie"
-          )}
-
-          {/* Right to Work Share Code */}
-          <View style={styles.card}>
-            <View style={styles.cardContent}>
-              <View style={styles.iconContainer}>
-                <MaterialIcons name="vpn-key" size={40} color={PRIMARY} />
-              </View>
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={styles.cardTitle}>Right to Work Share Code</Text>
-                <Text style={styles.cardSubtitle}>
-                  Must not be older than 28 days
-                </Text>
-              </View>
-            </View>
-
-            <TextInput
-              style={styles.shareCodeInput}
-              value={shareCode}
-              onChangeText={setShareCode}
-              placeholder="ABC 123 DEF"
-              placeholderTextColor="#aaa"
-              autoCapitalize="characters"
-              maxLength={11}
-            />
-          </View>
-
-          <TouchableOpacity style={styles.button} onPress={handleContinue}>
-            <Text style={styles.buttonText}>Continue</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+      <Banner
+        tone="info"
+        icon="lock-closed"
+        body="Your documents are stored securely and only seen by the TakeARoute team reviewing your application."
+      />
+    </OnboardingFrame>
   );
 }
-
-const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
-    backgroundColor: COLORS.white,
-  },
-  container: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  stepText: {
-    fontSize: 14,
-    color: COLORS.muted,
-    fontWeight: "500",
-  },
-  progressBarBg: {
-    height: 6,
-    backgroundColor: "#e0e0e0",
-    borderRadius: 4,
-    marginBottom: 24,
-  },
-  progressBarFill: {
-    height: 6,
-    backgroundColor: COLORS.green,
-    borderRadius: 4,
-  },
-  title: {
-    fontSize: 22,
-    fontWeight: "700",
-    color: "#111",
-    marginBottom: 6,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: COLORS.muted,
-    marginBottom: 24,
-    lineHeight: 20,
-  },
-  card: {
-    backgroundColor: "#f9f9f9",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: COLORS.line,
-  },
-  cardContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  iconContainer: {
-    width: 52,
-    height: 52,
-    borderRadius: 10,
-    backgroundColor: "#f0f9e6",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  cardTitle: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: "#111",
-    marginBottom: 2,
-  },
-  cardSubtitle: {
-    fontSize: 12,
-    color: COLORS.muted,
-  },
-  uploadBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: COLORS.green,
-    borderRadius: 8,
-    paddingVertical: 10,
-  },
-  uploadBtnText: {
-    color: "white",
-    fontWeight: "600",
-    fontSize: 14,
-  },
-  uploadedText: {
-    marginTop: 8,
-    fontSize: 13,
-    color: COLORS.green,
-    fontWeight: "500",
-  },
-  shareCodeInput: {
-    borderWidth: 1,
-    borderColor: "#ddd",
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: "#111",
-    backgroundColor: COLORS.white,
-    letterSpacing: 1.5,
-  },
-  button: {
-    backgroundColor: COLORS.green,
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: "center",
-    marginTop: 8,
-  },
-  buttonText: {
-    color: "white",
-    fontSize: 16,
-    fontWeight: "700",
-  },
-});

@@ -5,12 +5,12 @@ import {
   StyleSheet,
   TouchableOpacity,
   SafeAreaView,
-  Alert,
   Image,
   ScrollView,
   ActivityIndicator,
   RefreshControl,
 } from "react-native";
+import { Alert } from "../../../components/ui/alert";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import { getAuth, signOut } from "firebase/auth";

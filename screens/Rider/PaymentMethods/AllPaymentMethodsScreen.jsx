@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, SafeAreaView, ActivityIndicator, Alert, StyleSheet } from 'react-native';
+import { View, Text, FlatList, SafeAreaView, ActivityIndicator, StyleSheet } from 'react-native';
+import { Alert } from '../../../components/ui/alert';
 import { Ionicons } from '@expo/vector-icons';
 import {
   collection,

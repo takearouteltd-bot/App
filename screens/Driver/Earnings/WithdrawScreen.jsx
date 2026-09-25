@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator } from 'react-native';
+import { Alert } from '../../../components/ui/alert';
 import { useNavigation } from '@react-navigation/native';
 import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';

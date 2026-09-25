@@ -34,6 +34,7 @@ import {
   Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useNavigation, useRoute } from '@react-navigation/native';
 
 /* ======================================================================
    TOKENS
@@ -166,7 +167,41 @@ export function Screen({ children, scroll = true, style, contentStyle, refreshCo
 }
 
 /* Header with back arrow, a large title and an optional line under it. */
-export function ScreenHeader({ title, subtitle, onBack, right }) {
+/* Where "back" goes from the current screen, or null when there is nowhere
+   to go: a tab's home screen, or the first step of a flow.
+
+   Several stacks are both a tab and somewhere you can be sent (Payments is
+   the Wallet tab and also opens from Profile and Home), so a fixed back
+   button would be wrong in one place or the other. This looks at where the
+   screen actually is: not first in its own stack, or its whole stack was
+   pushed onto another stack. */
+export function useBackAction() {
+  const navigation = useNavigation();
+  const route = useRoute();
+  const state = navigation.getState?.();
+  if (!state) return null;
+
+  const position = state.routes.findIndex((r) => r.key === route.key);
+  if (position > 0) return () => navigation.goBack();
+
+  const parentState = navigation.getParent?.()?.getState?.();
+  if (parentState?.type === 'stack') {
+    const holder = parentState.routes.findIndex((r) => r.state?.key === state.key);
+    if (holder > 0) return () => navigation.goBack();
+  }
+  return null;
+}
+
+/* The standard page title. A back button appears by itself whenever the
+   screen was opened from somewhere; pass `onBack` to override what it does,
+   or `onBack={null}` to leave it out. */
+export function ScreenHeader(props) {
+  const autoBack = useBackAction();
+  const onBack = props.onBack === undefined ? autoBack : props.onBack;
+  return <ScreenHeaderView {...props} onBack={onBack} />;
+}
+
+function ScreenHeaderView({ title, subtitle, onBack, right }) {
   return (
     <View style={s.header}>
       {(onBack || right) ? (

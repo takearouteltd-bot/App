@@ -8,9 +8,9 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
-  Alert,
   RefreshControl,
 } from "react-native";
+import { Alert } from "../../../components/ui/alert";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";

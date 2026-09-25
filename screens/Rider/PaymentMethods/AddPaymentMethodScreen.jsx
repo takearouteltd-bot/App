@@ -2,13 +2,13 @@ import React, { useState } from 'react';
 import {
   View,
   Text,
-  Alert,
   StyleSheet,
   SafeAreaView,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { Alert } from '../../../components/ui/alert';
 import { CardField, useStripe } from '@stripe/stripe-react-native';
 import { httpsCallable } from 'firebase/functions';
 import { functions, auth } from '../../../config/firebase';

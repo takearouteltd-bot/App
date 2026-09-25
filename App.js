@@ -13,11 +13,18 @@ import RiderNavigator from "./navigation/RiderNavigator";
 import DriverNavigator from "./navigation/DriverNavigator";
 import { StripeProvider } from "@stripe/stripe-react-native";
 import SplashScreen from "./Splash/SplashScreen";
+import { AlertHost } from "./components/ui/alert";
+import * as NativeSplash from "expo-splash-screen";
 import { startAppConfigSync } from "./utils/appConfig";
 import { registerForPushNotifications } from "./utils/notifications";
 import { COLORS } from './components/ui/kit';
 
 const Stack = createNativeStackNavigator();
+
+// Keep the native launch screen up until our own splash has drawn over it;
+// Splash/SplashScreen hides it. Without this it vanished on the first frame
+// and showed white before the JS splash appeared.
+NativeSplash.preventAutoHideAsync().catch(() => {});
 
 LogBox.ignoreLogs([
   "Uncaught Error in snapshot listener",
@@ -129,6 +136,12 @@ export default function App() {
     };
   }, []);
 
+  // Belt and braces: whatever renders first, the native splash must not be
+  // left covering the app.
+  useEffect(() => {
+    if (!initializing) NativeSplash.hideAsync().catch(() => {});
+  }, [initializing]);
+
   if (initializing) {
     return <SplashScreen />;
   }
@@ -196,6 +209,7 @@ export default function App() {
           )}
         </Stack.Navigator>
       </NavigationContainer>
+      <AlertHost />
     </StripeProvider>
   );
 }

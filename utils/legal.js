@@ -4,7 +4,8 @@
 //
 // The full drafts live in this repo under public/ and can be served from
 // Firebase Hosting if the site has not been updated yet.
-import { Alert, Linking } from 'react-native';
+import { Linking } from 'react-native';
+import { Alert } from '../components/ui/alert';
 
 export const TERMS_URL = 'https://www.takearoute.co.uk/terms-conditions/';
 export const PRIVACY_URL = 'https://www.takearoute.co.uk/privacy-policy/';

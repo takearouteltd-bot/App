@@ -1,116 +1,89 @@
 import React, { useState, useEffect } from "react";
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  SafeAreaView,
-  ScrollView,
-  Switch,
-  Alert,
-} from "react-native";
-import { Ionicons, MaterialIcons } from "@expo/vector-icons";
-import { auth, db } from "../../config/firebase";
+import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
-import { COLORS } from '../../components/ui/kit';
+import { auth, db } from "../../config/firebase";
+import { Alert } from "../../components/ui/alert";
+import { Banner, COLORS, RADIUS, SPACE, TYPE } from "../../components/ui/kit";
+import { ConsentRow, DRIVER_STEPS, OnboardingFrame, StepSection } from "../../components/onboarding/kit";
+import { openPrivacy, openTerms } from "../../utils/legal";
 
-const TOTAL_STEPS = 5;
-const PRIMARY = COLORS.green;
+// What each earlier step needs before the application can go in.
+const CHECKS = [
+  {
+    step: 1,
+    ok: (d) => !!(d.firstName && d.lastName && d.dob && d.nin && d.address),
+    summary: (d) => d.fullName || [d.firstName, d.lastName].filter(Boolean).join(" "),
+  },
+  {
+    step: 2,
+    ok: (d) =>
+      !!(
+        (d.driverLicenseFrontUrl || d.driverLicenseUrl) &&
+        (d.driverLicenseBackUrl || d.driverLicenseUrl) &&
+        d.pcoLicenseUrl &&
+        d.selfieUrl
+      ),
+    summary: () => "Licence, PCO licence and selfie",
+  },
+  {
+    step: 3,
+    ok: (d) => !!(d.makeModel && d.registrationNumber && d.vehicleType && d.motUrl && d.insuranceUrl),
+    summary: (d) => [d.makeModel, d.registrationNumber].filter(Boolean).join(" · "),
+  },
+  {
+    step: 4,
+    ok: (d) =>
+      !!(d.accountDetails?.accountHolder && d.accountDetails?.sortCode && d.accountDetails?.accountNumber),
+    summary: (d) =>
+      d.accountDetails?.accountNumber
+        ? `Account ending ${String(d.accountDetails.accountNumber).slice(-4)}`
+        : "",
+  },
+];
 
-export default function ApplicationSummaryScreen({
-  navigation,
-  setOnboardingStatus,
-}) {
-  const [currentStep, setCurrentStep] = useState(TOTAL_STEPS);
-
-  const [personalInfoCompleted, setPersonalInfoCompleted] = useState(false);
-  const [identityDocsVerified, setIdentityDocsVerified] = useState(false);
-  const [vehicleDocsUploaded, setVehicleDocsUploaded] = useState(false);
-  const [bankDetailsConnected, setBankDetailsConnected] = useState(false);
-
+export default function ApplicationSummaryScreen({ navigation, setOnboardingStatus }) {
+  const [driver, setDriver] = useState(null);
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [gdprAccepted, setGdprAccepted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const driverId = auth.currentUser?.uid;
 
-  // ✅ Fetch driver data to determine completion
+  // Reload whenever this step comes into view, so fixing something on an
+  // earlier step is reflected when they come back.
   useEffect(() => {
-    const fetchData = async () => {
-      if (!driverId) return;
+    if (!driverId) return undefined;
+    const load = () =>
+      getDoc(doc(db, "drivers", driverId))
+        .then((snap) => setDriver(snap.exists() ? snap.data() : {}))
+        .catch((error) => console.log("Error fetching application summary:", error));
+    load();
+    return navigation.addListener("focus", load);
+  }, [driverId, navigation]);
 
-      try {
-        const snap = await getDoc(doc(db, "drivers", driverId));
-
-        if (snap.exists()) {
-          const data = snap.data();
-          setCurrentStep(data.onboardingStep || TOTAL_STEPS);
-
-          setPersonalInfoCompleted(
-            !!(
-              data.firstName &&
-              data.lastName &&
-              data.dob &&
-              data.nin &&
-              data.address
-            )
-          );
-          setIdentityDocsVerified(
-            !!(
-              (data.driverLicenseFrontUrl || data.driverLicenseUrl) &&
-              (data.driverLicenseBackUrl || data.driverLicenseUrl) &&
-              data.pcoLicenseUrl &&
-              data.selfieUrl
-            )
-          );
-          setVehicleDocsUploaded(
-            !!(
-              data.makeModel &&
-              data.registrationNumber &&
-              data.vehicleType &&
-              data.motUrl &&
-              data.insuranceUrl
-            )
-          );
-          setBankDetailsConnected(
-            !!(
-              data.accountDetails?.accountHolder &&
-              data.accountDetails?.sortCode &&
-              data.accountDetails?.accountNumber
-            )
-          );
-        }
-      } catch (error) {
-        console.log("Error fetching application summary:", error);
-      }
-    };
-
-    fetchData();
-  }, [driverId]);
-
-  const renderCard = (title, status, icon) => (
-    <View style={styles.card}>
-      <View style={styles.cardContent}>
-        <View style={styles.iconContainer}>{icon}</View>
-        <View style={{ flex: 1, marginLeft: 12 }}>
-          <Text style={styles.cardTitle}>{title}</Text>
-          <Text style={styles.cardStatus}>{status}</Text>
-        </View>
-        {status !== "Incomplete" && (
-          <Ionicons name="checkmark-circle" size={24} color={PRIMARY} />
-        )}
-      </View>
-    </View>
-  );
+  const results = CHECKS.map((c) => ({ ...c, done: driver ? c.ok(driver) : false }));
+  const allDone = results.every((r) => r.done);
 
   const handleSubmit = async () => {
-    if (!termsAccepted || !gdprAccepted) {
+    const firstGap = results.find((r) => !r.done);
+    if (firstGap) {
       Alert.alert(
-        "Consent Required",
-        "Please accept Terms and GDPR consent before submitting."
+        "Something's missing",
+        `Please finish "${DRIVER_STEPS[firstGap.step - 1].label}" before submitting.`,
+        [
+          { text: "Later", style: "cancel" },
+          { text: "Go there", onPress: () => navigation.navigate(DRIVER_STEPS[firstGap.step - 1].route) },
+        ]
       );
       return;
     }
+    if (!termsAccepted || !gdprAccepted) {
+      Alert.alert("One more thing", "Please accept the terms and the data consent before submitting.");
+      return;
+    }
 
+    setSubmitting(true);
     try {
       if (driverId) {
         await updateDoc(doc(db, "drivers", driverId), {
@@ -121,169 +94,110 @@ export default function ApplicationSummaryScreen({
         });
       }
 
-      // Update global onboarding status to move driver to main app
-      setOnboardingStatus('pending')
-
+      // Moves the driver into the app, where they wait for approval.
+      setOnboardingStatus("pending");
     } catch (error) {
       console.log("Error submitting application:", error);
-      Alert.alert("Error", "Something went wrong. Please try again.");
+      Alert.alert("Could not submit", "Your application was not sent. Check your connection and try again.");
+      setSubmitting(false);
     }
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.container}>
-
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={24} color="black" />
-          </TouchableOpacity>
-          <Text style={styles.stepText}>
-            Step {currentStep} of {TOTAL_STEPS}
-          </Text>
-          <View style={{ width: 24 }} />
-        </View>
-
-        {/* Progress Bar */}
-        <View style={styles.progressBarBg}>
-          <View
-            style={[
-              styles.progressBarFill,
-              { width: `${(currentStep / TOTAL_STEPS) * 100}%` },
-            ]}
-          />
-        </View>
-
-        <Text style={styles.title}>Application Summary</Text>
-        <Text style={styles.subtitle}>
-          Review all details before submitting your application
-        </Text>
-
-        {/* Summary Cards */}
-        {renderCard(
-          "Personal Information",
-          personalInfoCompleted ? "Completed" : "Incomplete",
-          <MaterialIcons name="person" size={40} color={PRIMARY} />
-        )}
-
-        {renderCard(
-          "Identity Documents",
-          identityDocsVerified ? "Verified" : "Pending",
-          <MaterialIcons name="verified" size={40} color={PRIMARY} />
-        )}
-
-        {renderCard(
-          "Vehicle Documents",
-          vehicleDocsUploaded ? "Uploaded" : "Missing",
-          <MaterialIcons name="directions-car" size={40} color={PRIMARY} />
-        )}
-
-        {renderCard(
-          "Bank Details",
-          bankDetailsConnected ? "Connected" : "Incomplete",
-          <MaterialIcons name="account-balance" size={40} color={PRIMARY} />
-        )}
-
-        {/* Terms & GDPR */}
-        <View style={{ marginTop: 30 }}>
-          <Text style={styles.sectionTitle}>Terms & GDPR Consent</Text>
-
-          <View style={styles.switchContainer}>
-            <Text style={styles.switchText}>
-              I agree to the{" "}
-              <Text
-                style={{ fontWeight: "700", textDecorationLine: "underline" }}
+    <OnboardingFrame
+      step={5}
+      title="Check and submit"
+      subtitle="Tap any section to change it. Once you submit, our team reviews your documents."
+      action={{
+        title: "Submit application",
+        onPress: handleSubmit,
+        loading: submitting,
+        icon: "paper-plane",
+      }}
+    >
+      <StepSection title="Your application">
+        <View style={styles.list}>
+          {results.map((r, i) => {
+            const meta = DRIVER_STEPS[r.step - 1];
+            const detail = r.done ? r.summary(driver || {}) : "Needs finishing";
+            return (
+              <TouchableOpacity
+                key={r.step}
+                style={[styles.item, i < results.length - 1 && styles.itemLine]}
+                onPress={() => navigation.navigate(meta.route)}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel={`${meta.label}, ${r.done ? "complete" : "incomplete"}. Tap to edit`}
               >
-                Terms and Privacy Policy
-              </Text>
-            </Text>
-            <Switch
-              value={termsAccepted}
-              onValueChange={setTermsAccepted}
-              trackColor={{ true: PRIMARY, false: COLORS.lineStrong }}
-              thumbColor={COLORS.white}
-            />
-          </View>
-
-          <View style={styles.switchContainer}>
-            <Text style={styles.switchText}>
-              <Text
-                style={{ fontWeight: "700", textDecorationLine: "underline" }}
-              >
-                GDPR Data Consent
-              </Text>
-            </Text>
-            <Switch
-              value={gdprAccepted}
-              onValueChange={setGdprAccepted}
-              trackColor={{ true: PRIMARY, false: COLORS.lineStrong }}
-              thumbColor={COLORS.white}
-            />
-          </View>
+                <View style={[styles.itemIcon, r.done ? styles.itemIconDone : styles.itemIconTodo]}>
+                  <Ionicons
+                    name={r.done ? "checkmark" : meta.icon}
+                    size={20}
+                    color={r.done ? COLORS.white : COLORS.amber}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.itemTitle}>{meta.label}</Text>
+                  <Text
+                    style={[styles.itemDetail, !r.done && { color: COLORS.amber }]}
+                    numberOfLines={1}
+                  >
+                    {detail}
+                  </Text>
+                </View>
+                <Text style={styles.edit}>Edit</Text>
+              </TouchableOpacity>
+            );
+          })}
         </View>
+      </StepSection>
 
-        {/* Submit Button */}
-        <TouchableOpacity style={styles.button} onPress={handleSubmit}>
-          <Text style={styles.buttonText}>Submit Application</Text>
-        </TouchableOpacity>
-      </ScrollView>
-    </SafeAreaView>
+      <StepSection title="Your consent">
+        <ConsentRow
+          checked={termsAccepted}
+          onToggle={() => setTermsAccepted((v) => !v)}
+          text="I agree to the "
+          link={{ label: "Terms of use", onPress: openTerms }}
+        />
+        <ConsentRow
+          checked={gdprAccepted}
+          onToggle={() => setGdprAccepted((v) => !v)}
+          text="I consent to TakeARoute processing my data to review my application, as set out in the "
+          link={{ label: "Privacy policy", onPress: openPrivacy }}
+        />
+      </StepSection>
+
+      {allDone ? (
+        <Banner
+          tone="success"
+          title="Ready to submit"
+          body="You can explore the app while your application is reviewed."
+        />
+      ) : (
+        <Banner
+          tone="warning"
+          title="A few things left"
+          body="Finish the sections marked above, then come back here to submit."
+        />
+      )}
+    </OnboardingFrame>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.white },
-  container: {
-    flexGrow: 1,
-    paddingHorizontal: 25,
-    paddingVertical: 30,
+  list: {
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.lg,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.line,
+    paddingHorizontal: SPACE[4],
   },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 20,
-  },
-  stepText: { fontSize: 14, color: COLORS.muted },
-  progressBarBg: {
-    height: 6,
-    backgroundColor: COLORS.line,
-    borderRadius: 3,
-    marginBottom: 20,
-  },
-  progressBarFill: {
-    height: 6,
-    backgroundColor: PRIMARY,
-    borderRadius: 3,
-  },
-  title: { fontSize: 28, fontWeight: "bold", color: COLORS.ink, marginBottom: 6 },
-  subtitle: { fontSize: 16, color: COLORS.muted, marginBottom: 20 },
-  card: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    padding: 15,
-    marginBottom: 15,
-  },
-  cardContent: { flexDirection: "row", alignItems: "center" },
-  iconContainer: { width: 50, alignItems: "center" },
-  cardTitle: { fontSize: 18, fontWeight: "bold", color: COLORS.ink },
-  cardStatus: { fontSize: 14, color: COLORS.muted, marginTop: 4 },
-  sectionTitle: { fontSize: 16, fontWeight: "700", marginBottom: 12 },
-  switchContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 15,
-  },
-  switchText: { fontSize: 14, color: COLORS.ink, flex: 1, marginRight: 10 },
-  button: {
-    backgroundColor: PRIMARY,
-    paddingVertical: 16,
-    borderRadius: 12,
-    alignItems: "center",
-    marginTop: 20,
-    marginBottom: 30,
-  },
-  buttonText: { color: COLORS.white, fontSize: 18, fontWeight: "bold" },
+  item: { flexDirection: "row", alignItems: "center", gap: SPACE[3], minHeight: 68, paddingVertical: SPACE[3] },
+  itemLine: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.line },
+  itemIcon: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center" },
+  itemIconDone: { backgroundColor: COLORS.green },
+  itemIconTodo: { backgroundColor: COLORS.amberSoft },
+  itemTitle: { ...TYPE.callout, color: COLORS.navy },
+  itemDetail: { ...TYPE.small, marginTop: 2 },
+  edit: { ...TYPE.small, color: COLORS.blue, fontWeight: "700" },
 });

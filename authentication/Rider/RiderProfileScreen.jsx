@@ -10,8 +10,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
-  Alert,
 } from "react-native";
+import { Alert } from "../../components/ui/alert";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 
@@ -21,6 +21,7 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { uriToBlob } from "../../helpers/uploadPicker";
 import { COLORS, RADIUS } from '../../components/ui/kit';
 
+import { confirmLeaveSignup } from "../../utils/leaveSignup";
 const TOTAL_STEPS = 3;
 const PRIMARY = COLORS.green;
 
@@ -123,7 +124,12 @@ export default function RiderProfileScreen({ navigation }) {
         >
           {/* Header */}
           <View style={styles.header}>
-            <TouchableOpacity onPress={() => navigation.goBack()}>
+            <TouchableOpacity
+              onPress={() => (navigation.canGoBack() ? navigation.goBack() : confirmLeaveSignup())}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityRole="button"
+              accessibilityLabel="Go back"
+            >
               <Ionicons name="arrow-back" size={24} color="black" />
             </TouchableOpacity>
             <Text style={styles.stepText}>

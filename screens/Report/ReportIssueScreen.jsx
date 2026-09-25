@@ -7,12 +7,12 @@ import {
   TouchableOpacity,
   TextInput,
   ScrollView,
-  Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Linking,
 } from 'react-native';
+import { Alert } from '../../components/ui/alert';
 import { Ionicons, MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';

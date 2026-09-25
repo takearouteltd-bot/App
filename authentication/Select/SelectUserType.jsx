@@ -6,14 +6,15 @@ import {
   SafeAreaView,
   TouchableOpacity,
   ScrollView,
-  Alert,
   ActivityIndicator,
 } from "react-native";
+import { Alert } from "../../components/ui/alert";
 import { Ionicons } from "@expo/vector-icons";
 import { auth, db } from "../../config/firebase";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import { ensureDriverProfile, ensureRiderProfile } from "../../utils/modeSwitch";
 import { COLORS } from '../../components/ui/kit';
+import { confirmLeaveSignup } from "../../utils/leaveSignup";
 
 export default function SelectUserTypeScreen({
   setUserRole,
@@ -84,6 +85,16 @@ const handleContinue = async () => {
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.content}>
+        <TouchableOpacity
+          onPress={confirmLeaveSignup}
+          style={styles.back}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityRole="button"
+          accessibilityLabel="Leave sign-up"
+        >
+          <Ionicons name="chevron-back" size={24} color={COLORS.navy} />
+        </TouchableOpacity>
+
         <Text style={styles.title}>
           How would you like to use TakeARoute?
         </Text>
@@ -178,6 +189,7 @@ const handleContinue = async () => {
 }
 
 const styles = StyleSheet.create({
+  back: { width: 40, height: 40, justifyContent: 'center', marginBottom: 8 },
   container: { flex: 1, backgroundColor: COLORS.white },
   content: {
     flexGrow: 1,

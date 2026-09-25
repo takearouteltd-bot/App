@@ -9,8 +9,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
-  Alert,
 } from "react-native";
+import { Alert } from "../../components/ui/alert";
 import { Ionicons } from "@expo/vector-icons";
 import nativeAuth from "@react-native-firebase/auth";
 import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";

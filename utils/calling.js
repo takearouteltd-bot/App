@@ -2,7 +2,7 @@
 // Masked calling. Tapping Call asks the server to ring this phone first, then
 // connect the other party. Neither side sees the other's number, and it only
 // works while a trip is live.
-import { Alert } from 'react-native';
+import { Alert } from '../components/ui/alert';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../config/firebase';
 

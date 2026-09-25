@@ -2,8 +2,15 @@
 // Stored on the person's own record as emergencyContact { name, relationship, phone }.
 import React, { useEffect, useState } from 'react';
 import {
-  SafeAreaView, ScrollView, Text, Alert, Linking, KeyboardAvoidingView, Platform, StyleSheet,
+  SafeAreaView,
+  ScrollView,
+  Text,
+  Linking,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
 } from 'react-native';
+import { Alert } from '../../components/ui/alert';
 import { arrayRemove, deleteField, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
 import { COLORS, TYPE, ScreenHeader, Section, Card, ListRow, Button, Field, Loading } from '../../components/ui/kit';

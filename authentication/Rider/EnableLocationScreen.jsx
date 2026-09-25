@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, Alert, Linking } from 'react-native';
+import { View, Text, StyleSheet, SafeAreaView, Linking, TouchableOpacity } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { Alert } from '../../components/ui/alert';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { auth, db } from '../../config/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { COLORS, TYPE, SPACE, Button, Banner } from '../../components/ui/kit';
+import { confirmLeaveSignup } from '../../utils/leaveSignup';
 
 export default function EnableLocationScreen({ setOnboardingStatus }) {
+  const navigation = useNavigation();
   const [busy, setBusy] = useState(false);
   const [denied, setDenied] = useState(false);
 
@@ -59,6 +63,16 @@ export default function EnableLocationScreen({ setOnboardingStatus }) {
 
   return (
     <SafeAreaView style={styles.safe}>
+      <TouchableOpacity
+        onPress={() => (navigation.canGoBack() ? navigation.goBack() : confirmLeaveSignup())}
+        style={styles.back}
+        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        accessibilityRole="button"
+        accessibilityLabel="Go back"
+      >
+        <Ionicons name="chevron-back" size={24} color={COLORS.navy} />
+      </TouchableOpacity>
+
       <View style={styles.body}>
         <View style={styles.icon}>
           <Ionicons name="location" size={40} color={COLORS.green} />
@@ -100,6 +114,10 @@ export default function EnableLocationScreen({ setOnboardingStatus }) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.white, justifyContent: 'space-between' },
+  back: {
+    width: 44, height: 44, justifyContent: 'center',
+    marginLeft: SPACE[4], marginTop: SPACE[2],
+  },
   body: { flex: 1, justifyContent: 'center', paddingHorizontal: SPACE[6] },
   icon: {
     width: 80, height: 80, borderRadius: 26,

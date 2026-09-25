@@ -5,11 +5,11 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Alert,
   ActivityIndicator,
   Modal,
   TextInput,
 } from "react-native";
+import { Alert, AlertHost } from "../../../components/ui/alert";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import {
@@ -316,6 +316,7 @@ export default function SavedPlacesScreen() {
             </View>
           </ScrollView>
         </View>
+        <AlertHost />
       </Modal>
     </View>
   );

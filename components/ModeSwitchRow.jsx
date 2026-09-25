@@ -6,7 +6,8 @@
 // reports anything that stops it. On success App.js swaps the navigator, so
 // this component is unmounted rather than navigating anywhere itself.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, View } from 'react-native';
+import { View } from 'react-native';
+import { Alert } from './ui/alert';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, Card, ListRow } from './ui/kit';
 import { describeMode, loadModeRecord, otherMode, switchMode } from '../utils/modeSwitch';

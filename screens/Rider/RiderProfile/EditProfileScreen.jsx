@@ -7,11 +7,11 @@ import {
   TouchableOpacity,
   ScrollView,
   TextInput,
-  Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
 } from "react-native";
+import { Alert } from "../../../components/ui/alert";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";

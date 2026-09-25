@@ -2,9 +2,18 @@
 // conversation with support. The reporter can reply until the case is closed.
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  SafeAreaView, ScrollView, View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView,
-  Platform, ActivityIndicator, Alert, StyleSheet,
+  SafeAreaView,
+  ScrollView,
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  KeyboardAvoidingView,
+  Platform,
+  ActivityIndicator,
+  StyleSheet,
 } from 'react-native';
+import { Alert } from '../../components/ui/alert';
 import { Ionicons } from '@expo/vector-icons';
 import {
   addDoc, collection, doc, onSnapshot, orderBy, query, serverTimestamp, updateDoc,
