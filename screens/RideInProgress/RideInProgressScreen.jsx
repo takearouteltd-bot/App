@@ -7,9 +7,10 @@ import {
   ActivityIndicator,
   Animated,
   TouchableOpacity,
-  Alert,
 } from 'react-native';
+import { Alert } from '../../components/ui/alert';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import CarMarker from '../../components/CarMarker';
 import MapViewDirections from 'react-native-maps-directions';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -102,6 +103,7 @@ export default function RideInProgressScreen() {
         setDriverLocation({
           latitude: driver.location.latitude,
           longitude: driver.location.longitude,
+          heading: typeof driver.heading === 'number' ? driver.heading : null,
         });
       }
     });
@@ -233,14 +235,12 @@ export default function RideInProgressScreen() {
         ) : null}
 
         {driverLocation ? (
-          <Marker coordinate={driverLocation} anchor={{ x: 0.5, y: 0.5 }} flat>
-            <View style={styles.driverMarkerWrap}>
-              <Animated.View style={[styles.driverPulse, { transform: [{ scale: pulseAnim }] }]} />
-              <View style={styles.driverMarker}>
-                <Ionicons name="car-sport" size={16} color={COLORS.white} />
-              </View>
-            </View>
-          </Marker>
+          <CarMarker
+            coordinate={{ latitude: driverLocation.latitude, longitude: driverLocation.longitude }}
+            heading={driverLocation.heading}
+            tone="green"
+            size={1.15}
+          />
         ) : null}
 
         {isCoord(routeFrom) && isCoord(dropoffLocation) ? (

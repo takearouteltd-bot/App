@@ -9,16 +9,16 @@ import {
   Animated,
   Dimensions,
   StatusBar,
-  Alert,
   Linking,
 } from 'react-native';
+import { Alert } from '../../../components/ui/alert';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import polyline from '@mapbox/polyline';
 import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
-import { currencySymbol } from '../../../utils/appConfig';
+import { currencySymbol, money, waitingCharge } from '../../../utils/appConfig';
 import SafetyButton from '../../../components/SafetyButton';
 import { confirmMaskedCall } from '../../../utils/calling';
 import { COLORS, TYPE, SPACE, RADIUS, SHADOW, Avatar, IconButton, isCoord } from '../../../components/ui/kit';
@@ -180,6 +180,30 @@ export default function DriverRideToDropoffScreen() {
      Ending early is allowed (the passenger may ask to get out) but needs a
      confirmation and is flagged on the ride so support can see it if the fare
      is disputed. The button stays enabled so that path is reachable. */
+  // What the passenger owes: the booked fare plus any waiting at pickup,
+  // worked out the same way the payment function does.
+  const amountDue = () => {
+    const base = Number(ride?.fare?.total || 0);
+    const arrivedMs = ride?.arrivedAt?.toMillis?.();
+    const startedMs = ride?.startedAt?.toMillis?.();
+    const waiting =
+      arrivedMs && startedMs ? waitingCharge(startedMs - arrivedMs, ride?.waitingPolicy) : 0;
+    return Math.round((base + waiting) * 100) / 100;
+  };
+
+  // Cash rides: the driver confirms they have been paid before the trip closes.
+  const finish = (extra) => {
+    if (ride?.paymentMethod !== 'cash') return completeRide(extra);
+    Alert.alert(
+      `Collect ${money(amountDue(), ride?.currency)} in cash`,
+      'This is a cash ride. Take payment from the passenger, then confirm.',
+      [
+        { text: 'Not yet', style: 'cancel' },
+        { text: 'Cash received', onPress: () => completeRide({ ...extra, cashCollected: true }) },
+      ]
+    );
+  };
+
   const handleCompleteRide = () => {
     if (completing) return;
     const awayM = metresBetween(driverLocation, ride?.dropoffLocation);
@@ -196,7 +220,7 @@ export default function DriverRideToDropoffScreen() {
             text: 'Passenger got out here',
             style: 'destructive',
             onPress: () =>
-              completeRide({
+              finish({
                 completedAwayFromDropoff: true,
                 completeDistanceKm: Number(awayKm.toFixed(2)),
               }),
@@ -206,7 +230,7 @@ export default function DriverRideToDropoffScreen() {
       return;
     }
 
-    completeRide({
+    finish({
       completedAwayFromDropoff: false,
       completeDistanceKm: awayKm === null ? null : Number(awayKm.toFixed(2)),
     });
@@ -384,10 +408,13 @@ export default function DriverRideToDropoffScreen() {
               {destination?.address || 'Unknown destination'}
             </Text>
           </View>
-          <Text style={styles.fare}>
-            {currencySymbol()}
-            {Number(ride.fare?.total || 0).toFixed(2)}
-          </Text>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={styles.fare}>
+              {currencySymbol()}
+              {Number(ride.fare?.total || 0).toFixed(2)}
+            </Text>
+            {ride.paymentMethod === 'cash' ? <Text style={styles.cashTag}>Cash</Text> : null}
+          </View>
         </View>
 
         {riderData ? (
@@ -473,6 +500,11 @@ const customMapStyle = [
 ];
 
 const styles = StyleSheet.create({
+  cashTag: {
+    marginTop: 4, fontSize: 11, fontWeight: '800', letterSpacing: 0.5,
+    color: COLORS.amber, backgroundColor: COLORS.amberSoft,
+    paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, overflow: 'hidden',
+  },
   container: { flex: 1, backgroundColor: COLORS.surface },
   centered: { alignItems: 'center', justifyContent: 'center' },
 

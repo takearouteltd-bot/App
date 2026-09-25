@@ -9,9 +9,9 @@ import {
   Animated,
   Dimensions,
   AppState,
-  Alert,
   Easing,
 } from 'react-native';
+import { Alert } from '../../../components/ui/alert';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
@@ -35,6 +35,11 @@ import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocume
 import { canServe, classLabel } from '../../../constants/vehicleClasses';
 import { clearJobAlerts } from '../../../utils/notifications';
 import { COLORS, TYPE, SPACE, RADIUS, SHADOW } from '../../../components/ui/kit';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Remembered between launches, so a driver who hides their earnings from
+// passengers does not have to do it again every shift.
+const HIDE_EARNINGS_KEY = 'driver.hideEarnings';
 
 const { width } = Dimensions.get('window');
 
@@ -78,6 +83,20 @@ export default function DriverHomeScreen() {
 
   const [earningsToday, setEarningsToday] = useState(0);
   const [walletBalance, setWalletBalance] = useState(0);
+  const [hideEarnings, setHideEarnings] = useState(false);
+
+  useEffect(() => {
+    AsyncStorage.getItem(HIDE_EARNINGS_KEY)
+      .then((v) => setHideEarnings(v === '1'))
+      .catch(() => {});
+  }, []);
+
+  const toggleHideEarnings = () => {
+    setHideEarnings((hidden) => {
+      AsyncStorage.setItem(HIDE_EARNINGS_KEY, hidden ? '0' : '1').catch(() => {});
+      return !hidden;
+    });
+  };
   const [tripsToday, setTripsToday] = useState(0);
   const [documentAlerts, setDocumentAlerts] = useState([]);
 
@@ -206,6 +225,43 @@ export default function DriverHomeScreen() {
       if (subscription) subscription.remove();
     };
   }, [driverId]);
+
+  /* ================= PUBLIC POSITION =================
+     Passengers see nearby cars on their home map. They must never read the
+     driver record itself (name, phone, documents), so an online driver also
+     publishes a bare position to driverLocations/{uid}: coordinates, heading
+     and whether they are free. It is taken down whenever they go offline or
+     start a trip, whatever caused it, because it follows the same status the
+     rest of this screen does. */
+  const publishedFree = useRef(null);
+  const isFree = isOnline && !onRide;
+  useEffect(() => {
+    if (!driverId) return;
+    const ref = doc(db, 'driverLocations', driverId);
+
+    if (isFree && location && Number.isFinite(location.latitude)) {
+      publishedFree.current = true;
+      setDoc(
+        ref,
+        {
+          latitude: location.latitude,
+          longitude: location.longitude,
+          heading:
+            typeof location.heading === 'number' && location.heading >= 0
+              ? Math.round(location.heading)
+              : null,
+          vehicleType: vehicleType || null,
+          online: true,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      ).catch(() => {});
+    } else if (publishedFree.current !== false) {
+      // Only once per change to offline, not on every GPS tick.
+      publishedFree.current = false;
+      setDoc(ref, { online: false, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+    }
+  }, [driverId, isFree, location, vehicleType]);
 
   /* ================= ONLINE / OFFLINE ================= */
   const toggleOnlineStatus = async () => {
@@ -597,10 +653,23 @@ export default function DriverHomeScreen() {
             onPress={() => navigation.navigate('EarningsScreen')}
           >
             <View style={{ flex: 1 }}>
-              <Text style={styles.earningsLabel}>Earned today</Text>
+              <View style={styles.earningsHead}>
+                <Text style={styles.earningsLabel}>Earned today</Text>
+                <TouchableOpacity
+                  onPress={toggleHideEarnings}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={hideEarnings ? 'Show earnings' : 'Hide earnings'}
+                >
+                  <Ionicons
+                    name={hideEarnings ? 'eye-off-outline' : 'eye-outline'}
+                    size={18}
+                    color={COLORS.onDark}
+                  />
+                </TouchableOpacity>
+              </View>
               <Text style={styles.earningsValue}>
-                {currencySymbol()}
-                {earningsToday.toFixed(2)}
+                {hideEarnings ? '••••' : `${currencySymbol()}${earningsToday.toFixed(2)}`}
               </Text>
               <Text style={styles.earningsSub}>
                 {tripsToday} {tripsToday === 1 ? 'trip' : 'trips'}
@@ -610,8 +679,7 @@ export default function DriverHomeScreen() {
             <View style={styles.walletBox}>
               <Text style={styles.walletLabel}>Wallet</Text>
               <Text style={styles.walletValue}>
-                {currencySymbol()}
-                {walletBalance.toFixed(2)}
+                {hideEarnings ? '••••' : `${currencySymbol()}${walletBalance.toFixed(2)}`}
               </Text>
             </View>
 
@@ -631,8 +699,15 @@ export default function DriverHomeScreen() {
       {currentRide ? (
         <Animated.View style={[styles.offer, { transform: [{ translateX: slideAnim }] }]}>
           <View style={styles.offerTop}>
-            <View style={styles.classTag}>
-              <Text style={styles.classTagText}>{classLabel(currentRide.rideType)}</Text>
+            <View style={{ flexDirection: 'row', gap: SPACE[2] }}>
+              <View style={styles.classTag}>
+                <Text style={styles.classTagText}>{classLabel(currentRide.rideType)}</Text>
+              </View>
+              {currentRide.paymentMethod === 'cash' ? (
+                <View style={[styles.classTag, { backgroundColor: COLORS.amberSoft }]}>
+                  <Text style={[styles.classTagText, { color: COLORS.amber }]}>Cash</Text>
+                </View>
+              ) : null}
             </View>
             <Text style={styles.offerFare}>
               {currencySymbol()}
@@ -756,6 +831,7 @@ const styles = StyleSheet.create({
     padding: SPACE[5],
     ...SHADOW.float,
   },
+  earningsHead: { flexDirection: 'row', alignItems: 'center', gap: SPACE[2] },
   earningsLabel: { ...TYPE.small, color: COLORS.onDark },
   earningsValue: { fontSize: 32, fontWeight: '800', color: COLORS.white, letterSpacing: -1, marginTop: 2 },
   earningsSub: { ...TYPE.small, color: COLORS.onDark, marginTop: 2 },

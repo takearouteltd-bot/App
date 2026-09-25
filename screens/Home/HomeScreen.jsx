@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Animated,
   Easing,
+  PanResponder,
 } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -27,6 +28,25 @@ import {
   isCoord,
 } from '../../components/ui/kit';
 import { ACTIVE_RIDE_STATUSES } from '../../utils/modeSwitch';
+import CarMarker from '../../components/CarMarker';
+
+// Nearby cars: free drivers within this distance of the pickup, whose phone
+// has reported in recently (a driver whose app was closed mid-shift drops off
+// after this long rather than lingering as a ghost car).
+const NEARBY_KM = 5;
+const NEARBY_FRESH_MS = 5 * 60 * 1000;
+const NEARBY_MAX = 25;
+
+function kmBetween(a, b) {
+  const R = 6371;
+  const dLat = ((b.latitude - a.latitude) * Math.PI) / 180;
+  const dLng = ((b.longitude - a.longitude) * Math.PI) / 180;
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((a.latitude * Math.PI) / 180) * Math.cos((b.latitude * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+import { Alert } from '../../components/ui/alert';
 
 const GOOGLE_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ';
 
@@ -53,6 +73,43 @@ export default function HomeScreen() {
   const [activeRide, setActiveRide] = useState(null);
   // A pin the passenger dropped themselves, which overrides GPS as the pickup.
   const [pinnedPickup, setPinnedPickup] = useState(null);
+  const [nearbyCars, setNearbyCars] = useState([]);
+
+  /* The sheet can be minimised to just the "Where to?" bar, so the map is
+     not hidden behind it. Dragging the map minimises it by itself; the
+     handle, or a drag up, brings it back. */
+  const [collapsed, setCollapsed] = useState(false);
+  const [sheetHeight, setSheetHeight] = useState(0);
+  const [peekHeight, setPeekHeight] = useState(0);
+  const collapseAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.spring(collapseAnim, {
+      toValue: collapsed ? 1 : 0,
+      friction: 9,
+      tension: 70,
+      useNativeDriver: true,
+    }).start();
+  }, [collapsed, collapseAnim]);
+
+  const sheetPan = useRef(
+    PanResponder.create({
+      // Only a clear vertical drag is ours; taps still reach the buttons.
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 8 && Math.abs(g.dy) > Math.abs(g.dx),
+      onPanResponderRelease: (_, g) => {
+        if (g.dy > 24) setCollapsed(true);
+        else if (g.dy < -24) setCollapsed(false);
+      },
+    })
+  ).current;
+
+  // How far down the sheet slides when minimised: everything below the
+  // "Where to?" bar.
+  const hideBy = Math.max(0, sheetHeight - peekHeight);
+  const sheetTranslate = Animated.add(
+    slideAnim,
+    collapseAnim.interpolate({ inputRange: [0, 1], outputRange: [0, hideBy] })
+  );
 
   // The sheet rises once, on first paint.
   useEffect(() => {
@@ -123,6 +180,31 @@ export default function HomeScreen() {
     }, [])
   );
 
+  /* Free drivers nearby, from their public positions (driverLocations), never
+     from the driver records themselves. */
+  useFocusEffect(
+    useCallback(() => {
+      if (!auth.currentUser) return undefined;
+      return onSnapshot(
+        query(collection(db, 'driverLocations'), where('online', '==', true)),
+        (snapshot) =>
+          setNearbyCars(
+            snapshot.docs.map((d) => {
+              const data = d.data();
+              return {
+                id: d.id,
+                latitude: data.latitude,
+                longitude: data.longitude,
+                heading: data.heading,
+                updatedAt: data.updatedAt?.toMillis?.() || 0,
+              };
+            })
+          ),
+        () => setNearbyCars([])
+      );
+    }, [])
+  );
+
   const getCurrentLocation = async () => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -187,6 +269,18 @@ export default function HomeScreen() {
     ? { ...location, address: address || 'Current location' }
     : null;
 
+  const centre = pickup || location;
+  const carsToShow = centre
+    ? nearbyCars
+        .filter(
+          (c) =>
+            isCoord(c) &&
+            Date.now() - c.updatedAt < NEARBY_FRESH_MS &&
+            kmBetween(centre, c) <= NEARBY_KM
+        )
+        .slice(0, NEARBY_MAX)
+    : [];
+
   const openPicker = () =>
     navigation.navigate('PickupPicker', { initial: pickup || location || null });
 
@@ -195,11 +289,28 @@ export default function HomeScreen() {
     openDestinationSearch(pickup, pinnedPickup ? 'pinned' : 'current');
   };
 
+  // A saved place is where they want to go. The pickup stays their current
+  // location or dropped pin, and they go straight to the price. (It used to
+  // become the pickup, which sent riders to the fare screen backwards.)
   const handleSavedPlacePress = (place) => {
-    openDestinationSearch(
-      { latitude: place.latitude, longitude: place.longitude, address: place.address },
-      place.type
-    );
+    if (!isCoord(place)) return;
+    if (!pickup) {
+      Alert.alert(
+        'Set your pickup first',
+        'We could not find your location. Set your pickup on the map, then choose where you are going.',
+        [{ text: 'Not now', style: 'cancel' }, { text: 'Set pickup', onPress: openPicker }]
+      );
+      return;
+    }
+    navigation.navigate('FareEstimation', {
+      origin: pickup,
+      destination: {
+        latitude: place.latitude,
+        longitude: place.longitude,
+        description: place.name || place.address,
+        address: place.address || place.name,
+      },
+    });
   };
 
   const placeIcon = (type) =>
@@ -221,7 +332,18 @@ export default function HomeScreen() {
           rotateEnabled={false}
           pitchEnabled={false}
           toolbarEnabled={false}
+          onPanDrag={() => {
+            if (!collapsed) setCollapsed(true);
+          }}
         >
+          {carsToShow.map((car) => (
+            <CarMarker
+              key={car.id}
+              coordinate={{ latitude: car.latitude, longitude: car.longitude }}
+              heading={car.heading}
+            />
+          ))}
+
           {isCoord(pickup) ? (
             <Marker coordinate={pickup} anchor={{ x: 0.5, y: 0.5 }}>
               <View style={styles.marker}>
@@ -263,45 +385,62 @@ export default function HomeScreen() {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.recenter}>
-        <IconButton icon="locate" onPress={recenterMap} accessibilityLabel="Recentre the map" />
-      </View>
+      <Animated.View
+        style={[styles.sheetWrap, { transform: [{ translateY: sheetTranslate }] }]}
+        onLayout={(e) => setSheetHeight(e.nativeEvent.layout.height)}
+        {...sheetPan.panHandlers}
+      >
+        {/* Rides on top of the sheet, so it moves with it. */}
+        <View style={styles.recenter}>
+          <IconButton icon="locate" onPress={recenterMap} accessibilityLabel="Recentre the map" />
+        </View>
 
-      <Animated.View style={[styles.sheetWrap, { transform: [{ translateY: slideAnim }] }]}>
-        <Sheet>
-          {/* A trip already running takes the top of the sheet. */}
-          {ride ? (
+        <Sheet grabber={false}>
+          <View onLayout={(e) => setPeekHeight(e.nativeEvent.layout.y + e.nativeEvent.layout.height + SPACE[4])}>
             <TouchableOpacity
-              activeOpacity={0.85}
-              style={styles.activeRide}
-              onPress={() => navigation.navigate('RideTracking', { rideId: activeRide.id })}
+              onPress={() => setCollapsed((c) => !c)}
+              style={styles.handle}
+              hitSlop={{ top: 12, bottom: 4, left: 40, right: 40 }}
+              accessibilityRole="button"
+              accessibilityLabel={collapsed ? 'Show trip options' : 'Minimise to see the map'}
             >
-              <View style={styles.activePulseWrap}>
-                <View style={styles.activePulse} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.activeTitle}>{ride.title}</Text>
-                <Text style={styles.activeDetail}>{ride.detail}</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={20} color={COLORS.onDark} />
+              <View style={styles.grabber} />
             </TouchableOpacity>
-          ) : null}
 
-          {/* The one thing this screen is for. */}
-          <TouchableOpacity
-            style={[styles.search, !pickup && { opacity: 0.55 }]}
-            onPress={handleSearchPress}
-            disabled={!pickup}
-            activeOpacity={0.85}
-            accessibilityRole="button"
-            accessibilityLabel="Choose where you are going"
-          >
-            <Ionicons name="search" size={20} color={COLORS.navy} />
-            <Text style={styles.searchText}>Where to?</Text>
-            <View style={styles.searchGo}>
-              <Ionicons name="arrow-forward" size={18} color={COLORS.white} />
-            </View>
-          </TouchableOpacity>
+            {/* A trip already running takes the top of the sheet. */}
+            {ride ? (
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={styles.activeRide}
+                onPress={() => navigation.navigate('RideTracking', { rideId: activeRide.id })}
+              >
+                <View style={styles.activePulseWrap}>
+                  <View style={styles.activePulse} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.activeTitle}>{ride.title}</Text>
+                  <Text style={styles.activeDetail}>{ride.detail}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color={COLORS.onDark} />
+              </TouchableOpacity>
+            ) : null}
+
+            {/* The one thing this screen is for. */}
+            <TouchableOpacity
+              style={[styles.search, !pickup && { opacity: 0.55 }]}
+              onPress={handleSearchPress}
+              disabled={!pickup}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Choose where you are going"
+            >
+              <Ionicons name="search" size={20} color={COLORS.navy} />
+              <Text style={styles.searchText}>Where to?</Text>
+              <View style={styles.searchGo}>
+                <Ionicons name="arrow-forward" size={18} color={COLORS.white} />
+              </View>
+            </TouchableOpacity>
+          </View>
 
           {locationDenied && !pinnedPickup ? (
             <Text style={styles.denied}>
@@ -379,7 +518,10 @@ const styles = StyleSheet.create({
   locationDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.green },
   locationText: { ...TYPE.small, color: COLORS.ink, fontWeight: '600', flexShrink: 1 },
 
-  recenter: { position: 'absolute', right: SPACE[5], bottom: 300 },
+  recenter: { position: 'absolute', right: SPACE[5], top: -(44 + SPACE[4]) },
+
+  handle: { alignSelf: 'stretch', alignItems: 'center', paddingBottom: SPACE[4] },
+  grabber: { width: 40, height: 5, borderRadius: 3, backgroundColor: COLORS.lineStrong },
 
   sheetWrap: { position: 'absolute', left: 0, right: 0, bottom: 0 },
 

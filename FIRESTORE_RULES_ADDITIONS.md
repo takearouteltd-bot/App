@@ -137,3 +137,21 @@ match /riders/{uid}/{file} {
   allow write: if request.auth.uid == uid;
 }
 ```
+
+## Nearby cars on the passenger map (driverLocations)
+
+Free, online drivers publish a bare position to `driverLocations/{uid}` so
+passengers can see cars nearby without reading the driver record, which holds
+names, phone numbers and documents. Each document holds only latitude,
+longitude, heading, vehicleType, online and updatedAt.
+
+Any signed-in user may read it; a driver may only write their own.
+
+```
+match /driverLocations/{driverId} {
+  allow read: if request.auth != null;
+  allow write: if request.auth != null && request.auth.uid == driverId;
+}
+```
+
+Without this rule the app keeps working, it just shows no nearby cars.

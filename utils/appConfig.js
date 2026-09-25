@@ -34,6 +34,21 @@ export const DEFAULT_APP_CONFIG = {
   subscription: {
     monthlyPrice: 99.99,
   },
+  // Busy-time pricing. 1 means normal fares; 1.5 means 50% more.
+  surge: {
+    multiplier: 1,
+  },
+  // Charged when a passenger cancels before pickup, more than freeMinutes
+  // after a driver accepted. 0 means no fee. Card rides only.
+  cancellation: {
+    fee: 0,
+    freeMinutes: 2,
+    driverSharePercent: 100,
+  },
+  // 1 lets passengers choose to pay the driver in cash.
+  payments: {
+    cashEnabled: 0,
+  },
 };
 
 function mergeSection(defaults, incoming) {
@@ -57,7 +72,20 @@ export function normaliseAppConfig(raw) {
     dispatch: mergeSection(DEFAULT_APP_CONFIG.dispatch, data.dispatch),
     drivers: mergeSection(DEFAULT_APP_CONFIG.drivers, data.drivers),
     subscription: mergeSection(DEFAULT_APP_CONFIG.subscription, data.subscription),
+    surge: mergeSection(DEFAULT_APP_CONFIG.surge, data.surge),
+    cancellation: mergeSection(DEFAULT_APP_CONFIG.cancellation, data.cancellation),
+    payments: mergeSection(DEFAULT_APP_CONFIG.payments, data.payments),
   };
+}
+
+// The busy-time multiplier, never below normal fares.
+export function surgeMultiplier(config = currentConfig) {
+  const m = Number(config?.surge?.multiplier);
+  return Number.isFinite(m) && m > 1 ? Math.round(m * 100) / 100 : 1;
+}
+
+export function cashEnabled(config = currentConfig) {
+  return Number(config?.payments?.cashEnabled) === 1;
 }
 
 /* ---------------- shared live copy ----------------

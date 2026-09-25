@@ -17,6 +17,14 @@ export default function RiderRideCompletedScreen() {
 
   const [ride, setRide] = useState(null);
   const [driver, setDriver] = useState(null);
+  // Payment is confirmed by a Cloud Function after the driver completes. If
+  // that takes a while, say so rather than leaving the screen looking stuck.
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setSlow(true), 45000);
+    return () => clearTimeout(timer);
+  }, []);
+
   const rise = useRef(new Animated.Value(24)).current;
   const fade = useRef(new Animated.Value(0)).current;
 
@@ -51,6 +59,7 @@ export default function RiderRideCompletedScreen() {
   const isPaid = ['captured', 'authorized', 'paid', 'succeeded'].includes(paymentStatus);
   const isFailed = paymentStatus === 'failed';
   const isPending = !isPaid && !isFailed;
+  const isCash = ride.paymentMethod === 'cash';
 
   const fare = ride.fare || {};
   const total = Number(fare.finalTotal ?? fare.total ?? ride.fareEstimate ?? 0);
@@ -72,17 +81,23 @@ export default function RiderRideCompletedScreen() {
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Animated.View style={[styles.hero, { opacity: fade, transform: [{ translateY: rise }] }]}>
           <Text style={styles.heroLabel}>
-            {isPaid ? 'Trip complete' : isFailed ? 'Payment did not go through' : 'Finishing up'}
+            {isCash || isPaid ? 'Trip complete' : isFailed ? 'Payment did not go through' : 'Finishing up'}
           </Text>
           <Text style={styles.heroAmount}>{money(total, currency)}</Text>
           <Text style={styles.heroSub}>
-            {isPaid
+            {isCash
+              ? ride.cashCollected
+                ? 'Paid in cash'
+                : `Please pay ${driverName} in cash`
+              : isPaid
               ? `Charged to your card${ride.cardLast4 ? ` ending ${ride.cardLast4}` : ''}`
               : isFailed
               ? 'Update your card in Profile, Payment, then we will try again'
-              : 'Confirming your payment, this takes a moment'}
+              : slow
+              ? 'This is taking longer than usual. Your receipt is emailed once the payment goes through.'
+              : 'Confirming your payment. You can book your next ride while we finish.'}
           </Text>
-          {isPending ? <View style={styles.pendingBar} /> : null}
+          {isPending && !isCash && !slow ? <View style={styles.pendingBar} /> : null}
         </Animated.View>
 
         {/* Journey */}
@@ -131,10 +146,12 @@ export default function RiderRideCompletedScreen() {
 
         <View style={{ marginTop: 20, gap: 10 }}>
           <EmailReceiptButton rideId={rideId} />
+          {/* Never locked: payment finishes on the server whether or not the
+              passenger waits here. It used to stay disabled until payment
+              confirmed, which froze the app for good if it never did. */}
           <Button
             title="Book another ride"
             icon="arrow-forward"
-            disabled={isPending}
             onPress={() => navigation.reset({ index: 0, routes: [{ name: 'HomeScreen' }] })}
           />
         </View>

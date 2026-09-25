@@ -5,11 +5,11 @@ import {
   StyleSheet,
   TouchableOpacity,
   SafeAreaView,
-  Alert,
   ActivityIndicator,
   ScrollView,
   TextInput,
 } from 'react-native';
+import { Alert } from '../../components/ui/alert';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import MapViewDirections from 'react-native-maps-directions';
 import { useNavigation } from '@react-navigation/native';
@@ -27,7 +27,7 @@ import {
   setDoc,
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
-import { useAppConfig, currencySymbol } from '../../utils/appConfig';
+import { useAppConfig, currencySymbol, surgeMultiplier, cashEnabled } from '../../utils/appConfig';
 import {
   COLORS,
   TYPE,
@@ -70,7 +70,12 @@ export default function FareEstimationScreen({ route }) {
   const [promoCode, setPromoCode] = useState('');
   const [promoApplied, setPromoApplied] = useState(false);
   const [discount, setDiscount] = useState(0);
-  const [paymentMethod] = useState('card');
+  // Card unless the dashboard allows cash and the passenger picks it.
+  const [paymentMethod, setPaymentMethod] = useState('card');
+  const allowCash = cashEnabled(appConfig);
+  useEffect(() => {
+    if (!allowCash && paymentMethod === 'cash') setPaymentMethod('card');
+  }, [allowCash, paymentMethod]);
   const [defaultCard, setDefaultCard] = useState(null);
   const [showBreakdown, setShowBreakdown] = useState(false);
 
@@ -89,7 +94,8 @@ export default function FareEstimationScreen({ route }) {
   const calculateFareDetails = useCallback(
     (multiplier = 1) => {
       const { baseFare, ratePerMile, ratePerMinute, minimumFare, vatPercent } = appConfig.fares;
-      const surge = 1;
+      // Busy-time multiplier from the dashboard; 1 is normal pricing.
+      const surge = surgeMultiplier(appConfig);
       const vatRate = vatPercent / 100;
 
       const distanceInMiles = distance * 0.621371;
@@ -171,7 +177,8 @@ export default function FareEstimationScreen({ route }) {
       return;
     }
 
-    try {
+    // Cash rides need no card; card rides need one on file for the hold.
+    if (paymentMethod === 'card') try {
       const cardsSnap = await getDocs(collection(db, 'riders', currentUser.uid, 'cards'));
       if (cardsSnap.empty) {
         Alert.alert(
@@ -242,7 +249,10 @@ export default function FareEstimationScreen({ route }) {
         // Waiting terms at the time of booking. The completion function charges
         // from these, and both apps show the waiting timer from them.
         waitingPolicy: { ...appConfig.waiting },
+        // Cancellation terms at the time of booking, read the same way.
+        cancellationPolicy: { ...appConfig.cancellation },
 
+        paymentMethod,
         payment: { method: paymentMethod, status: 'pending', transactionId: null },
 
         timestamps: {
@@ -368,6 +378,15 @@ export default function FareEstimationScreen({ route }) {
         </View>
 
         <ScrollView showsVerticalScrollIndicator={false} style={{ flexGrow: 0 }}>
+          {fare.surgeMultiplier > 1 ? (
+            <View style={styles.surge}>
+              <Ionicons name="flash" size={16} color={COLORS.amber} />
+              <Text style={styles.surgeText}>
+                Busy right now, so fares are {fare.surgeMultiplier}× the usual price.
+              </Text>
+            </View>
+          ) : null}
+
           {/* Vehicle class. Price updates with the selection. */}
           <ScrollView
             horizontal
@@ -405,22 +424,56 @@ export default function FareEstimationScreen({ route }) {
 
           <Text style={styles.classDescription}>{selectedOption.description}</Text>
 
-          {/* Payment */}
-          <TouchableOpacity
-            style={styles.payRow}
-            onPress={() => navigation.navigate('AddPayment')}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="card-outline" size={20} color={COLORS.navy} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.payLabel}>
-                {defaultCard
-                  ? `${(defaultCard.brand || 'Card').toUpperCase()} ···· ${defaultCard.last4}`
-                  : 'No card added'}
-              </Text>
+          {/* Payment. Cash appears only when the dashboard allows it. */}
+          {allowCash ? (
+            <View style={styles.payChoice}>
+              {['card', 'cash'].map((method) => {
+                const on = paymentMethod === method;
+                return (
+                  <TouchableOpacity
+                    key={method}
+                    style={[styles.payOption, on && styles.payOptionOn]}
+                    onPress={() => setPaymentMethod(method)}
+                    activeOpacity={0.85}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected: on }}
+                  >
+                    <Ionicons
+                      name={method === 'card' ? 'card-outline' : 'cash-outline'}
+                      size={18}
+                      color={on ? COLORS.navy : COLORS.muted}
+                    />
+                    <Text style={[styles.payOptionText, on && { color: COLORS.navy }]}>
+                      {method === 'card' ? 'Card' : 'Cash'}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
-            <Ionicons name="chevron-forward" size={18} color={COLORS.lineStrong} />
-          </TouchableOpacity>
+          ) : null}
+
+          {paymentMethod === 'cash' ? (
+            <View style={styles.payRow}>
+              <Ionicons name="cash-outline" size={20} color={COLORS.navy} />
+              <Text style={[styles.payLabel, { flex: 1 }]}>Pay your driver in cash at the end</Text>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={styles.payRow}
+              onPress={() => navigation.navigate('AddPayment')}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="card-outline" size={20} color={COLORS.navy} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.payLabel}>
+                  {defaultCard
+                    ? `${(defaultCard.brand || 'Card').toUpperCase()} ···· ${defaultCard.last4}`
+                    : 'No card added'}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={COLORS.lineStrong} />
+            </TouchableOpacity>
+          )}
 
           {/* Promo */}
           {promoApplied ? (
@@ -482,6 +535,9 @@ export default function FareEstimationScreen({ route }) {
               <Row label="Base fare" value={money(fare.baseFare)} />
               <Row label={`Distance · ${fare.distanceInMiles} mi`} value={money(fare.distanceFare)} />
               <Row label={`Time · ${Math.ceil(duration)} min`} value={money(fare.timeFare)} />
+              {fare.surgeMultiplier > 1 ? (
+                <Row label="Busy-time pricing" value={`× ${fare.surgeMultiplier}`} tone={COLORS.amber} />
+              ) : null}
               {promoApplied ? (
                 <Row
                   label={`Promo ${promoCode}`}
@@ -591,6 +647,21 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
   },
   payLabel: { ...TYPE.callout },
+  payChoice: { flexDirection: 'row', gap: SPACE[3], paddingTop: SPACE[3] },
+  payOption: {
+    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACE[2],
+    height: 44, borderRadius: RADIUS.md,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.line,
+  },
+  payOptionOn: { borderColor: COLORS.green, borderWidth: 1.5, backgroundColor: COLORS.greenSoft },
+  payOptionText: { fontSize: 15, fontWeight: '700', color: COLORS.muted },
+
+  surge: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[2],
+    backgroundColor: COLORS.amberSoft, borderRadius: RADIUS.sm,
+    paddingHorizontal: SPACE[3], paddingVertical: SPACE[2], marginTop: SPACE[3],
+  },
+  surgeText: { ...TYPE.small, color: COLORS.amber, fontWeight: '600', flex: 1 },
 
   promoRow: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[3],

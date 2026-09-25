@@ -7,9 +7,10 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Animated,
-  Alert,
 } from 'react-native';
+import { Alert } from '../../components/ui/alert';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import CarMarker from '../../components/CarMarker';
 import MapViewDirections from 'react-native-maps-directions';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -33,6 +34,8 @@ import {
   validCoords,
   regionCovering,
 } from '../../components/ui/kit';
+import { cancellationFeeFor } from '../../utils/cancellation';
+import { money } from '../../utils/appConfig';
 
 const GOOGLE_MAPS_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ';
 
@@ -70,6 +73,7 @@ export default function RideTrackingScreen() {
         setDriverLocation({
           latitude: driver.location.latitude,
           longitude: driver.location.longitude,
+          heading: typeof driver.heading === 'number' ? driver.heading : null,
         });
       }
     });
@@ -177,7 +181,12 @@ export default function RideTrackingScreen() {
   const handleCall = () => confirmMaskedCall(rideId, 'your driver');
 
   const handleCancelRide = () => {
-    Alert.alert('Cancel this ride?', 'Your driver will be told straight away.', [
+    // Say what it costs before they confirm, from the ride's own terms.
+    const fee = cancellationFeeFor(rideData);
+    const message = fee > 0
+      ? `Your driver has been on the way for a while, so a ${money(fee, rideData?.currency)} cancellation fee will be charged to your card.`
+      : 'Your driver will be told straight away. There is no charge.';
+    Alert.alert('Cancel this ride?', message, [
       { text: 'Keep ride', style: 'cancel' },
       {
         text: 'Cancel ride',
@@ -256,16 +265,12 @@ export default function RideTrackingScreen() {
         ) : null}
 
         {driverLocation ? (
-          <Marker coordinate={driverLocation} anchor={{ x: 0.5, y: 0.5 }} flat>
-            <View style={styles.driverMarkerWrap}>
-              <Animated.View
-                style={[styles.driverPulse, { transform: [{ scale: pulseAnim }] }]}
-              />
-              <View style={styles.driverMarker}>
-                <Ionicons name="car-sport" size={16} color={COLORS.white} />
-              </View>
-            </View>
-          </Marker>
+          <CarMarker
+            coordinate={{ latitude: driverLocation.latitude, longitude: driverLocation.longitude }}
+            heading={driverLocation.heading}
+            tone="green"
+            size={1.15}
+          />
         ) : null}
 
         {drawRoute ? (

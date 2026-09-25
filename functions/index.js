@@ -56,6 +56,7 @@ const CONFIG_DEFAULTS = {
   subscription: {monthlyPrice: 99.99},
   drivers: {minimumPayout: 10},
   dispatch: {searchRadiusKm: 50, requestTimeoutSeconds: 20},
+  cancellation: {fee: 0, freeMinutes: 2, driverSharePercent: 100},
 };
 
 /**
@@ -100,6 +101,13 @@ async function loadAppConfig() {
     drivers: {
       minimumPayout: numSetting(data.drivers, "minimumPayout",
           d.drivers.minimumPayout),
+    },
+    cancellation: {
+      fee: numSetting(data.cancellation, "fee", d.cancellation.fee),
+      freeMinutes: numSetting(data.cancellation, "freeMinutes",
+          d.cancellation.freeMinutes),
+      driverSharePercent: Math.min(100, numSetting(data.cancellation,
+          "driverSharePercent", d.cancellation.driverSharePercent)),
     },
     dispatch: {
       searchRadiusKm: numSetting(data.dispatch, "searchRadiusKm",
@@ -146,6 +154,45 @@ function computeWaitingCharge(ride, fallback) {
   const charge = Math.min(chargeable * rate, max);
   return Math.round(charge * 100) / 100;
 }
+/**
+ * Reads a Firestore timestamp or number as milliseconds.
+ * @param {*} ts Timestamp, Date, number or nothing.
+ * @return {?number} Milliseconds, or null.
+ */
+function toMillis(ts) {
+  if (!ts) return null;
+  if (typeof ts.toMillis === "function") return ts.toMillis();
+  if (ts instanceof Date) return ts.getTime();
+  const n = Number(ts);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * The fee for a passenger cancelling this ride, in major units, or 0.
+ * Same rule as utils/cancellation.js in the app, which warns the passenger
+ * before they confirm: card rides only, cancelled by the passenger before
+ * pickup, more than the free minutes after a driver accepted. The terms are
+ * the ride's own (cancellationPolicy, saved at booking).
+ * @param {Object} before Ride before the cancel.
+ * @param {Object} after Ride after the cancel.
+ * @return {number} Fee.
+ */
+function cancellationFee(before, after) {
+  if (after.cancelledBy !== "rider" || after.endedEarly) return 0;
+  if (after.paymentMethod === "cash") return 0;
+  if (!["accepted", "arrived"].includes(before.status)) return 0;
+
+  const policy = after.cancellationPolicy || {};
+  const fee = numSetting(policy, "fee", 0);
+  if (!(fee > 0)) return 0;
+
+  const accepted = toMillis(after.acceptedAt);
+  if (!accepted) return 0;
+  const cancelled = toMillis(after.cancelledAt) || Date.now();
+  const freeMs = numSetting(policy, "freeMinutes", 2) * 60000;
+  return cancelled - accepted > freeMs ? Math.round(fee * 100) / 100 : 0;
+}
+
 /* ======================================
    CREATE STRIPE CUSTOMER
 ====================================== */
@@ -403,6 +450,9 @@ exports.authorizePaymentOnRideAccept = functions
 
       if (!riderId) return null;
 
+      // Cash rides are paid to the driver in person: no card hold.
+      if (after.paymentMethod === "cash") return null;
+
       // Re-dispatch: a driver gave the job back and another accepted it.
       // The card hold from the first accept is still valid, so reuse it
       // instead of placing a second hold on the passenger's card.
@@ -516,10 +566,32 @@ exports.chargeOnRideCompletion = functions
         return null;
       }
 
+      // Cash: nothing to charge. Record the final amount, waiting included,
+      // so the receipt and the passenger's screen show what was paid.
+      if (after.paymentMethod === "cash") {
+        const cfg = await loadAppConfig();
+        const waiting = computeWaitingCharge(after, cfg.waiting);
+        const base = after.fare && after.fare.total ?
+          Number(after.fare.total) : 0;
+        await db.collection("rides").doc(rideId).update({
+          "paymentStatus": "cash",
+          "fare.waitingCharge": waiting,
+          "fare.finalTotal": Math.round((base + waiting) * 100) / 100,
+        });
+        return null;
+      }
+
       const paymentIntentId = after.paymentIntentId;
 
       if (!paymentIntentId) {
+        // No card hold was ever placed (no card on file, or authorisation
+        // did not run). Say so on the ride instead of leaving it "pending"
+        // for ever, so the passenger and support can see it.
         console.log("❌ Missing paymentIntentId");
+        await db.collection("rides").doc(rideId).update({
+          paymentStatus: "failed",
+          paymentError: "no_card_hold",
+        });
         return null;
       }
 
@@ -780,6 +852,85 @@ exports.cancelRidePayment = functions
 
       const paymentIntentId = after.paymentIntentId;
       if (!paymentIntentId) return null;
+
+      // A late cancel by the passenger: capture the fee from the hold and
+      // release the rest, then pay the driver their share.
+      const fee = cancellationFee(before, after);
+      if (fee > 0) {
+        try {
+          const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
+          const feeMinor = Math.min(Math.round(fee * 100), intent.amount);
+          await stripe.paymentIntents.capture(paymentIntentId,
+              {amount_to_capture: feeMinor},
+              {idempotencyKey: `cancel_fee_${rideId}`});
+
+          const charged = feeMinor / 100;
+          const policy = after.cancellationPolicy || {};
+          const sharePct = Math.min(100,
+              numSetting(policy, "driverSharePercent", 100));
+          const driverShare = Math.round(charged * sharePct) / 100;
+
+          await db.collection("payments").doc(paymentIntentId).update({
+            status: "captured",
+            amount: feeMinor,
+            type: "cancellation_fee",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          await db.collection("rides").doc(rideId).update({
+            paymentStatus: "cancellation_fee",
+            cancellationFee: charged,
+            cancellationFeeDriverShare: driverShare,
+          });
+
+          const driverId = after.driverId;
+          if (driverId && driverShare > 0) {
+            const walletRef = db.collection("driverWallets").doc(driverId);
+            await db.runTransaction(async (tx) => {
+              const rideRef = db.collection("rides").doc(rideId);
+              const rideSnap = await tx.get(rideRef);
+              const paid = rideSnap.exists &&
+                rideSnap.data().cancellationFeePaid;
+              if (paid) return;
+              const walletSnap = await tx.get(walletRef);
+              if (walletSnap.exists) {
+                tx.update(walletRef, {
+                  availableBalance:
+                    admin.firestore.FieldValue.increment(driverShare),
+                  totalEarned:
+                    admin.firestore.FieldValue.increment(driverShare),
+                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+              } else {
+                tx.set(walletRef, {
+                  availableBalance: driverShare,
+                  totalEarned: driverShare,
+                  pendingBalance: 0,
+                  currency: rideCurrency(after).toUpperCase(),
+                  walletStatus: "active",
+                  createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+              }
+              tx.set(walletRef.collection("transactions").doc(), {
+                type: "cancellation_fee",
+                amount: driverShare,
+                rideId,
+                paymentIntentId,
+                status: "cleared",
+                description: "Cancellation fee for ride " + rideId,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              });
+              tx.update(db.collection("rides").doc(rideId),
+                  {cancellationFeePaid: true});
+            });
+          }
+          console.log("💷 Cancellation fee taken:", rideId, charged);
+          return null;
+        } catch (error) {
+          // Fall through and release the hold: better no fee than a stuck one.
+          console.error("❌ Cancellation fee failed, releasing hold:", error);
+        }
+      }
 
       try {
       // 1. Cancel Stripe hold
@@ -1947,7 +2098,8 @@ function buildReceipt(ride, rideId, extra) {
         </tr>
       </table>
       <div style="color:#6B7280;font-size:13px;margin-top:12px;">
-        Paid by card ending ${escapeHtml(ride.cardLast4 || "on file")}.
+        ${ride.paymentMethod === "cash" ? "Paid in cash to your driver." :
+    `Paid by card ending ${escapeHtml(ride.cardLast4 || "on file")}.`}
       </div>
     </div>
 
@@ -2073,7 +2225,7 @@ exports.sendReceiptOnPaymentCaptured = functions
       const before = change.before.data();
       const after = change.after.data();
       const captured = after.paymentStatus === "captured" ||
-        after.paymentStatus === "paid";
+        after.paymentStatus === "paid" || after.paymentStatus === "cash";
       if (!captured || before.paymentStatus === after.paymentStatus) {
         return null;
       }
