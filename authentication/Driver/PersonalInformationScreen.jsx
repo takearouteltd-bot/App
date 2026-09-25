@@ -56,6 +56,9 @@ export default function PersonalInformationScreen({ navigation, setOnboardingSta
   // Where they will take jobs. Required once the dashboard lists any cities.
   const cities = useCities();
   const [workingCityId, setWorkingCityId] = useState(null);
+  // Declared here, confirmed by an admin against the licence. Only verified
+  // female drivers are offered rides where a passenger asked for one.
+  const [gender, setGender] = useState(null);
   const [saving, setSaving] = useState(false);
   // Field errors appear only after a first attempt to continue, not while
   // someone is still typing.
@@ -99,6 +102,7 @@ export default function PersonalInformationScreen({ navigation, setOnboardingSta
         setNin(data.nin || "");
         setAddress(data.address || "");
         setWorkingCityId(data.workingCityId || null);
+        setGender(data.gender || null);
 
         const reached = Math.min(Number(data.onboardingStep) || 1, DRIVER_STEPS.length);
         if (reached > 1 && !resumed.current) {
@@ -130,6 +134,7 @@ export default function PersonalInformationScreen({ navigation, setOnboardingSta
       ? "That doesn't look right, e.g. AB123456C"
       : null,
     address: !address.trim() ? "Enter your home address" : null,
+    gender: !gender ? "Choose an option" : null,
     workingCityId: cities.length && !workingCityId ? "Choose the city you will drive in" : null,
   };
   const show = (key) => (tried ? errors[key] : null);
@@ -155,6 +160,7 @@ export default function PersonalInformationScreen({ navigation, setOnboardingSta
           dob,
           nin,
           address: address.trim(),
+          gender,
           workingCityId: workingCityId || null,
           workingCityName: cities.find((c) => c.id === workingCityId)?.name || null,
 
@@ -234,6 +240,21 @@ export default function PersonalInformationScreen({ navigation, setOnboardingSta
           maxLength={9}
           hint="Two letters, six numbers, one letter."
           error={show("nin")}
+        />
+      </StepSection>
+
+      <StepSection title="Gender" hint="Some passengers ask for a female driver. We confirm this against your licence.">
+        <SelectField
+          label="Gender"
+          placeholder="Choose"
+          value={gender}
+          onChange={setGender}
+          options={[
+            { value: "female", label: "Female" },
+            { value: "male", label: "Male" },
+            { value: "undisclosed", label: "Prefer not to say" },
+          ]}
+          error={show("gender")}
         />
       </StepSection>
 

@@ -27,7 +27,7 @@ import {
   setDoc,
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
-import { useAppConfig, currencySymbol, surgeMultiplier, cashEnabled } from '../../utils/appConfig';
+import { useAppConfig, currencySymbol, surgeMultiplier, cashEnabled, femaleDriverEnabled } from '../../utils/appConfig';
 import { useCities, cityFor } from '../../utils/cities';
 import {
   COLORS,
@@ -76,6 +76,16 @@ export default function FareEstimationScreen({ route }) {
   // Card unless the dashboard allows cash and the passenger picks it.
   const [paymentMethod, setPaymentMethod] = useState('card');
   const allowCash = cashEnabled(appConfig);
+
+  // Female driver: starts from the passenger's saved preference.
+  const allowFemaleOnly = femaleDriverEnabled(appConfig);
+  const [femaleOnly, setFemaleOnly] = useState(false);
+  useEffect(() => {
+    if (!currentUser) return;
+    getDoc(doc(db, 'riders', currentUser.uid))
+      .then((snap) => setFemaleOnly(snap.exists() && snap.data().preferFemaleDriver === true))
+      .catch(() => {});
+  }, [currentUser]);
   useEffect(() => {
     if (!allowCash && paymentMethod === 'cash') setPaymentMethod('card');
   }, [allowCash, paymentMethod]);
@@ -246,6 +256,7 @@ export default function FareEstimationScreen({ route }) {
         },
 
         fareEstimate: fareDetails.total,
+        femaleDriverOnly: allowFemaleOnly && femaleOnly,
         cityId: cityFor(cities, origin)?.id || null,
         cityName: cityFor(cities, origin)?.name || null,
         currency: appConfig.currency,
@@ -479,6 +490,24 @@ export default function FareEstimationScreen({ route }) {
               <Ionicons name="chevron-forward" size={18} color={COLORS.lineStrong} />
             </TouchableOpacity>
           )}
+
+          {allowFemaleOnly ? (
+            <TouchableOpacity
+              style={styles.payRow}
+              onPress={() => setFemaleOnly((v) => !v)}
+              activeOpacity={0.7}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: femaleOnly }}
+            >
+              <Ionicons name="woman-outline" size={20} color={COLORS.navy} />
+              <Text style={[styles.payLabel, { flex: 1 }]}>Female driver only</Text>
+              <Ionicons
+                name={femaleOnly ? 'checkbox' : 'square-outline'}
+                size={22}
+                color={femaleOnly ? COLORS.green : COLORS.lineStrong}
+              />
+            </TouchableOpacity>
+          ) : null}
 
           {/* Promo */}
           {promoApplied ? (

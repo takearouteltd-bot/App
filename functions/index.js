@@ -2009,6 +2009,8 @@ async function offerRideToDrivers(rideId, ride) {
     // A driver who chose a working city only gets that city's jobs.
     // Same rule as servesCity() in the app's utils/cities.js.
     if (d.workingCityId && d.workingCityId !== ride.cityId) return;
+    // Passenger asked for a female driver: verified female drivers only.
+    if (ride.femaleDriverOnly === true && d.femaleVerified !== true) return;
     const km = distanceKm(d.location, ride.pickupLocation);
     if (km <= cfg.dispatch.searchRadiusKm) nearby.push(snap.id);
   });
@@ -2032,6 +2034,20 @@ exports.notifyDriversOfNewRide = functions.firestore
       const ride = snap.data();
       if (ride.status !== "searching") return null;
       return offerRideToDrivers(context.params.rideId, ride);
+    });
+
+/* The passenger gave up on a female driver: offer the job to everyone who
+   was held back the first time. */
+exports.reofferWhenPreferenceDropped = functions.firestore
+    .document("rides/{rideId}")
+    .onUpdate(async (change, context) => {
+      const before = change.before.data();
+      const after = change.after.data();
+      if (after.status !== "searching") return null;
+      const dropped = before.femaleDriverOnly === true &&
+        after.femaleDriverOnly !== true;
+      if (!dropped) return null;
+      return offerRideToDrivers(context.params.rideId, after);
     });
 
 exports.notifyRideUpdates = functions.firestore

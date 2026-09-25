@@ -46,6 +46,12 @@ export const DEFAULT_APP_CONFIG = {
     freeMinutes: 2,
     driverSharePercent: 100,
   },
+  // Passengers may ask for a female driver. If none accepts within
+  // waitSeconds they are offered any driver instead.
+  femaleDriver: {
+    enabled: 1,
+    waitSeconds: 60,
+  },
   // 1 lets passengers choose to pay the driver in cash.
   payments: {
     cashEnabled: 0,
@@ -76,6 +82,7 @@ export function normaliseAppConfig(raw) {
     surge: mergeSection(DEFAULT_APP_CONFIG.surge, data.surge),
     cancellation: mergeSection(DEFAULT_APP_CONFIG.cancellation, data.cancellation),
     payments: mergeSection(DEFAULT_APP_CONFIG.payments, data.payments),
+    femaleDriver: mergeSection(DEFAULT_APP_CONFIG.femaleDriver, data.femaleDriver),
   };
 }
 
@@ -83,6 +90,10 @@ export function normaliseAppConfig(raw) {
 export function surgeMultiplier(config = currentConfig) {
   const m = Number(config?.surge?.multiplier);
   return Number.isFinite(m) && m > 1 ? Math.round(m * 100) / 100 : 1;
+}
+
+export function femaleDriverEnabled(config = currentConfig) {
+  return Number(config?.femaleDriver?.enabled) === 1;
 }
 
 export function cashEnabled(config = currentConfig) {

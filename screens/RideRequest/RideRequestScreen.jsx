@@ -17,7 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { getAuth } from 'firebase/auth';
-import { currencySymbol } from '../../utils/appConfig';
+import { currencySymbol, useAppConfig } from '../../utils/appConfig';
 import {
   COLORS, TYPE, SPACE, RADIUS, SHADOW, IconButton, RouteLine,
   MapUnavailable, isCoord, validCoords, regionCovering,
@@ -56,6 +56,29 @@ export default function RideRequestScreen() {
 
   const isSearching = rideStatus === 'searching';
   const elapsed = useElapsed(isSearching);
+
+  // Female driver only: after the dashboard's wait with no taker, offer to
+  // look for any driver instead (the passenger can also keep waiting).
+  const appConfig = useAppConfig();
+  const femaleWait = Number(appConfig.femaleDriver?.waitSeconds) || 60;
+  const [keepWaitingUntil, setKeepWaitingUntil] = useState(femaleWait);
+  const [widening, setWidening] = useState(false);
+  const askToWiden =
+    isSearching && rideData?.femaleDriverOnly === true && elapsed >= keepWaitingUntil;
+
+  const findAnyDriver = async () => {
+    setWidening(true);
+    try {
+      await updateDoc(doc(db, 'rides', rideId), {
+        femaleDriverOnly: false,
+        femalePreferenceDropped: true,
+      });
+    } catch (error) {
+      Alert.alert('Could not update your ride', 'Please try again.');
+    } finally {
+      setWidening(false);
+    }
+  };
 
   /* A radar sweep: it says "we are looking", without claiming to know how
      close we are to finding someone. */
@@ -231,8 +254,34 @@ export default function RideRequestScreen() {
               </View>
             </View>
 
-            <Text style={styles.searchTitle}>Finding your driver</Text>
+            <Text style={styles.searchTitle}>
+              {rideData.femaleDriverOnly ? 'Finding a female driver' : 'Finding your driver'}
+            </Text>
             <Text style={styles.searchClock}>Looking for {clock}</Text>
+
+            {askToWiden ? (
+              <View style={styles.widen}>
+                <Text style={styles.widenTitle}>No female driver is free right now</Text>
+                <Text style={styles.widenBody}>
+                  Switch the preference off for this ride and we will find the nearest driver.
+                </Text>
+                <View style={styles.widenRow}>
+                  <TouchableOpacity
+                    style={[styles.widenButton, styles.widenSecondary]}
+                    onPress={() => setKeepWaitingUntil(elapsed + femaleWait)}
+                  >
+                    <Text style={[styles.widenButtonText, { color: COLORS.navy }]}>Keep waiting</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.widenButton, widening && { opacity: 0.6 }]}
+                    onPress={findAnyDriver}
+                    disabled={widening}
+                  >
+                    <Text style={styles.widenButtonText}>Find any driver</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : null}
 
             <View style={styles.facts}>
               <Fact icon="card-outline" text={`${currencySymbol()}${fareEstimate}`} />
@@ -300,6 +349,19 @@ function Fact({ icon, text }) {
 }
 
 const styles = StyleSheet.create({
+  widen: {
+    alignSelf: 'stretch', marginTop: SPACE[4], padding: SPACE[4],
+    borderRadius: RADIUS.md, backgroundColor: COLORS.amberSoft,
+  },
+  widenTitle: { ...TYPE.callout, color: COLORS.amber },
+  widenBody: { ...TYPE.small, color: COLORS.inkSoft, marginTop: SPACE[1] },
+  widenRow: { flexDirection: 'row', gap: SPACE[3], marginTop: SPACE[3] },
+  widenButton: {
+    flex: 1, height: 44, borderRadius: RADIUS.sm, backgroundColor: COLORS.green,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  widenSecondary: { backgroundColor: COLORS.white, borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.lineStrong },
+  widenButtonText: { fontSize: 15, fontWeight: '700', color: COLORS.white },
   container: { flex: 1, backgroundColor: COLORS.white },
   centered: { alignItems: 'center', justifyContent: 'center' },
 

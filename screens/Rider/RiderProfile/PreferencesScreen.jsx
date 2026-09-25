@@ -2,7 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, SafeAreaView, ScrollView, Switch, Linking } from 'react-native';
 import { Alert } from '../../../components/ui/alert';
 import { useNavigation } from '@react-navigation/native';
-import { auth } from '../../../config/firebase';
+import { auth, db } from '../../../config/firebase';
+import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { useAppConfig, femaleDriverEnabled } from '../../../utils/appConfig';
 import {
   hasPushToken,
   registerForPushNotifications,
@@ -32,6 +34,27 @@ export default function PreferencesScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [pushOn, setPushOn] = useState(false);
+
+  // Ride preference: ask for a female driver by default. Can still be changed
+  // for a single booking on the fare screen.
+  const appConfig = useAppConfig();
+  const [femaleOnly, setFemaleOnly] = useState(false);
+  useEffect(() => {
+    if (!user) return undefined;
+    return onSnapshot(doc(db, 'riders', user.uid), (snap) =>
+      setFemaleOnly(snap.exists() && snap.data().preferFemaleDriver === true)
+    );
+  }, [user]);
+  const toggleFemaleOnly = async (next) => {
+    if (!user) return;
+    setFemaleOnly(next);
+    try {
+      await setDoc(doc(db, 'riders', user.uid), { preferFemaleDriver: next }, { merge: true });
+    } catch (error) {
+      setFemaleOnly(!next);
+      Alert.alert('Could not save', 'Please try again.');
+    }
+  };
 
   const load = useCallback(async () => {
     if (!user) {
@@ -92,12 +115,35 @@ export default function PreferencesScreen() {
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <ScreenHeader
-          title="Notifications"
-          subtitle="What TakeARoute is allowed to send to this phone."
+          title="Preferences"
+          subtitle="How your rides work, and what this phone is sent."
           onBack={() => navigation.goBack()}
         />
 
-        <Card flush style={{ marginTop: SPACE[5] }}>
+        {femaleDriverEnabled(appConfig) ? (
+          <>
+            <Text style={[TYPE.label, { marginTop: SPACE[5] }]}>Rides</Text>
+            <Card flush style={{ marginTop: SPACE[2] }}>
+              <ListRow
+                icon="woman-outline"
+                title="Female drivers only"
+                detail="We look for a female driver first. If none is free, we ask before finding anyone else."
+                last
+                right={
+                  <Switch
+                    value={femaleOnly}
+                    onValueChange={toggleFemaleOnly}
+                    trackColor={{ false: COLORS.line, true: COLORS.green }}
+                    thumbColor={COLORS.white}
+                  />
+                }
+              />
+            </Card>
+            <Text style={[TYPE.label, { marginTop: SPACE[5] }]}>Notifications</Text>
+          </>
+        ) : null}
+
+        <Card flush style={{ marginTop: femaleDriverEnabled(appConfig) ? SPACE[2] : SPACE[5] }}>
           <ListRow
             icon="notifications-outline"
             title="Push notifications"

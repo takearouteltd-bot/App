@@ -77,6 +77,7 @@ export default function DriverHomeScreen() {
   const [vehicleType, setVehicleType] = useState(null);
   const [membershipStatus, setMembershipStatus] = useState(null);
   const [workingCityId, setWorkingCityId] = useState(null);
+  const [femaleVerified, setFemaleVerified] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const [rideRequests, setRideRequests] = useState([]);
@@ -147,6 +148,7 @@ export default function DriverHomeScreen() {
       setVehicleType(data.vehicleType || null);
       setMembershipStatus(data.subscription?.status || null);
       setWorkingCityId(data.workingCityId || null);
+      setFemaleVerified(data.femaleVerified === true);
       setDocumentAlerts(expiryAlertsFor(data));
       const started = data.shiftStartedAt?.toMillis?.() ?? null;
       setShiftStartedAt(started);
@@ -389,6 +391,8 @@ export default function DriverHomeScreen() {
         if (!canServe(vehicleType, data.rideType)) return;
         // Chosen a working city? Then only that city's jobs.
         if (!servesCity(workingCityId, data.cityId)) return;
+        // Passenger asked for a female driver: verified female drivers only.
+        if (data.femaleDriverOnly === true && !femaleVerified) return;
 
         const distance = getDistanceFromLatLonInKm(
           location.latitude,
@@ -409,7 +413,7 @@ export default function DriverHomeScreen() {
       setCurrentIndex(0);
       if (rides.length) animateCard();
     });
-  }, [isOnline, location, searchRadiusKm, driverId, vehicleType, workingCityId, animateCard]);
+  }, [isOnline, location, searchRadiusKm, driverId, vehicleType, workingCityId, femaleVerified, animateCard]);
 
   // Move to the next offer, or clear the queue when there are none left.
   const advanceQueue = useCallback(() => {
@@ -479,6 +483,11 @@ export default function DriverHomeScreen() {
           throw new Error(
             `This is a ${classLabel(rideDoc.data().rideType)} job and your vehicle is registered as ${classLabel(vehicleType)}.`
           );
+        }
+        // The passenger may have switched "female driver only" on or off
+        // since the list was drawn.
+        if (rideDoc.data().femaleDriverOnly === true && !femaleVerified) {
+          throw new Error('This passenger asked for a female driver.');
         }
 
         transaction.update(rideRef, {
