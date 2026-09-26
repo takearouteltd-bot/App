@@ -14,9 +14,11 @@ setUserRole,
 setIsLoggedIn, 
 setRiderOnboardingStatus,
 setDriverOnboardingStatus,
+// "SelectUserType" for someone already signed in who has not chosen a role.
+initialRouteName = "Landing",
 }) {
 return (
-<Stack.Navigator screenOptions={{ headerShown: false }}>
+<Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName={initialRouteName}>
   {/* Landing */}
   <Stack.Screen name="Landing" component={LandingScreen} />
 

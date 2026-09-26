@@ -34,7 +34,10 @@ export default function MyReportsScreen({ navigation, route }) {
   const newReport = () => navigation.navigate('ReportIssueScreen', { reporterType: role });
 
   const renderItem = ({ item }) => {
-    const hasReply = item.lastReplyBy === 'admin';
+    // Unread until the reporter opens the report after the reply landed.
+    const seenAt = item.reporterSeenAt?.toMillis ? item.reporterSeenAt.toMillis() : 0;
+    const repliedAt = item.lastReplyAt?.toMillis ? item.lastReplyAt.toMillis() : 0;
+    const hasReply = item.lastReplyBy === 'admin' && (!seenAt || repliedAt > seenAt);
     return (
       <Card style={{ marginBottom: SPACE[3] }} onPress={() => navigation.navigate('ReportDetail', { reportId: item.id, role })}>
         <View style={styles.rowTop}>

@@ -7,38 +7,15 @@ import {
   COLORS, TYPE, SPACE, RADIUS,
   Screen, ScreenHeader, Section, Card, RowGroup, StatRow, StatusPill, Loading,
 } from '../../../components/ui/kit';
+import { VEHICLE_CLASSES } from '../../../constants/vehicleClasses';
 
-const VEHICLE_TYPE_META = {
-  RouteMini: {
-    label: "RouteMini",
-    description: "Affordable everyday rides",
-    icon: "car",
-    passengers: 4,
-  },
-  RoutePlus: {
-    label: "RoutePlus",
-    description: "Comfortable sedans",
-    icon: "car",
-    passengers: 4,
-  },
-  RouteXL: {
-    label: "RouteXL",
-    description: "Spacious SUVs for groups",
-    icon: "car-estate",
-    passengers: 6,
-  },
-  RouteEco: {
-    label: "RouteEco",
-    description: "Eco-friendly hybrid rides",
-    icon: "leaf",
-    passengers: 4,
-  },
-  RouteExecutive: {
-    label: "Executive",
-    description: "Premium luxury experience",
-    icon: "car-wash",
-    passengers: 4,
-  },
+// The one class table the app matches jobs with, plus an icon per class.
+const CLASS_ICONS = {
+  RouteMini: "car-hatchback",
+  RoutePlus: "car",
+  RouteXL: "car-estate",
+  RouteEco: "leaf",
+  RouteExecutive: "car-sports",
 };
 
 const formatValue = (value, fallback = "Not provided") => {
@@ -90,13 +67,12 @@ export default function VehicleInformationScreen({ navigation }) {
   const make = driver?.vehicleMake || driver?.make;
   const model = driver?.vehicleModel || driver?.model;
   const makeModel = driver?.makeModel || [make, model].filter(Boolean).join(" ");
-  const color = driver?.vehicleColor || driver?.color;
   const registration = driver?.registrationNumber || driver?.plateNumber;
   const year = driver?.vehicleYear || driver?.year;
   const type = driver?.vehicleType || driver?.bodyType;
-  const typeMeta = VEHICLE_TYPE_META[type] || null;
-  const seats = driver?.seats || driver?.vehicleSeats || typeMeta?.passengers;
-  const heroIcon = typeMeta?.icon || "car-sport";
+  const typeMeta = VEHICLE_CLASSES.find((c) => c.id === type) || null;
+  const seats = driver?.seats || driver?.vehicleSeats || typeMeta?.seats;
+  const heroIcon = CLASS_ICONS[type] || "car-sport";
   const heroLabel = typeMeta?.label || "Vehicle category not set";
   const heroDescription =
     typeMeta?.description || "Update onboarding details to select a ride category.";
@@ -164,7 +140,6 @@ export default function VehicleInformationScreen({ navigation }) {
           items={[
             { icon: "car-outline", iconColor: COLORS.midnight, title: "Make & Model", detail: formatValue(makeModel) },
             { icon: "card-outline", iconColor: COLORS.midnight, title: "Registration", detail: formatValue(registration) },
-            { icon: "color-palette-outline", iconColor: COLORS.midnight, title: "Color", detail: formatValue(color) },
             { icon: "calendar-outline", iconColor: COLORS.midnight, title: "Year", detail: formatValue(year) },
             { icon: "pricetag-outline", iconColor: COLORS.midnight, title: "Ride Category", detail: formatValue(heroLabel) },
             { icon: "people-outline", iconColor: COLORS.midnight, title: "Seats", detail: formatValue(seats) },

@@ -6,9 +6,11 @@ import MapView, { Marker, Polyline } from 'react-native-maps';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 import { currencySymbol } from '../../../utils/appConfig';
+import { STATUS_LABEL, STATUS_PILL } from '../../../components/trips/TripsList';
 import {
   COLORS, TYPE, SPACE, RADIUS,
   Screen, ScreenHeader, Card, Section, Avatar, Button, RouteLine, StatRow, StatusPill, Skeleton,
+  formatWhen,
 } from '../../../components/ui/kit';
 
 export default function DriverTripDetailsScreen() {
@@ -48,13 +50,11 @@ export default function DriverTripDetailsScreen() {
     fetchRider();
   }, [trip.riderId]);
 
-  // Use route.status (same as the card), not trip.status
-  const status = trip.route?.status?.toUpperCase() || 'PENDING';
-  const isCompleted = status === 'COMPLETED';
-  const isCancelled = status === 'CANCELLED';
+  // The ride's own status; route.status is only ever "calculated".
+  const status = trip.status || 'searching';
 
-  // Fare is an object — extract the total
-  const fareTotal = trip.fare?.total ?? 0;
+  // Fare is an object; finalTotal (with waiting time) once the trip is paid.
+  const fareTotal = Number(trip.fare?.finalTotal ?? trip.fare?.total ?? 0);
   const currency = currencySymbol(trip.fare?.currency);
 
   // Pickup & dropoff from nested location objects
@@ -66,42 +66,29 @@ export default function DriverTripDetailsScreen() {
     typeof dropoff.latitude === 'number' &&
     typeof dropoff.longitude === 'number';
 
-  // Route stats from nested route object
+  // Route stats from the nested route object, in km like the rest of the app.
   const routeInfo = trip.route || {};
-  const distanceMiles = routeInfo.distanceMiles ?? (routeInfo.distanceKm ? routeInfo.distanceKm * 0.621371 : 0);
+  const distanceKm = Number(routeInfo.distanceKm) || 0;
   const durationMinutes = routeInfo.durationMinutes ?? 0;
 
-  // Payment info from nested payment object
-  const payment = trip.payment || {};
-  const paymentMethod = payment.method || 'card';
+  // Rides store the method at the top level; the nested payment object is
+  // only kept current by the Stripe webhook.
+  const paymentMethod = trip.paymentMethod || trip.payment?.method || 'card';
 
-  // Format timestamps
-  const formatDateTime = (timestamp) => {
-    if (!timestamp) return 'N/A';
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-    return date.toLocaleString('en-US', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-    });
-  };
-
-  const statusLabel = status.charAt(0) + status.slice(1).toLowerCase();
-  const pillStatus = isCompleted ? 'resolved' : isCancelled ? 'rejected' : 'pending';
+  const statusLabel = STATUS_LABEL[status] || status;
+  const pillStatus = STATUS_PILL[status] || 'pending';
 
   const fareLines = [
     ['Base Fare', trip.fare?.baseFare],
     ['Distance Fare', trip.fare?.distanceFare],
     ['Time Fare', trip.fare?.timeFare],
     trip.fare?.vat > 0 ? ['VAT', trip.fare?.vat] : null,
+    trip.fare?.waitingCharge > 0 ? ['Waiting time', trip.fare.waitingCharge] : null,
   ].filter(Boolean);
 
   return (
     <Screen>
-      <ScreenHeader title="Trip Details" subtitle={formatDateTime(trip.timestamps?.createdAt)} />
+      <ScreenHeader title="Trip Details" subtitle={formatWhen(trip.timestamps?.createdAt) || 'Date unknown'} />
 
       {/* Map. Trips without saved coordinates simply have no map, rather
           than falling back to a fixed point on the other side of the world. */}
@@ -171,7 +158,7 @@ export default function DriverTripDetailsScreen() {
           style={styles.stats}
           items={[
             { value: durationMinutes ? `${Math.ceil(durationMinutes)} min` : 'N/A', label: 'Duration' },
-            { value: distanceMiles ? `${distanceMiles.toFixed(1)} mi` : 'N/A', label: 'Distance' },
+            { value: distanceKm ? `${distanceKm.toFixed(1)} km` : 'N/A', label: 'Distance' },
             { value: paymentMethod === 'cash' ? 'Cash' : 'Card', label: 'Paid by' },
           ]}
         />

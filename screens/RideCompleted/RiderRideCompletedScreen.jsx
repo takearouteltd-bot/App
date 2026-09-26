@@ -55,7 +55,9 @@ export default function RiderRideCompletedScreen() {
     );
   }
 
-  const paymentStatus = ride.payment?.status || ride.paymentStatus || 'pending';
+  // paymentStatus is what the payment function writes; the nested payment
+  // object is only kept up to date by the Stripe webhook.
+  const paymentStatus = ride.paymentStatus || ride.payment?.status || 'pending';
   const isPaid = ['captured', 'authorized', 'paid', 'succeeded'].includes(paymentStatus);
   const isFailed = paymentStatus === 'failed';
   const isPending = !isPaid && !isFailed;
@@ -92,12 +94,15 @@ export default function RiderRideCompletedScreen() {
               : isPaid
               ? `Charged to your card${ride.cardLast4 ? ` ending ${ride.cardLast4}` : ''}`
               : isFailed
-              ? 'Update your card in Profile, Payment, then we will try again'
+              ? "Please contact support and we'll sort it out."
               : slow
               ? 'This is taking longer than usual. Your receipt is emailed once the payment goes through.'
               : 'Confirming your payment. You can book your next ride while we finish.'}
           </Text>
           {isPending && !isCash && !slow ? <View style={styles.pendingBar} /> : null}
+          {ride.extraChargeFailed ? (
+            <Text style={styles.heroNote}>Waiting charges could not be taken.</Text>
+          ) : null}
         </Card>
       </Animated.View>
 
@@ -154,6 +159,7 @@ const styles = StyleSheet.create({
   heroLabel: { ...TYPE.label, color: COLORS.lime },
   heroAmount: { ...TYPE.display, color: COLORS.white, fontSize: 48, letterSpacing: -1.6, marginTop: SPACE[2] },
   heroSub: { ...TYPE.small, color: COLORS.onDark, marginTop: SPACE[2] },
+  heroNote: { ...TYPE.caption, color: COLORS.amberSoft, marginTop: SPACE[3] },
   pendingBar: { height: 4, borderRadius: 2, backgroundColor: COLORS.lime, opacity: 0.8, marginTop: SPACE[5], width: '40%' },
   lineRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: SPACE[2] },
   totalRow: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line, marginTop: SPACE[2], paddingTop: SPACE[3] },

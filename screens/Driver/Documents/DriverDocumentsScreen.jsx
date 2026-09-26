@@ -67,6 +67,13 @@ export default function DriverDocumentsScreen({ navigation }) {
         Alert.alert('Expiry date', 'Enter the expiry date as DD/MM/YYYY.');
         return;
       }
+      // A replacement document must still be in date.
+      const today = new Date();
+      const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      if (expiry < todayKey) {
+        Alert.alert('Expiry date', 'That date has already passed. Enter the expiry date of the new document.');
+        return;
+      }
     }
     setSending(true);
     try {

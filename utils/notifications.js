@@ -1,11 +1,18 @@
 // utils/notifications.js
 // Push notifications on the phone.
 //
-// Android: the phone's FCM token is saved to pushTokens/{uid}, and Cloud
+// The phone's FCM registration token is saved to pushTokens/{uid}, and Cloud
 // Functions send through Firebase Cloud Messaging (admin.messaging()). This
 // does not depend on the Expo account that owns the project.
-// iOS: needs the Apple developer account renewed and an APNs key added to
-// Firebase before it will deliver; the code below already asks permission.
+//
+// The token comes from @react-native-firebase/messaging on both platforms.
+// expo-notifications' getDevicePushTokenAsync() gives a raw APNs token on
+// iOS, which admin.messaging() rejects, so every iPhone send failed and the
+// token was pruned. Permission is still asked through expo-notifications,
+// which also owns the Android channels and the tap handling.
+//
+// iOS still needs an APNs key in Firebase (Project settings, Cloud Messaging)
+// before anything is delivered.
 //
 // Channels (Android sets sound and importance per channel, not per message):
 //   job-alerts    new job offers. Loud, 20 second chime, vibration.
@@ -15,8 +22,10 @@
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
+import { signOut } from 'firebase/auth';
 import { arrayRemove, arrayUnion, doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { getMessaging, getToken, registerDeviceForRemoteMessages } from '@react-native-firebase/messaging';
+import { auth, db } from '../config/firebase';
 
 // Show notifications while the app is open too.
 Notifications.setNotificationHandler({
@@ -59,6 +68,19 @@ async function ensureChannels() {
   channelsReady = true;
 }
 
+// This phone's FCM registration token, or null when there is none (simulator,
+// or iOS before APNs registration succeeds). One code path for both platforms
+// so register and unregister always agree on which token they mean.
+async function getPushToken() {
+  if (!Device.isDevice) return null;
+  const messaging = getMessaging();
+  if (Platform.OS === 'ios') {
+    await registerDeviceForRemoteMessages(messaging);
+  }
+  const token = await getToken(messaging);
+  return token || null;
+}
+
 // Asks permission once, then saves this phone's token against the user.
 // Safe to call on every sign-in; it does nothing on simulators.
 export async function registerForPushNotifications(uid) {
@@ -74,7 +96,7 @@ export async function registerForPushNotifications(uid) {
     }
     if (status !== 'granted') return null;
 
-    const { data: token, type } = await Notifications.getDevicePushTokenAsync();
+    const token = await getPushToken();
     if (!token) return null;
 
     await setDoc(
@@ -82,7 +104,7 @@ export async function registerForPushNotifications(uid) {
       {
         tokens: arrayUnion(token),
         platform: Platform.OS,
-        tokenType: type || null,
+        tokenType: 'fcm',
         updatedAt: serverTimestamp(),
       },
       { merge: true }
@@ -101,7 +123,7 @@ export async function registerForPushNotifications(uid) {
 export async function unregisterPushNotifications(uid) {
   try {
     if (!uid) return false;
-    const { data: token } = await Notifications.getDevicePushTokenAsync().catch(() => ({}));
+    const token = await getPushToken().catch(() => null);
     if (token) {
       await setDoc(
         doc(db, 'pushTokens', uid),
@@ -118,6 +140,16 @@ export async function unregisterPushNotifications(uid) {
     console.log('Push unregister error:', error);
     return false;
   }
+}
+
+/* Signs out properly: this phone's token is removed from the account first,
+   so the next person to sign in on the phone does not keep receiving the
+   previous account's job alerts, trip updates and messages. Every sign-out
+   in the app goes through here. */
+export async function signOutEverywhere() {
+  const uid = auth.currentUser?.uid;
+  if (uid) await unregisterPushNotifications(uid);
+  await signOut(auth);
 }
 
 // Whether this phone currently has a token saved against the account.
@@ -146,10 +178,24 @@ export async function clearJobAlerts() {
   }
 }
 
-// Calls onOpen(data) when the person taps a notification.
+// Calls onOpen(data) when the person taps a notification while the app is
+// running or in the background.
 export function onNotificationOpened(onOpen) {
   const sub = Notifications.addNotificationResponseReceivedListener((response) => {
     onOpen(response?.notification?.request?.content?.data || {});
   });
   return () => sub.remove();
+}
+
+// The notification that launched the app from cold, if any. Cleared once
+// read, so the same tap is never acted on twice.
+export async function takeLaunchNotification() {
+  try {
+    const response = await Notifications.getLastNotificationResponseAsync();
+    if (!response) return null;
+    await Notifications.clearLastNotificationResponseAsync().catch(() => {});
+    return response?.notification?.request?.content?.data || null;
+  } catch (error) {
+    return null;
+  }
 }

@@ -16,7 +16,7 @@ import MapView, { Marker } from "react-native-maps";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import * as Location from "expo-location";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, getDocs, serverTimestamp } from "firebase/firestore";
 import { auth, db } from "../../../config/firebase";
 import {
   COLORS,
@@ -41,7 +41,7 @@ const PLACE_TYPES = {
 export default function MapPickerScreen() {
   const navigation = useNavigation();
   const route = useRoute();
-  const { placeType = "other" } = route.params || {};
+  const { placeType = "other", existingTypes } = route.params || {};
 
   const mapRef = useRef(null);
   const user = auth.currentUser;
@@ -59,16 +59,39 @@ export default function MapPickerScreen() {
   const [placeName, setPlaceName] = useState("");
   const [selectedType, setSelectedType] = useState(placeType);
 
-  const [region, setRegion] = useState({
+  // Only one Home and one Work. The list comes from the caller, or is read
+  // once when this screen is opened from somewhere else.
+  const [takenTypes, setTakenTypes] = useState(
+    Array.isArray(existingTypes) ? existingTypes.filter((t) => t !== placeType) : []
+  );
+
+  // Where the map is looking. The map owns its camera (initialRegion +
+  // animateToRegion); a controlled `region` snapped back on every re-render.
+  const START_REGION = {
     latitude: 51.5074,
     longitude: -0.1278,
     latitudeDelta: 0.0922,
     longitudeDelta: 0.0421,
-  });
+  };
+  const regionRef = useRef(START_REGION);
+  const moveTo = (latitude, longitude, delta = 0.005) => {
+    regionRef.current = { latitude, longitude, latitudeDelta: delta, longitudeDelta: delta };
+    mapRef.current?.animateToRegion(regionRef.current, 600);
+  };
 
   useEffect(() => {
     getCurrentLocation();
   }, []);
+
+  useEffect(() => {
+    if (Array.isArray(existingTypes) || !user) return;
+    getDocs(collection(db, "riders", user.uid, "savedPlaces"))
+      .then((snap) => {
+        const types = snap.docs.map((d) => d.data().type).filter((t) => t !== placeType);
+        setTakenTypes(types);
+      })
+      .catch(() => {});
+  }, [existingTypes, placeType, user]);
 
   const getCurrentLocation = async () => {
     setGettingGPS(true);
@@ -85,15 +108,7 @@ export default function MapPickerScreen() {
       });
 
       const { latitude, longitude } = location.coords;
-      const newRegion = {
-        latitude,
-        longitude,
-        latitudeDelta: 0.005,
-        longitudeDelta: 0.005,
-      };
-
-      setRegion(newRegion);
-      mapRef.current?.animateToRegion(newRegion, 1000);
+      moveTo(latitude, longitude);
       await reverseGeocode(latitude, longitude);
     } catch (error) {
       console.error("GPS error:", error);
@@ -102,6 +117,8 @@ export default function MapPickerScreen() {
     }
   };
 
+  // Geocoding gives an address, never a place name, so "other" only gets a
+  // suggested name from a search result (Places `displayName`).
   const reverseGeocode = async (lat, lng) => {
     setLoadingAddress(true);
     try {
@@ -121,11 +138,7 @@ export default function MapPickerScreen() {
         });
         // Auto-suggest name based on type
         if (!placeName) {
-          const suggestedNames = {
-            home: "Home",
-            work: "Work",
-            other: result.name || "Saved Place",
-          };
+          const suggestedNames = { home: "Home", work: "Work", other: "Saved place" };
           setPlaceName(suggestedNames[selectedType] || "");
         }
       }
@@ -188,15 +201,7 @@ export default function MapPickerScreen() {
 
       if (point) {
         const { latitude: lat, longitude: lng } = point;
-        const newRegion = {
-          latitude: lat,
-          longitude: lng,
-          latitudeDelta: 0.005,
-          longitudeDelta: 0.005,
-        };
-
-        setRegion(newRegion);
-        mapRef.current?.animateToRegion(newRegion, 1000);
+        moveTo(lat, lng);
 
         const formattedAddress = place.formattedAddress || prediction.description;
         setAddress(formattedAddress);
@@ -212,7 +217,7 @@ export default function MapPickerScreen() {
           const suggestedNames = {
             home: "Home",
             work: "Work",
-            other: place.displayName?.text || "Saved Place",
+            other: place.displayName?.text || "Saved place",
           };
           setPlaceName(suggestedNames[selectedType] || "");
         }
@@ -225,14 +230,6 @@ export default function MapPickerScreen() {
   const handleMapPress = (e) => {
     const { latitude, longitude } = e.nativeEvent.coordinate;
     reverseGeocode(latitude, longitude);
-
-    const newRegion = {
-      latitude,
-      longitude,
-      latitudeDelta: region.latitudeDelta,
-      longitudeDelta: region.longitudeDelta,
-    };
-    setRegion(newRegion);
   };
 
   const handleSave = async () => {
@@ -300,7 +297,8 @@ export default function MapPickerScreen() {
       <MapView
         ref={mapRef}
         style={styles.map}
-        region={region}
+        initialRegion={START_REGION}
+        onRegionChangeComplete={(r) => { regionRef.current = r; }}
         onPress={handleMapPress}
       >
         {selectedLocation && (
@@ -379,15 +377,19 @@ export default function MapPickerScreen() {
       <Sheet style={styles.sheet}>
         {/* Type Selector */}
         <View style={styles.typeSelector}>
-          {Object.entries(PLACE_TYPES).map(([key, config]) => (
-            <Chip
-              key={key}
-              label={config.label}
-              icon={config.icon}
-              active={selectedType === key}
-              onPress={() => setSelectedType(key)}
-            />
-          ))}
+          {Object.entries(PLACE_TYPES).map(([key, config]) => {
+            const taken = key !== "other" && takenTypes.includes(key);
+            return (
+              <Chip
+                key={key}
+                label={taken ? `${config.label} saved` : config.label}
+                icon={config.icon}
+                active={selectedType === key}
+                onPress={taken ? undefined : () => setSelectedType(key)}
+                style={taken ? { opacity: 0.45 } : null}
+              />
+            );
+          })}
         </View>
 
         {/* Name Input */}

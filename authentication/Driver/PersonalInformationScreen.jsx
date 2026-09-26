@@ -64,6 +64,8 @@ export default function PersonalInformationScreen({ navigation, setOnboardingSta
   // someone is still typing.
   const [tried, setTried] = useState(false);
   const resumed = useRef(false);
+  // Whether drivers/{uid} already existed when this step loaded.
+  const hasRecord = useRef(false);
 
   const driverId = auth.currentUser?.uid;
 
@@ -94,6 +96,7 @@ export default function PersonalInformationScreen({ navigation, setOnboardingSta
       try {
         const snap = await getDoc(doc(db, "drivers", driverId));
         if (!snap.exists()) return;
+        hasRecord.current = true;
 
         const data = snap.data();
         setFirstName(data.firstName || "");
@@ -171,11 +174,13 @@ export default function PersonalInformationScreen({ navigation, setOnboardingSta
           approved: false,
           status: "offline",
 
-          createdAt: new Date(),
+          // Only set once; every later save keeps the original.
+          ...(hasRecord.current ? {} : { createdAt: new Date() }),
           updatedAt: new Date(),
         },
         { merge: true }
       );
+      hasRecord.current = true;
 
       setOnboardingStatus("onboarding");
       navigation.navigate("IdentityVerification");

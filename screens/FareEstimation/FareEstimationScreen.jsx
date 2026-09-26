@@ -22,7 +22,6 @@ import {
   updateDoc,
   getDoc,
   onSnapshot,
-  getDocs,
   setDoc,
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
@@ -213,10 +212,13 @@ export default function FareEstimationScreen({ route }) {
       return;
     }
 
-    // Cash rides need no card; card rides need one on file for the hold.
+    // Cash rides need no card. Card rides need what the server actually
+    // charges with: a Stripe customer and a default card on the rider record,
+    // not merely a card in the list.
     if (paymentMethod === 'card') try {
-      const cardsSnap = await getDocs(collection(db, 'riders', currentUser.uid, 'cards'));
-      if (cardsSnap.empty) {
+      const riderSnap = await getDoc(doc(db, 'riders', currentUser.uid));
+      const rider = riderSnap.exists() ? riderSnap.data() : {};
+      if (!rider.stripeCustomerId || !rider.defaultPaymentMethodId) {
         Alert.alert(
           'Add a payment method',
           'You need a card on file before booking a ride.',
@@ -668,6 +670,9 @@ export default function FareEstimationScreen({ route }) {
               <Row label="Base fare" value={money(fare.baseFare)} />
               <Row label={`Distance · ${fare.distanceInMiles} mi`} value={money(fare.distanceFare)} />
               <Row label={`Time · ${Math.ceil(duration)} min`} value={money(fare.timeFare)} />
+              {fare.rideMultiplier !== 1 ? (
+                <Row label={`${selectedOption.label} pricing`} value={`× ${fare.rideMultiplier}`} />
+              ) : null}
               {fare.surgeMultiplier > 1 ? (
                 <Row label="Busy-time pricing" value={`× ${fare.surgeMultiplier}`} tone={COLORS.amber} />
               ) : null}

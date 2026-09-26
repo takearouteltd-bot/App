@@ -37,7 +37,7 @@ function whenLabel(date) {
 }
 
 // Trip statuses the kit's StatusPill does not know, in its own words.
-const STATUS_LABEL = {
+export const STATUS_LABEL = {
   completed: 'Completed',
   cancelled: 'Cancelled',
   canceled: 'Cancelled',
@@ -48,7 +48,7 @@ const STATUS_LABEL = {
 };
 
 // Map each trip status onto a pill tone the kit already styles.
-const STATUS_PILL = {
+export const STATUS_PILL = {
   completed: 'approved',
   cancelled: 'rejected',
   canceled: 'rejected',
@@ -79,7 +79,7 @@ function TripRow({ trip, role, onPress }) {
 
       <View style={styles.bottom}>
         <Text style={TYPE.small}>
-          {trip.route?.distanceKm ? `${trip.route.distanceKm} km` : ''}
+          {trip.route?.distanceKm ? `${Number(trip.route.distanceKm).toFixed(1)} km` : ''}
           {trip.route?.durationMinutes ? `, ${Math.ceil(trip.route.durationMinutes)} min` : ''}
         </Text>
         <Text style={[TYPE.figure, cancelled && { color: COLORS.muted, textDecorationLine: 'line-through' }]}>

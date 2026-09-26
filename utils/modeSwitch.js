@@ -29,6 +29,12 @@ import { auth, db, functions } from '../config/firebase';
 // "arrived" and "ongoing", and RideToDropoff ends it at "completed".
 export const ACTIVE_RIDE_STATUSES = ['searching', 'accepted', 'arrived', 'ongoing'];
 
+// Whether this ride is still assigned to the given driver. The server can put
+// a ride back to "searching" (card hold failed) or hand it to another driver.
+export function isRideMine(ride, uid) {
+  return !!ride && !!uid && ride.driverId === uid && ride.status !== 'searching';
+}
+
 const RECORD = { rider: 'riders', driver: 'drivers' };
 
 /** The mode you are not in. */

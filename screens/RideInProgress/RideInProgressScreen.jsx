@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   SafeAreaView,
-  Animated,
   TouchableOpacity,
 } from 'react-native';
 import { Alert } from '../../components/ui/alert';
@@ -47,7 +46,6 @@ export default function RideInProgressScreen() {
   const { rideId } = route.params;
 
   const mapRef = useRef(null);
-  const pulseAnim = useRef(new Animated.Value(1)).current;
 
   const [ride, setRide] = useState(null);
   const [driverData, setDriverData] = useState(null);
@@ -112,17 +110,6 @@ export default function RideInProgressScreen() {
       }
     });
   }, [ride?.driverId]);
-
-  useEffect(() => {
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.4, duration: 1000, useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
-      ])
-    );
-    pulse.start();
-    return () => pulse.stop();
-  }, [pulseAnim]);
 
   /* Same fix as the tracking screen: no more fitting only once the driver's
      location exists, which left the map at 0,0 off West Africa. */

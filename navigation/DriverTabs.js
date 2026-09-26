@@ -13,10 +13,17 @@ import DriverSubscriptionStack from "./Driver/DriverSubscriptionStack";
 import DriverProfileScreen from "../screens/Driver/DriverProfile/DriverProfileScreen";
 import DriverProfileStack from "./Driver/DriverProfileStack";
 import { TAB_BAR_OPTIONS, TabIcon } from '../components/ui/kit';
+import { getAuth } from 'firebase/auth';
+import { useDriverLocationPublisher } from '../utils/driverLocation';
 
 const Tab = createBottomTabNavigator();
 
 export default function DriverTabs() {
+    // One GPS watcher for the whole driver session, so the position keeps
+    // updating on the ride screens, not just on the home screen.
+    const driverId = getAuth().currentUser?.uid;
+    useDriverLocationPublisher(driverId, !!driverId);
+
     return (
       <Tab.Navigator
         screenOptions={TAB_BAR_OPTIONS}

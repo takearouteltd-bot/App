@@ -27,6 +27,7 @@ export default function RiderNavigator({ onboardingStatus, setOnboardingStatus }
           {(props) => (
             <RiderOnboardingStack
               {...props}
+              onboardingStatus={onboardingStatus}
               setRiderOnboardingStatus={setOnboardingStatus}
             />
           )}

@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ActivityIndicator, RefreshControl } from "react
 import { Alert } from "../../../components/ui/alert";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
-import { getAuth, signOut } from "firebase/auth";
+import { getAuth } from "firebase/auth";
 import {
   getFirestore,
   doc,
@@ -11,7 +11,7 @@ import {
   collection,
   query,
   where,
-  getDocs,
+  getCountFromServer,
   onSnapshot,
   setDoc,
 } from "firebase/firestore";
@@ -35,6 +35,7 @@ import SelectField from '../../../components/ui/SelectField';
 import { useCities } from '../../../utils/cities';
 import { openTerms, openPrivacy } from '../../../utils/legal';
 import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocuments';
+import { signOutEverywhere } from '../../../utils/notifications';
 
 export default function DriverProfileScreen() {
   const navigation = useNavigation();
@@ -98,22 +99,17 @@ export default function DriverProfileScreen() {
         setWallet({ availableBalance: 0, totalEarned: 0, pendingBalance: 0 });
       }
 
-      // Fetch rides and count completed trips (in-memory filter)
+      // Count completed trips on the server rather than downloading them all.
       const ridesQ = query(
         collection(db, "rides"),
-        where("driverId", "==", user.uid)
+        where("driverId", "==", user.uid),
+        where("status", "==", "completed")
       );
-      const ridesSnap = await getDocs(ridesQ);
-
-      let completedTrips = 0;
-      ridesSnap.forEach((doc) => {
-        const data = doc.data();
-        if (data.route?.status === "completed" || data.status === "completed") {
-          completedTrips += 1;
-        }
-      });
-      setTripCount(completedTrips);
+      const countSnap = await getCountFromServer(ridesQ);
+      setTripCount(countSnap.data().count || 0);
     } catch (error) {
+      // Offline, or the listener outliving sign-out: nothing to tell the driver.
+      if (error?.code === "unavailable" || error?.code === "permission-denied") return;
       console.error("Error fetching driver data:", error);
       Alert.alert("Error", "Failed to load profile data.");
     } finally {
@@ -140,7 +136,9 @@ export default function DriverProfileScreen() {
         onPress: async () => {
           setLoggingOut(true);
           try {
-            await signOut(auth);
+            // Drops this phone's push token first, so the next account on
+            // this phone does not receive this one's job alerts.
+            await signOutEverywhere();
           } catch (error) {
             Alert.alert("Error", "Failed to sign out. Please try again.");
             setLoggingOut(false);
@@ -165,7 +163,7 @@ export default function DriverProfileScreen() {
 
   const rating = driver?.rating ? Number(driver.rating).toFixed(1) : null;
   const documentAlerts = driver ? expiryAlertsFor(driver) : [];
-  const vehicle = [driver?.vehicleColor, driver?.makeModel].filter(Boolean).join(" ");
+  const vehicle = driver?.makeModel || "";
   const name = driver?.fullName || [driver?.firstName, driver?.lastName].filter(Boolean).join(" ") || "Driver";
 
   if (loading) {
@@ -204,7 +202,9 @@ export default function DriverProfileScreen() {
       />
 
       {/* Earnings: the one bold element. */}
-      <Card tone="dark" onPress={() => navigation.navigate("EarningsScreen")}>
+      {/* The screen lives in the Earnings tab's stack; naming the tab first
+          works before that tab has ever been opened. */}
+      <Card tone="dark" onPress={() => navigation.navigate("Earnings", { screen: "EarningsScreen" })}>
         <View style={styles.earnings}>
           <View style={{ flex: 1 }}>
             <Text style={styles.earningsLabel}>Available balance</Text>

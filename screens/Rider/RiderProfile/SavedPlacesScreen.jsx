@@ -72,7 +72,7 @@ export default function SavedPlacesScreen() {
         // Sort: home first, then work, then others
         placesList.sort((a, b) => {
           const order = { home: 0, work: 1, other: 2 };
-          return (order[a.type] || 2) - (order[b.type] || 2);
+          return (order[a.type] ?? 2) - (order[b.type] ?? 2);
         });
         setPlaces(placesList);
         setLoading(false);
@@ -87,7 +87,10 @@ export default function SavedPlacesScreen() {
   }, [user]);
 
   const handleAddPlace = (type) => {
-    navigation.navigate("MapPicker", { placeType: type });
+    navigation.navigate("MapPicker", {
+      placeType: type,
+      existingTypes: places.map((p) => p.type),
+    });
   };
 
   const openEditModal = (place) => {

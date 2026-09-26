@@ -411,7 +411,16 @@ export default function HomeScreen() {
               <TouchableOpacity
                 activeOpacity={0.85}
                 style={styles.activeRide}
-                onPress={() => navigation.navigate('RideTracking', { rideId: activeRide.id })}
+                onPress={() =>
+                  navigation.navigate(
+                    activeRide.status === 'searching'
+                      ? 'RideRequest'
+                      : activeRide.status === 'ongoing'
+                      ? 'RideInProgress'
+                      : 'RideTracking',
+                    { rideId: activeRide.id }
+                  )
+                }
               >
                 <View style={styles.activePulseWrap}>
                   <View style={styles.activePulse} />

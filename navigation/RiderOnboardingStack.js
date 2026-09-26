@@ -6,9 +6,12 @@ import EnableLocationScreen from "../authentication/Rider/EnableLocationScreen";
 
 const Stack = createNativeStackNavigator();
 
-export default function RiderOnboardingStack({ setRiderOnboardingStatus }) {
+export default function RiderOnboardingStack({ onboardingStatus, setRiderOnboardingStatus }) {
+// Someone who entered their name and then closed the app comes back to the
+// location step, not to an empty name field.
+const initialRouteName = onboardingStatus === "location" ? "EnableLocation" : "RiderProfile";
 return (
-<Stack.Navigator screenOptions={{ headerShown: false }}>
+<Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName={initialRouteName}>
   {/* Step 1: Profile */}
   <Stack.Screen name="RiderProfile">
     {(props) => (

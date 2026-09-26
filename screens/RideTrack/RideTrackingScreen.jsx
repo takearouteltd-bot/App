@@ -5,7 +5,6 @@ import {
   StyleSheet,
   SafeAreaView,
   TouchableOpacity,
-  Animated,
 } from 'react-native';
 import { Alert } from '../../components/ui/alert';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
@@ -56,7 +55,6 @@ export default function RideTrackingScreen() {
   const { rideId } = route.params;
 
   const mapRef = useRef(null);
-  const pulseAnim = useRef(new Animated.Value(1)).current;
 
   const [rideData, setRideData] = useState(null);
   const [driverData, setDriverData] = useState(null);
@@ -105,13 +103,16 @@ export default function RideTrackingScreen() {
         return;
       }
 
-      // Driver gave the job back: return to the searching screen.
+      // Back to searching: the driver gave the job back, or the card hold
+      // failed (RideRequest explains that one itself).
       if (data.status === 'searching') {
         hasNavigatedToProgress.current = true;
-        Alert.alert(
-          'Finding you another driver',
-          'Your driver had to cancel. We are looking for a new one now.'
-        );
+        if (data.paymentStatus !== 'auth_failed') {
+          Alert.alert(
+            'Finding you another driver',
+            'Your driver had to cancel. We are looking for a new one now.'
+          );
+        }
         navigation.replace('RideRequest', { rideId });
         return;
       }
@@ -140,17 +141,6 @@ export default function RideTrackingScreen() {
       stopDriverListener();
     };
   }, [rideId, navigation]);
-
-  useEffect(() => {
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.4, duration: 1000, useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 1000, useNativeDriver: true }),
-      ])
-    );
-    pulse.start();
-    return () => pulse.stop();
-  }, [pulseAnim]);
 
   /* The map used to have no starting region, and this bailed out until the
      driver's location arrived, leaving it at 0,0 — the sea off West Africa.

@@ -163,7 +163,7 @@ export default function ReportIssueScreen() {
 
         // Ride info (if applicable)
         rideId: trip?.id || null,
-        otherPartyId: reporterType === 'driver' ? trip?.riderId : trip?.driverId,
+        otherPartyId: (reporterType === 'driver' ? trip?.riderId : trip?.driverId) ?? null,
 
         // Report content
         category: selectedCategory.id,
@@ -171,7 +171,7 @@ export default function ReportIssueScreen() {
         categoryLabel: selectedCategory.label,
         subCategoryLabel: selectedSubCategory.label,
         description: description.trim(),
-        severity: selectedSubCategory.severity,
+        severity: selectedSubCategory.severity ?? null,
 
         // Status
         status: 'open',
@@ -191,8 +191,8 @@ export default function ReportIssueScreen() {
           ? {
               pickup: trip.pickupLocation?.address || '',
               dropoff: trip.dropoffLocation?.address || '',
-              fare: trip.fare?.total || 0,
-              completedAt: trip.completedAt || null,
+              fare: trip.fare?.total ?? 0,
+              completedAt: trip.completedAt ?? null,
             }
           : null,
       };

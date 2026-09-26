@@ -21,6 +21,7 @@ import {
 } from '../../../components/ui/kit';
 import ModeSwitchRow from '../../../components/ModeSwitchRow';
 import { openTerms, openPrivacy } from '../../../utils/legal';
+import { signOutEverywhere } from '../../../utils/notifications';
 
 export default function RiderProfileScreen() {
   const navigation = useNavigation();
@@ -124,7 +125,9 @@ const fetchRiderData = useCallback(async () => {
         text: "Sign Out",
         onPress: async () => {
           try {
-            await auth.signOut();
+            // Drops this phone's push token first, so the next account on
+            // this phone does not receive this one's alerts.
+            await signOutEverywhere();
             // Navigation to login should be handled by your auth state listener in App.js
           } catch (error) {
             Alert.alert("Error", "Failed to sign out. Please try again.");

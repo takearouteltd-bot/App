@@ -23,7 +23,6 @@ import {
   serverTimestamp,
   doc,
   updateDoc,
-  deleteDoc,
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import {
@@ -54,7 +53,6 @@ const ChatScreen = ({ route }) => {
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(true);
   const [showQuickMessages, setShowQuickMessages] = useState(false);
-  const [selectedImage, setSelectedImage] = useState(null);
   const flatListRef = useRef(null);
 
   const messagesRef = collection(db, 'rides', rideId, 'messages');
@@ -64,9 +62,11 @@ const ChatScreen = ({ route }) => {
     const q = query(messagesRef, orderBy('timestamp', 'asc'));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      // Estimate the server time for a message still on its way up, so it
+      // sorts at the bottom instead of jumping to the top until it lands.
       const msgs = snapshot.docs.map(doc => ({
         id: doc.id,
-        ...doc.data(),
+        ...doc.data({ serverTimestamps: 'estimate' }),
       }));
       setMessages(msgs);
       setLoading(false);
@@ -99,46 +99,32 @@ const ChatScreen = ({ route }) => {
     setInputText('');
     setShowQuickMessages(false);
 
-    await addDoc(messagesRef, {
-      senderId: currentUser.uid,
-      senderType: userType,
-      text,
-      timestamp: serverTimestamp(),
-      read: false,
-    });
+    try {
+      await addDoc(messagesRef, {
+        senderId: currentUser.uid,
+        senderType: userType,
+        text,
+        timestamp: serverTimestamp(),
+        read: false,
+      });
+    } catch (err) {
+      // Put the words back so nothing typed is lost.
+      if (!textOverride) setInputText(text);
+      Alert.alert('Message not sent', 'Check your connection and try again.');
+      return;
+    }
 
     setTimeout(() => {
       flatListRef.current?.scrollToEnd({ animated: true });
     }, 100);
   };
 
+  // Messages cannot be deleted (the rules keep the record for support).
   const handleLongPress = (message) => {
-    const isMyMessage = message.senderId === currentUser.uid;
-
-    const options = ['Report'];
-    if (isMyMessage) options.push('Delete');
-    options.push('Cancel');
-
-    Alert.alert(
-      'Message Options',
-      null,
-      options.map((option) => ({
-        text: option,
-        style: option === 'Cancel' ? 'cancel' : option === 'Delete' ? 'destructive' : 'default',
-        onPress: () => {
-          if (option === 'Delete') deleteMessage(message.id);
-          if (option === 'Report') reportMessage(message);
-        },
-      }))
-    );
-  };
-
-  const deleteMessage = async (messageId) => {
-    try {
-      await deleteDoc(doc(db, 'rides', rideId, 'messages', messageId));
-    } catch (err) {
-      Alert.alert('Error', 'Could not delete message');
-    }
+    Alert.alert('Message Options', null, [
+      { text: 'Report', onPress: () => reportMessage(message) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   };
 
   /* Writes a real report into the same `reports` collection the Report an
@@ -337,6 +323,7 @@ const ChatScreen = ({ route }) => {
               multiline
               maxLength={500}
               returnKeyType="send"
+              submitBehavior="submit"
               onSubmitEditing={() => sendMessage()}
             />
           </View>

@@ -55,12 +55,16 @@ export default function RideCompletedScreen() {
   const distance = ride.route?.distanceKm ? `${ride.route.distanceKm} km` : null;
   const duration = ride.route?.durationMinutes ? `${Math.ceil(ride.route.durationMinutes)} min` : null;
 
+  const show = (v) => money(Number(v) || 0, currency);
   const lines = [
-    ['Base fare', fare.baseFare],
-    ['Distance', fare.distanceFare],
-    ['Time', fare.timeFare],
-    fare.waitingCharge > 0 ? ['Waiting time', fare.waitingCharge] : null,
-  ].filter((l) => l && l[1] !== undefined);
+    fare.baseFare !== undefined ? ['Base fare', show(fare.baseFare)] : null,
+    fare.distanceFare !== undefined ? ['Distance', show(fare.distanceFare)] : null,
+    fare.timeFare !== undefined ? ['Time', show(fare.timeFare)] : null,
+    fare.surgeMultiplier > 1 ? ['Busy-time pricing', `×${fare.surgeMultiplier}`] : null,
+    fare.discountAmount > 0 ? ['Promo discount', `-${show(fare.discountAmount)}`] : null,
+    fare.vat !== undefined ? [`VAT (${fare.vatPercent || 20}%)`, show(fare.vat)] : null,
+    fare.waitingCharge > 0 ? ['Waiting time', show(fare.waitingCharge)] : null,
+  ].filter(Boolean);
 
   const riderName = rider?.fullName || rider?.firstName || 'the passenger';
 
@@ -102,11 +106,11 @@ export default function RideCompletedScreen() {
             {lines.map(([label, value]) => (
               <View key={label} style={styles.lineRow}>
                 <Text style={[TYPE.body, { color: COLORS.inkSoft }]}>{label}</Text>
-                <Text style={TYPE.callout}>{money(Number(value) || 0, currency)}</Text>
+                <Text style={TYPE.callout}>{value}</Text>
               </View>
             ))}
             <View style={[styles.lineRow, styles.totalRow]}>
-              <Text style={styles.totalLabel}>You earned</Text>
+              <Text style={styles.totalLabel}>Fare (incl. VAT)</Text>
               <Text style={styles.totalLabel}>{money(earned, currency)}</Text>
             </View>
           </Card>

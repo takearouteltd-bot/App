@@ -14,7 +14,7 @@ import {
   signInWithEmailAndPassword,
 } from "firebase/auth";
 import { auth, db } from "../../config/firebase";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import {
   COLORS,
   SPACE,
@@ -26,12 +26,7 @@ import {
   Segmented,
 } from '../../components/ui/kit';
 
-export default function EmailAuthScreen({
-  navigation,
-  setUserRole,
-  setRiderOnboardingStatus,
-  setDriverOnboardingStatus
-}) {
+export default function EmailAuthScreen({ navigation }) {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -43,7 +38,8 @@ export default function EmailAuthScreen({
   const isLogin = mode === "login";
 
   const handleSubmit = async () => {
-    if (!email || !password) {
+    const address = email.trim().toLowerCase();
+    if (!address || !password) {
       Alert.alert("Missing Fields", "Please fill in all required fields.");
       return;
     }
@@ -53,7 +49,9 @@ export default function EmailAuthScreen({
       return;
     }
 
-    if (password.length < 6) {
+    // Only a new password has to meet the rule; an existing one is simply
+    // right or wrong.
+    if (!isLogin && password.length < 6) {
       Alert.alert("Weak Password", "Password must be at least 6 characters.");
       return;
     }
@@ -62,84 +60,49 @@ export default function EmailAuthScreen({
 
     try {
       if (isLogin) {
-        // ✅ LOGIN
+        // ✅ LOGIN. App.js watches the account and routes an existing user
+        // to the right place; this screen only has to handle an account
+        // that has no record or no role yet.
         const userCredential = await signInWithEmailAndPassword(
           auth,
-          email,
+          address,
           password
         );
         const uid = userCredential.user.uid;
 
-        // 🔥 Get user role
-        const userDoc = await getDoc(doc(db, "users", uid));
+        const userRef = doc(db, "users", uid);
+        const userDoc = await getDoc(userRef);
 
         if (!userDoc.exists()) {
-          Alert.alert("Error", "User data not found.");
-          return;
-        }
-
-        const userData = userDoc.data();
-        const role = userData.role;
-
-        // 🚨 If role not selected yet
-        if (!role) {
+          // The record never got written (sign-up interrupted). Create it
+          // and carry on as a new account.
+          await setDoc(
+            userRef,
+            { email: address, role: null, createdAt: serverTimestamp() },
+            { merge: true }
+          );
           navigation.navigate("SelectUserType");
           return;
         }
 
-        setUserRole(role);
-
-
-
-        // ✅ RIDER FLOW
-        if (role === "rider") {
-          const riderDoc = await getDoc(doc(db, "riders", uid));
-
-          if (riderDoc.exists()) {
-            const data = riderDoc.data();
-
-            if (!data.fullName) {
-              setRiderOnboardingStatus("profile");
-            } else if (!data.locationEnabled) {
-              setRiderOnboardingStatus("location");
-            } else {
-              setRiderOnboardingStatus("complete");
-            }
-          } else {
-            setRiderOnboardingStatus("profile");
-          }
-        }
-
-        // ✅ DRIVER FLOW (basic for now)
-       if (role === "driver") {
-          const driverDoc = await getDoc(doc(db, "drivers", uid));
-
-          if (driverDoc.exists()) {
-            const data = driverDoc.data();
-
-            if (data.onboardingComplete) {
-              setDriverOnboardingStatus("complete");
-            } else {
-              setDriverOnboardingStatus("onboarding");
-            }
-          } else {
-            setDriverOnboardingStatus("onboarding");
-          }
+        // 🚨 If role not selected yet
+        if (!userDoc.data().role) {
+          navigation.navigate("SelectUserType");
         }
       } else {
         // ✅ SIGNUP
         const userCredential = await createUserWithEmailAndPassword(
           auth,
-          email,
+          address,
           password
         );
         const uid = userCredential.user.uid;
 
         // 🔥 Create user in USERS collection
         await setDoc(doc(db, "users", uid), {
-          email: email,
+          email: address,
           role: null,
-          createdAt: new Date(),
+          createdAt: serverTimestamp(),
         });
 
         // 👉 Go to role selection
@@ -152,7 +115,9 @@ export default function EmailAuthScreen({
 
       if (
         error.code === "auth/user-not-found" ||
-        error.code === "auth/wrong-password"
+        error.code === "auth/wrong-password" ||
+        error.code === "auth/invalid-credential" ||
+        error.code === "auth/invalid-login-credentials"
       ) {
         message = "Invalid email or password.";
       } else if (error.code === "auth/email-already-in-use") {

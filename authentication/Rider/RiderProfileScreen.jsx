@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 
 import { auth, db, storage } from "../../config/firebase";
-import { doc, updateDoc } from "firebase/firestore";
+import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { uriToBlob } from "../../helpers/uploadPicker";
 import {
@@ -29,15 +29,35 @@ import {
 } from '../../components/ui/kit';
 
 import { confirmLeaveSignup } from "../../utils/leaveSignup";
-const TOTAL_STEPS = 3;
+// Two steps: this one, then location.
+const TOTAL_STEPS = 2;
 
 export default function RiderProfileScreen({ navigation }) {
   const [currentStep] = useState(1);
   const [fullName, setFullName] = useState("");
   const [profileImage, setProfileImage] = useState(null);
+  // A photo already saved on the record, kept unless a new one uploads.
+  const [savedImageURL, setSavedImageURL] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const isFormValid = fullName.trim().length > 0;
+
+  // Someone coming back to this step sees what they already entered.
+  useEffect(() => {
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    getDoc(doc(db, "riders", uid))
+      .then((snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data();
+        if (data.fullName) setFullName((current) => current || data.fullName);
+        if (data.profileImage) {
+          setSavedImageURL(data.profileImage);
+          setProfileImage((current) => current || data.profileImage);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // 📸 Pick image
   const pickImage = async () => {
@@ -49,7 +69,7 @@ export default function RiderProfileScreen({ navigation }) {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       quality: 0.7,
       allowsEditing: true,
       aspect: [1, 1],
@@ -92,15 +112,23 @@ export default function RiderProfileScreen({ navigation }) {
 
       const uid = user.uid;
 
-      let profileImageURL = null;
+      let profileImageURL = savedImageURL;
 
-      if (profileImage) {
+      // A newly picked photo (a local file, not the saved URL).
+      if (profileImage && profileImage !== savedImageURL) {
         profileImageURL = await uploadImage(profileImage, uid);
+        if (!profileImageURL) {
+          profileImageURL = savedImageURL;
+          Alert.alert(
+            "Photo not uploaded",
+            "Your photo could not be uploaded, so we have carried on without it. You can add one later from your profile."
+          );
+        }
       }
 
       // 🔥 SAFE UPDATE (no overwrite)
       await updateDoc(doc(db, "riders", uid), {
-        fullName: fullName,
+        fullName: fullName.trim(),
         profileImage: profileImageURL || null,
         onBoardingStep: 'location'
       });

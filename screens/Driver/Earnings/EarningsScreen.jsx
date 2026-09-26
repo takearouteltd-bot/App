@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { getFirestore, doc, onSnapshot, collection, query, orderBy } from 'firebase/firestore';
+import { getFirestore, doc, onSnapshot, collection, query, orderBy, where } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { money, useAppConfig } from '../../../utils/appConfig';
 import {
@@ -19,6 +19,7 @@ import {
   StatRow,
   EmptyState,
   Loading,
+  Banner,
 } from '../../../components/ui/kit';
 
 export default function EarningsScreen() {
@@ -31,6 +32,9 @@ export default function EarningsScreen() {
   const [loading, setLoading] = useState(true);
   const [selectedFilter, setSelectedFilter] = useState('All');
   const [subscription, setSubscription] = useState(null);
+  const [loadError, setLoadError] = useState(false);
+  // Withdrawals requested but not yet approved by an admin.
+  const [awaitingPayout, setAwaitingPayout] = useState(0);
 
   const driverId = auth.currentUser ? auth.currentUser.uid : null;
   const appConfig = useAppConfig();
@@ -58,14 +62,38 @@ export default function EarningsScreen() {
       orderBy('createdAt', 'desc')
     );
 
-    const unsubscribeTx = onSnapshot(txQuery, (snapshot) => {
-      const txList = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-      setTransactions(txList);
-      setLoading(false);
-    });
+    const unsubscribeTx = onSnapshot(
+      txQuery,
+      (snapshot) => {
+        const txList = snapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        setTransactions(txList);
+        setLoadError(false);
+        setLoading(false);
+      },
+      (error) => {
+        console.log('Transactions load error:', error);
+        setLoadError(true);
+        setLoading(false);
+      }
+    );
+
+    const payoutsQuery = query(
+      collection(db, 'driverPayouts'),
+      where('driverId', '==', driverId),
+      where('status', '==', 'pending_admin')
+    );
+    const unsubscribePayouts = onSnapshot(
+      payoutsQuery,
+      (snapshot) => {
+        setAwaitingPayout(
+          snapshot.docs.reduce((sum, d) => sum + (Number(d.data().amount) || 0), 0)
+        );
+      },
+      () => setAwaitingPayout(0)
+    );
 
     const driverRef = doc(db, 'drivers', driverId);
 const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
@@ -77,6 +105,7 @@ const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
     return () => {
       unsubscribeWallet();
       unsubscribeTx();
+      unsubscribePayouts();
       unsubscribeSub();
     };
   }, [driverId]);
@@ -170,7 +199,7 @@ const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
           items={[
             { value: money(earnedThisWeek), label: 'This week' },
             { value: money(wallet ? wallet.totalEarned || 0 : 0), label: 'All time' },
-            { value: money(wallet ? wallet.pendingBalance || 0 : 0), label: 'Pending' },
+            { value: money(awaitingPayout), label: 'Awaiting payout' },
           ]}
         />
 
@@ -200,8 +229,18 @@ const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
       {subscription && subscription.status === 'suspended' ? (
         <Card tone="danger" style={{ marginTop: SPACE[3] }}>
           <Text style={[styles.txTitle, { color: COLORS.red }]}>Subscription suspended</Text>
-          <Text style={TYPE.small}>Complete trips to top up your wallet and it will restart automatically.</Text>
+          <Text style={TYPE.small}>Pay by card under Membership to start again, or complete card rides to top up your wallet.</Text>
         </Card>
+      ) : null}
+
+      {loadError ? (
+        <View style={{ marginTop: SPACE[3] }}>
+          <Banner
+            tone="warning"
+            title="Could not load your activity"
+            body="Check your connection and open this screen again."
+          />
+        </View>
       ) : null}
 
       <Section title="Activity">

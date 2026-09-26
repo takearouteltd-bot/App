@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -10,8 +10,9 @@ import {
 } from "react-native";
 import { Alert } from "../../../components/ui/alert";
 import { Ionicons } from "@expo/vector-icons";
-import { useNavigation, useRoute } from "@react-navigation/native";
+import { useNavigation, useRoute, useFocusEffect } from "@react-navigation/native";
 import * as ImagePicker from "expo-image-picker";
+import nativeAuth from "@react-native-firebase/auth";
 import {
   doc,
   getDoc,
@@ -70,14 +71,47 @@ export default function EditProfileScreen() {
   const [reauthPassword, setReauthPassword] = useState("");
   const [reauthCallback, setReauthCallback] = useState(null);
 
-  // Phone verification
+  // Phone verification: the code is checked by SMS before the number is saved.
   const [verificationId, setVerificationId] = useState(null);
+  const [pendingPhone, setPendingPhone] = useState(null); // E.164 number awaiting its code
   const [smsCode, setSmsCode] = useState("");
   const [phoneStep, setPhoneStep] = useState("input"); // 'input' | 'verify'
 
   useEffect(() => {
     loadUserData();
   }, []);
+
+  // A verified email change completes on Firebase's side when the link is
+  // clicked; the rider record only learns of it here.
+  const settlePendingEmail = useCallback(async () => {
+    if (!user) return;
+    try {
+      await user.reload();
+      const riderRef = doc(db, "riders", user.uid);
+      const snap = await getDoc(riderRef);
+      const pending = snap.exists() ? snap.data().pendingEmail : null;
+      if (pending && user.email && user.email.toLowerCase() === String(pending).toLowerCase()) {
+        await updateDoc(riderRef, {
+          email: user.email,
+          pendingEmail: null,
+          pendingEmailSentAt: null,
+          updatedAt: serverTimestamp(),
+        });
+        setEmailPending(false);
+        setPendingEmailAddress("");
+        setEmail(user.email);
+        setOriginalData((prev) => ({ ...prev, email: user.email }));
+      }
+    } catch (error) {
+      console.log("Pending email check:", error?.code || error?.message);
+    }
+  }, [user]);
+
+  useFocusEffect(
+    useCallback(() => {
+      settlePendingEmail();
+    }, [settlePendingEmail])
+  );
 
   const loadUserData = async () => {
     if (!user) {
@@ -128,7 +162,7 @@ export default function EditProfileScreen() {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ["images"],
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.7,
@@ -248,9 +282,18 @@ export default function EditProfileScreen() {
       console.error("Email change error:", error);
 
       if (error.code === "auth/requires-recent-login") {
-        // User needs to re-authenticate before changing email
-        setReauthCallback(() => () => initiateEmailChange());
-        setShowReauth(true);
+        // User needs to re-authenticate before changing email. Only an
+        // account with a password can do that here.
+        const hasPassword = (user.providerData || []).some((p) => p.providerId === "password");
+        if (hasPassword) {
+          setReauthCallback(() => () => initiateEmailChange());
+          setShowReauth(true);
+        } else {
+          Alert.alert(
+            "Please sign in again",
+            "For your security, changing your email needs a recent sign-in. Sign out, sign back in, then try again."
+          );
+        }
       } else if (error.code === "auth/email-already-in-use") {
         Alert.alert("Email In Use", "This email is already associated with another account.");
       } else if (error.code === "auth/invalid-email") {
@@ -321,56 +364,120 @@ export default function EditProfileScreen() {
 
   // ============================================
   // PHONE NUMBER FLOW
+  // Proves the number by SMS first. The native Firebase SDK sends and checks
+  // the code (the same handshake as phone sign-in); the number is only
+  // written to the rider record once the code is right.
   // ============================================
 
- const handleSavePhone = async () => {
-  if (!phoneNumber.trim() || phoneNumber.length < 10) {
-    Alert.alert("Error", "Please enter a valid phone number");
-    return;
-  }
-
-  // Normalize to UK E.164 format (+44)
-  let formattedPhone = phoneNumber.trim().replace(/\s/g, "");
-
-  if (!formattedPhone.startsWith("+")) {
-    if (formattedPhone.startsWith("07")) {
-      // UK mobile: 07XXX XXXXXX → +447XXX XXXXXX
-      formattedPhone = `+44${formattedPhone.substring(1)}`;
-    } else if (formattedPhone.startsWith("0")) {
-      // UK landline: 0XXXX XXX XXX → +44XXXX XXX XXX
-      formattedPhone = `+44${formattedPhone.substring(1)}`;
-    } else if (formattedPhone.startsWith("44")) {
-      formattedPhone = `+${formattedPhone}`;
-    } else {
-      // Assume UK mobile without leading 0
-      formattedPhone = `+44${formattedPhone}`;
+  const normaliseUkPhone = (raw) => {
+    let formatted = String(raw || "").trim().replace(/\s/g, "");
+    if (!formatted.startsWith("+")) {
+      if (formatted.startsWith("0")) {
+        formatted = `+44${formatted.substring(1)}`;
+      } else if (formatted.startsWith("44")) {
+        formatted = `+${formatted}`;
+      } else {
+        formatted = `+44${formatted}`;
+      }
     }
-  }
+    return /^\+44[1-9]\d{8,10}$/.test(formatted) ? formatted : null;
+  };
 
-  // Validate UK number format
-  if (!/^\+44[1-9]\d{8,10}$/.test(formattedPhone)) {
-    Alert.alert("Invalid Number", "Please enter a valid UK phone number.\nExamples:\n• 07123 456789\n• +44 7123 456789");
-    return;
-  }
+  const handleSavePhone = async () => {
+    if (!phoneNumber.trim() || phoneNumber.length < 10) {
+      Alert.alert("Error", "Please enter a valid phone number");
+      return;
+    }
+    const formattedPhone = normaliseUkPhone(phoneNumber);
+    if (!formattedPhone) {
+      Alert.alert("Invalid Number", "Please enter a valid UK phone number.\nExamples:\n• 07123 456789\n• +44 7123 456789");
+      return;
+    }
+    if (formattedPhone === originalData.phoneNumber) {
+      Alert.alert("Info", "This is already your phone number");
+      return;
+    }
 
-  setSavingField("phone");
-  try {
-    const riderRef = doc(db, "riders", user.uid);
-    await updateDoc(riderRef, {
-      phoneNumber: formattedPhone,
-      updatedAt: serverTimestamp(),
-    });
+    setSavingField("phone");
+    try {
+      const confirmation = await nativeAuth().signInWithPhoneNumber(formattedPhone, true);
+      setVerificationId(confirmation.verificationId);
+      setPendingPhone(formattedPhone);
+      setSmsCode("");
+      setPhoneStep("verify");
+    } catch (error) {
+      console.log("Phone code error:", error);
+      Alert.alert("Could not send code", error?.message || "Please try again.");
+    } finally {
+      setSavingField(null);
+    }
+  };
 
-    setPhoneNumber(formattedPhone);
-    setOriginalData((prev) => ({ ...prev, phoneNumber: formattedPhone }));
-    Alert.alert("Success", "Phone number saved");
-  } catch (error) {
-    console.error("Phone save error:", error);
-    Alert.alert("Error", "Failed to save phone number");
-  } finally {
-    setSavingField(null);
-  }
-};
+  const cancelPhoneVerify = async () => {
+    setPhoneStep("input");
+    setVerificationId(null);
+    setPendingPhone(null);
+    setSmsCode("");
+    try {
+      if (nativeAuth().currentUser) await nativeAuth().signOut();
+    } catch (e) {}
+  };
+
+  const handleVerifyPhone = async () => {
+    const code = smsCode.trim();
+    if (code.length !== 6) {
+      Alert.alert("Invalid Code", "Please enter the full 6-digit code.");
+      return;
+    }
+    if (!verificationId || !pendingPhone) {
+      Alert.alert("Session Expired", "Please request a new code.");
+      setPhoneStep("input");
+      return;
+    }
+
+    setSavingField("phone");
+    try {
+      const credential = nativeAuth.PhoneAuthProvider.credential(verificationId, code);
+      const result = await nativeAuth().signInWithCredential(credential);
+      const nativeUser = result.user;
+
+      // The native sign-in was only the proof of possession. Leave no trace:
+      // a brand-new native account is removed; an existing one belongs to
+      // someone else's login and must not be taken over.
+      if (nativeUser.uid !== user.uid) {
+        if (result.additionalUserInfo?.isNewUser) {
+          await nativeUser.delete().catch(() => nativeAuth().signOut());
+        } else {
+          await nativeAuth().signOut();
+          Alert.alert("Number in use", "That phone number is already linked to another TakeARoute account.");
+          setPhoneStep("input");
+          return;
+        }
+      } else {
+        await nativeAuth().signOut();
+      }
+
+      const riderRef = doc(db, "riders", user.uid);
+      await updateDoc(riderRef, {
+        phoneNumber: pendingPhone,
+        phoneVerifiedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
+      setPhoneNumber(pendingPhone);
+      setOriginalData((prev) => ({ ...prev, phoneNumber: pendingPhone }));
+      setPhoneStep("input");
+      setVerificationId(null);
+      setPendingPhone(null);
+      setSmsCode("");
+      Alert.alert("Success", "Phone number verified and saved");
+    } catch (error) {
+      console.log("Phone verify error:", error);
+      Alert.alert("Verification Failed", error?.message || "That code isn't right. Check the SMS and try again.");
+    } finally {
+      setSavingField(null);
+    }
+  };
 
 
   if (loading) {
@@ -506,10 +613,46 @@ export default function EditProfileScreen() {
           <Banner
             tone="success"
             icon="shield-checkmark-outline"
-            body="For your security, email changes require verification. Phone changes use SMS confirmation. Your data is encrypted and never shared."
+            body="For your security, email changes are confirmed by a link to the new address and phone changes by an SMS code. Your data is encrypted and never shared."
           />
         </View>
       </Screen>
+
+      {/* SMS code sheet */}
+      {phoneStep === "verify" && (
+        <View style={styles.modalOverlay}>
+          <View style={styles.sheet}>
+            <View style={styles.grabber} />
+            <View style={styles.modalIcon}>
+              <Ionicons name="chatbubble-ellipses" size={28} color={COLORS.midnight} />
+            </View>
+            <Text style={[TYPE.heading, { textAlign: "center" }]}>Enter the code</Text>
+            <Text style={styles.modalSubtitle}>
+              We sent a 6-digit code by SMS to {pendingPhone}. Enter it to confirm this is your number.
+            </Text>
+            <Field
+              value={smsCode}
+              onChangeText={(t) => setSmsCode(t.replace(/\D/g, "").slice(0, 6))}
+              placeholder="6-digit code"
+              keyboardType="number-pad"
+              textContentType="oneTimeCode"
+              autoComplete="sms-otp"
+              maxLength={6}
+              autoFocus
+            />
+            <View style={styles.modalActions}>
+              <Button title="Cancel" variant="secondary" style={{ flex: 1 }} onPress={cancelPhoneVerify} />
+              <Button
+                title="Confirm"
+                style={{ flex: 1 }}
+                onPress={handleVerifyPhone}
+                loading={savingField === "phone"}
+                disabled={savingField === "phone"}
+              />
+            </View>
+          </View>
+        </View>
+      )}
 
       {/* Re-auth sheet */}
       {showReauth && (

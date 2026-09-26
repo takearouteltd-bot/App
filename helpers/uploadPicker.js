@@ -14,7 +14,7 @@ export async function captureSelfie() {
     }
 
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       cameraType: ImagePicker.CameraType.front,
       allowsEditing: false,
       quality: 0.7,
@@ -51,7 +51,7 @@ export async function selectUploadAsset() {
             }
 
             const result = await ImagePicker.launchImageLibraryAsync({
-              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              mediaTypes: ['images'],
               quality: 0.7,
             });
 
@@ -65,6 +65,7 @@ export async function selectUploadAsset() {
               uri: asset.uri,
               mimeType: asset.mimeType || "image/jpeg",
               name: asset.fileName || "upload.jpg",
+              size: asset.fileSize || null,
             });
           },
         },
@@ -83,10 +84,13 @@ export async function selectUploadAsset() {
             }
 
             const asset = result.assets[0];
+            // The Files picker sometimes gives no type; work it out from
+            // the name so Storage does not refuse an "octet-stream".
             resolve({
               uri: asset.uri,
-              mimeType: asset.mimeType || "application/octet-stream",
+              mimeType: mimeTypeFor(asset.name, asset.mimeType),
               name: asset.name || "upload",
+              size: asset.size || null,
             });
           },
         },
@@ -117,6 +121,47 @@ export function inferUploadExtension(name, mimeType) {
   return "jpg";
 }
 
+// Storage only accepts images and PDFs under 10 MB (storage rules), so a bad
+// file is refused here with a reason instead of a generic upload failure.
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+const MIME_BY_EXTENSION = {
+  pdf: "application/pdf",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  heic: "image/heic",
+  heif: "image/heif",
+  webp: "image/webp",
+  gif: "image/gif",
+};
+
+// The type to send with an upload: the picker's, or one worked out from the
+// file name when the picker gave nothing useful.
+export function mimeTypeFor(name, mimeType) {
+  const known = mimeType && mimeType !== "application/octet-stream" ? mimeType : null;
+  if (known) return known;
+  const extension = inferUploadExtension(name, null);
+  return MIME_BY_EXTENSION[extension] || "application/octet-stream";
+}
+
+export function isUploadTypeAllowed(mimeType) {
+  return mimeType === "application/pdf" || /^image\//.test(mimeType || "");
+}
+
+// Throws a message the screen can show when the file cannot be uploaded.
+export function assertUploadable(asset, blobSize) {
+  const type = mimeTypeFor(asset.name, asset.mimeType);
+  if (!isUploadTypeAllowed(type)) {
+    throw new Error("Only photos and PDF files can be uploaded.");
+  }
+  const size = asset.size || blobSize || 0;
+  if (size > MAX_UPLOAD_BYTES) {
+    throw new Error("That file is too large. Please choose one under 10 MB.");
+  }
+  return type;
+}
+
 export function isPdfUpload(value) {
   if (!value) return false;
   return value.toLowerCase().includes(".pdf");
@@ -140,9 +185,14 @@ export function uriToBlob(uri) {
 // download URL. Driver sign-up and the documents screen share this, so every
 // upload goes through the Android-safe uriToBlob and sends a content type.
 export async function uploadDriverFile(driverId, name, asset) {
+  // Refuse before reading when the picker told us the size; otherwise check
+  // the blob, which is still before any bytes go up.
+  const contentType = assertUploadable(asset);
   const blob = await uriToBlob(asset.uri);
-  const extension = inferUploadExtension(asset.name, asset.mimeType);
+  assertUploadable(asset, blob.size);
+  const extension = inferUploadExtension(asset.name, contentType);
   const fileRef = ref(storage, `drivers/${driverId}/${name}.${extension}`);
-  await uploadBytes(fileRef, blob, asset.mimeType ? { contentType: asset.mimeType } : undefined);
+  await uploadBytes(fileRef, blob, { contentType });
+  blob.close?.();
   return getDownloadURL(fileRef);
 }

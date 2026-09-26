@@ -161,6 +161,12 @@ export default function RideRequestScreen() {
       // Leave once. Cancelling used to call goBack twice, popping an extra screen.
       if ((data.status === 'cancelled' || data.status === 'canceled') && !hasLeftScreen.current) {
         hasLeftScreen.current = true;
+        if (data.cancelledBy === 'timeout') {
+          // The server gave up after nobody took the job.
+          Alert.alert('No drivers found', 'No drivers were found. Please try again.');
+          navigation.popToTop();
+          return;
+        }
         if (!cancelledByMe.current) {
           Alert.alert('Ride cancelled', 'This ride has been cancelled.');
         }
@@ -295,6 +301,27 @@ export default function RideRequestScreen() {
               {rideData.femaleDriverOnly ? 'Finding a female driver' : 'Finding your driver'}
             </Text>
             <Text style={styles.searchClock}>Looking for {clock}</Text>
+
+            {/* A driver accepted but the card hold failed: the server put the
+                ride back in the queue; a working card is needed for the next
+                driver. */}
+            {rideData.paymentStatus === 'auth_failed' ? (
+              <View style={styles.widen}>
+                <Banner
+                  tone="danger"
+                  icon="card-outline"
+                  title="Your card was declined"
+                  body="Add a card to keep searching."
+                  action={
+                    <Button
+                      title="Add a card"
+                      size="small"
+                      onPress={() => navigation.navigate('AddPayment', { screen: 'AddPaymentMethod' })}
+                    />
+                  }
+                />
+              </View>
+            ) : null}
 
             {askToWiden ? (
               <View style={styles.widen}>

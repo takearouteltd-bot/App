@@ -8,9 +8,10 @@ import { arrayRemove, arrayUnion, doc, getDoc, onSnapshot, setDoc, deleteField }
 import { auth, db } from '../../../config/firebase';
 import { currencySymbol } from '../../../utils/appConfig';
 import EmailReceiptButton from '../../../components/EmailReceiptButton';
+import { STATUS_LABEL, STATUS_PILL } from '../../../components/trips/TripsList';
 import {
   COLORS, TYPE, SPACE, RADIUS, Screen, ScreenHeader, Card, Button, Avatar, StatusPill, StatRow,
-  RouteLine,
+  RouteLine, formatWhen,
 } from '../../../components/ui/kit';
 
 export default function RiderTripDetailsScreen() {
@@ -36,7 +37,7 @@ export default function RiderTripDetailsScreen() {
 
   const toggleBlockDriver = () => {
     if (!riderId || !trip.driverId) return;
-    const name = driver?.fullName || driver?.firstName || 'this driver';
+    const name = driver?.name || 'this driver';
     if (isBlocked) {
       setDoc(
         doc(db, 'riders', riderId),
@@ -60,7 +61,7 @@ export default function RiderTripDetailsScreen() {
                 blockedDrivers: arrayUnion(trip.driverId),
                 blockedDriverInfo: {
                   [trip.driverId]: {
-                    name: driver?.fullName || driver?.firstName || 'Driver',
+                    name: driver?.name || 'Driver',
                     registration: driver?.registrationNumber || '',
                     at: new Date().toISOString(),
                   },
@@ -122,15 +123,15 @@ export default function RiderTripDetailsScreen() {
     fetchDriver();
   }, [trip.driverId]);
 
-  // ✅ Use route.status (same as the card), not trip.status
-  const status = trip.route?.status?.toUpperCase() || 'PENDING';
-  const isCompleted = status === 'COMPLETED';
-  const isCancelled = status === 'CANCELLED';
-  // The pill's colour: green for done, red for cancelled, amber otherwise.
-  const pillStatus = isCompleted ? 'approved' : isCancelled ? 'rejected' : 'pending';
+  // The ride's own status; route.status is only ever "calculated".
+  const status = trip.status || 'searching';
+  const isCompleted = status === 'completed';
+  const pillStatus = STATUS_PILL[status] || 'pending';
+  const statusLabel = STATUS_LABEL[status] || status;
 
-  // ✅ Fare is an object — extract the total
-  const fareTotal = trip.fare?.total ?? 0;
+  // Fare is an object; finalTotal (with waiting time) once the trip is paid.
+  const fareTotal = Number(trip.fare?.finalTotal ?? trip.fare?.total ?? 0);
+  const paymentMethod = trip.paymentMethod || trip.payment?.method || 'card';
   const currency = currencySymbol(trip.fare?.currency);
 
   // ✅ Pickup & dropoff from nested location objects
@@ -142,38 +143,25 @@ export default function RiderTripDetailsScreen() {
     typeof dropoff.latitude === 'number' &&
     typeof dropoff.longitude === 'number';
 
-  // ✅ Route stats from nested route object
+  // Route stats from the nested route object, in km like the rest of the app.
   const routeInfo = trip.route || {};
-  const distanceMiles = routeInfo.distanceMiles ?? (routeInfo.distanceKm ? routeInfo.distanceKm * 0.621371 : 0);
+  const distanceKm = Number(routeInfo.distanceKm) || 0;
   const durationMinutes = routeInfo.durationMinutes ?? 0;
-
-  // ✅ Format timestamps
-  const formatDateTime = (timestamp) => {
-    if (!timestamp) return 'N/A';
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-    return date.toLocaleString('en-US', {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-    });
-  };
 
   const fareRows = [
     ['Base Fare', trip.fare?.baseFare?.toFixed(2) || '0.00'],
     ['Distance Fare', trip.fare?.distanceFare?.toFixed(2) || '0.00'],
     ['Time Fare', trip.fare?.timeFare?.toFixed(2) || '0.00'],
     trip.fare?.vat > 0 ? ['VAT', trip.fare?.vat?.toFixed(2)] : null,
+    trip.fare?.waitingCharge > 0 ? ['Waiting time', trip.fare.waitingCharge.toFixed(2)] : null,
   ].filter(Boolean);
 
   return (
     <Screen>
-      <ScreenHeader title="Trip Details" subtitle={formatDateTime(trip.timestamps?.createdAt)} />
+      <ScreenHeader title="Trip Details" subtitle={formatWhen(trip.timestamps?.createdAt) || 'Date unknown'} />
 
       <View style={styles.statusRow}>
-        <StatusPill status={pillStatus} label={status} dot />
+        <StatusPill status={pillStatus} label={statusLabel} dot />
       </View>
 
       {/* Map. Trips without saved coordinates simply have no map, rather
@@ -259,7 +247,8 @@ export default function RiderTripDetailsScreen() {
         <StatRow
           items={[
             { value: durationMinutes ? `${Math.ceil(durationMinutes)} min` : 'N/A', label: 'Duration' },
-            { value: distanceMiles ? `${distanceMiles.toFixed(1)} mi` : 'N/A', label: 'Distance' },
+            { value: distanceKm ? `${distanceKm.toFixed(1)} km` : 'N/A', label: 'Distance' },
+            { value: paymentMethod === 'cash' ? 'Cash' : 'Card', label: 'Paid by' },
           ]}
         />
       </Card>

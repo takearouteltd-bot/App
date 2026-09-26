@@ -58,7 +58,11 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
     try {
       const pay = httpsCallable(functions, 'payDriverMembership');
       const res = await pay({ cardOnly: true });
-      Alert.alert('Membership paid', `${money(res.data?.amount ?? MONTHLY_PRICE)} was charged to your card.`);
+      if (res.data?.reason === 'nothing_due') {
+        Alert.alert('Nothing to pay', 'Nothing to pay right now.');
+      } else {
+        Alert.alert('Membership paid', `${money(res.data?.amount ?? MONTHLY_PRICE)} was charged to your card.`);
+      }
       await loadSubscription();
     } catch (error) {
       Alert.alert('Payment did not go through', error.message || 'Please try again.');
@@ -109,7 +113,7 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
           ? data.method === 'card'
             ? `${money(MONTHLY_PRICE)} was charged to your card. You are all set.`
             : `${money(MONTHLY_PRICE)} has been taken from your wallet. You are all set.`
-          : `${money(MONTHLY_PRICE)} will come out of your earnings as soon as your wallet reaches that amount.`
+          : `${money(MONTHLY_PRICE)} is owed. Add a card under Membership to pay it, or it is taken from your wallet once card rides have topped it up.`
       );
 
       // Staying put and re-reading, rather than replacing to a screen in
@@ -173,28 +177,11 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
           <Text style={styles.heroSub}>unpaid</Text>
         </Card>
 
-        {status === 'past_due' ? (
-          <View style={styles.gap}>
-            <Banner
-              tone="warning"
-              title="Payment due"
-              body={`We could not take this month's ${money(MONTHLY_PRICE)} from your wallet or card. Pay by ${formatDate(subscription.graceUntil)} to keep driving.`}
-              action={
-                <Button
-                  title={card ? 'Pay by card now' : 'Add a card'}
-                  size="small"
-                  onPress={payByCard}
-                  loading={paying}
-                />
-              }
-            />
-          </View>
-        ) : null}
         <View style={styles.gap}>
           <Banner
             tone="danger"
             title="Your account is paused"
-            body={`Your membership of ${money(Number(subscription.debtAmount) || MONTHLY_PRICE)} is unpaid, so you cannot go online. Pay now to start driving again straight away, or it is taken automatically once your wallet can cover it.`}
+            body={`Your membership of ${money(Number(subscription.debtAmount) || MONTHLY_PRICE)} is unpaid, so you cannot go online. Pay by card now to start driving again straight away. Card rides you complete also top up your wallet; cash rides do not.`}
           />
         </View>
         <Button
@@ -232,12 +219,38 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
           </View>
         </Card>
 
-        {debtAmount > 0 ? (
+        {status === 'past_due' ? (
+          <View style={styles.gap}>
+            <Banner
+              tone="warning"
+              title="Payment due"
+              body={`We could not take this month's ${money(debtAmount || MONTHLY_PRICE)} from your wallet or card.${
+                subscription.graceUntil ? ` Pay by ${formatDate(subscription.graceUntil)} to keep driving.` : ' Pay now to keep driving.'
+              }`}
+              action={
+                <Button
+                  title={card ? 'Pay by card now' : 'Add a card to pay'}
+                  size="small"
+                  onPress={payByCard}
+                  loading={paying}
+                />
+              }
+            />
+          </View>
+        ) : debtAmount > 0 ? (
           <View style={styles.gap}>
             <Banner
               tone="warning"
               title={`${money(debtAmount)} outstanding`}
-              body="This comes out automatically as soon as your wallet reaches that amount."
+              body="Card rides you complete top up your wallet and this is taken from it. Otherwise it is charged to your saved card."
+              action={
+                <Button
+                  title={card ? 'Pay by card now' : 'Add a card to pay'}
+                  size="small"
+                  onPress={payByCard}
+                  loading={paying}
+                />
+              }
             />
           </View>
         ) : null}
@@ -264,7 +277,7 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
         <View style={styles.gap}>
           <Banner
             tone="info"
-            body="Your membership renews every month from your wallet. If there is not enough in it, we charge the card below. If neither works, you have a few days to pay before your account is paused."
+            body="Your membership renews every month from your wallet, which card rides top up (cash fares stay with you and do not count). If there is not enough in it, we charge the card below. If neither works, you have a few days to pay before your account is paused."
           />
         </View>
         {cardRow}
@@ -314,7 +327,7 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
       <View style={styles.gap}>
         <Banner
           tone="info"
-          body={`If your wallet already holds ${money(MONTHLY_PRICE)} we take it now. If not, it comes out automatically once you have earned enough.`}
+          body={`If your wallet already holds ${money(MONTHLY_PRICE)} we take it now. If not, we charge your saved card. Card rides you complete top up your wallet for next month; cash fares stay with you and do not count.`}
         />
       </View>
 

@@ -39,7 +39,17 @@ export default function ReportDetailScreen({ navigation, route }) {
 
   useEffect(() => {
     if (!reportId) return undefined;
-    const unsubReport = onSnapshot(doc(db, 'reports', reportId), (snap) => setReport(snap.exists() ? { id: snap.id, ...snap.data() } : {}));
+    const unsubReport = onSnapshot(doc(db, 'reports', reportId), (snap) => {
+      const data = snap.exists() ? { id: snap.id, ...snap.data() } : {};
+      setReport(data);
+      // Seen: clears the "new reply" marker in My reports. Written whenever a
+      // support reply is newer than the last time it was marked.
+      const repliedAt = data.lastReplyAt?.toMillis ? data.lastReplyAt.toMillis() : 0;
+      const seenAt = data.reporterSeenAt?.toMillis ? data.reporterSeenAt.toMillis() : 0;
+      if (data.lastReplyBy === 'admin' && (!seenAt || repliedAt > seenAt)) {
+        updateDoc(doc(db, 'reports', reportId), { reporterSeenAt: serverTimestamp() }).catch(() => {});
+      }
+    });
     const unsubMessages = onSnapshot(
       query(collection(db, 'reports', reportId, 'messages'), orderBy('createdAt', 'asc')),
       (snap) => setMessages(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),

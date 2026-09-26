@@ -9,7 +9,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
 import { COLORS, TYPE, SPACE, SHADOW, ListRow, Button, Sheet } from './ui/kit';
 
-import { AlertHost } from './ui/alert';
+import { Alert, AlertHost } from './ui/alert';
 export default function SafetyButton({ role = 'rider', rideId, style }) {
   const [contact, setContact] = useState(null);
   const [open, setOpen] = useState(false);
@@ -24,7 +24,9 @@ export default function SafetyButton({ role = 'rider', rideId, style }) {
 
   const call = (number) => {
     setOpen(false);
-    Linking.openURL(`tel:${number}`);
+    Linking.openURL(`tel:${number}`).catch(() =>
+      Alert.alert('Could not open the dialler', `Dial ${number} from your phone.`)
+    );
   };
 
   return (

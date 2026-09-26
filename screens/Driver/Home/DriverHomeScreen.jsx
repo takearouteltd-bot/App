@@ -10,10 +10,10 @@ import {
   Dimensions,
   AppState,
   Easing,
+  Linking,
 } from 'react-native';
 import { Alert } from '../../../components/ui/alert';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
-import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import {
@@ -28,6 +28,7 @@ import {
   runTransaction,
   serverTimestamp,
 } from 'firebase/firestore';
+import { useDriverPosition, requestDriverPosition } from '../../../utils/driverLocation';
 import { db } from '../../../config/firebase';
 import { getAuth } from 'firebase/auth';
 import { useAppConfig, currencySymbol } from '../../../utils/appConfig';
@@ -38,7 +39,7 @@ import { biddingEnabled, counterSteps, offerSeconds, sendCounterOffer } from '..
 import { clearJobAlerts } from '../../../utils/notifications';
 import {
   COLORS, TYPE, SPACE, RADIUS, SHADOW,
-  Button, Chip, Banner, RouteLine, Loading, Sheet,
+  Button, Chip, Banner, RouteLine, Loading, Sheet, EmptyState,
 } from '../../../components/ui/kit';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -65,7 +66,9 @@ export default function DriverHomeScreen() {
 
   const navigation = useNavigation();
 
-  const [location, setLocation] = useState(null);
+  // Position from the session-wide watcher (utils/driverLocation.js), which
+  // keeps running on the ride screens after this one is replaced.
+  const { coords: location, status: locationStatus } = useDriverPosition();
   const appConfig = useAppConfig();
   const { dispatch: dispatchConfig, drivers: driverConfig } = appConfig;
   const maxShiftHours = driverConfig.maxShiftHours; // 0 means unlimited
@@ -89,10 +92,11 @@ export default function DriverHomeScreen() {
   const [sentOffers, setSentOffers] = useState({});
   const [sending, setSending] = useState(false);
   const takenOver = useRef(false);
-  const [loading, setLoading] = useState(true);
 
   const [rideRequests, setRideRequests] = useState([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
+  // The offer being shown, by ride id, so a change to some other searching
+  // ride does not throw the driver back to the first card.
+  const [currentRideId, setCurrentRideId] = useState(null);
   const [timer, setTimer] = useState(15);
   const [isAccepting, setIsAccepting] = useState(false);
 
@@ -119,31 +123,6 @@ export default function DriverHomeScreen() {
   const driverId = auth.currentUser?.uid;
 
   const [checkingRide, setCheckingRide] = useState(true);
-
-  const updateDriverLocation = async (id, coords) => {
-    try {
-      await setDoc(
-        doc(db, 'drivers', id),
-        {
-          location: { latitude: coords.latitude, longitude: coords.longitude },
-          // Shown on the dashboard's Live drivers page. The phone reports speed
-          // in m/s, or a negative number when it doesn't know.
-          speedKph:
-            typeof coords.speed === 'number' && coords.speed >= 0
-              ? Math.round(coords.speed * 3.6)
-              : null,
-          heading:
-            typeof coords.heading === 'number' && coords.heading >= 0
-              ? Math.round(coords.heading)
-              : null,
-          lastUpdated: serverTimestamp(),
-        },
-        { merge: true }
-      );
-    } catch (error) {
-      console.log('Location update error:', error);
-    }
-  };
 
   /* ================= DRIVER, WALLET, TODAY ================= */
   useEffect(() => {
@@ -221,73 +200,6 @@ export default function DriverHomeScreen() {
     };
   }, [driverId]);
 
-  /* ================= LOCATION ================= */
-  useEffect(() => {
-    let subscription;
-
-    (async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== 'granted') {
-        setLoading(false);
-        return;
-      }
-
-      const loc = await Location.getCurrentPositionAsync({});
-      setLocation(loc.coords);
-      setLoading(false);
-      if (driverId) await updateDriverLocation(driverId, loc.coords);
-
-      subscription = await Location.watchPositionAsync(
-        { accuracy: Location.Accuracy.High, timeInterval: 4000 },
-        async (newLoc) => {
-          setLocation(newLoc.coords);
-          if (driverId) await updateDriverLocation(driverId, newLoc.coords);
-        }
-      );
-    })();
-
-    return () => {
-      if (subscription) subscription.remove();
-    };
-  }, [driverId]);
-
-  /* ================= PUBLIC POSITION =================
-     Passengers see nearby cars on their home map. They must never read the
-     driver record itself (name, phone, documents), so an online driver also
-     publishes a bare position to driverLocations/{uid}: coordinates, heading
-     and whether they are free. It is taken down whenever they go offline or
-     start a trip, whatever caused it, because it follows the same status the
-     rest of this screen does. */
-  const publishedFree = useRef(null);
-  const isFree = isOnline && !onRide;
-  useEffect(() => {
-    if (!driverId) return;
-    const ref = doc(db, 'driverLocations', driverId);
-
-    if (isFree && location && Number.isFinite(location.latitude)) {
-      publishedFree.current = true;
-      setDoc(
-        ref,
-        {
-          latitude: location.latitude,
-          longitude: location.longitude,
-          heading:
-            typeof location.heading === 'number' && location.heading >= 0
-              ? Math.round(location.heading)
-              : null,
-          vehicleType: vehicleType || null,
-          online: true,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      ).catch(() => {});
-    } else if (publishedFree.current !== false) {
-      // Only once per change to offline, not on every GPS tick.
-      publishedFree.current = false;
-      setDoc(ref, { online: false, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
-    }
-  }, [driverId, isFree, location, vehicleType]);
-
   /* ================= ONLINE / OFFLINE ================= */
   const toggleOnlineStatus = async () => {
     if (!driverId) return;
@@ -310,6 +222,19 @@ export default function DriverHomeScreen() {
       Alert.alert(
         'Application under review',
         'You can go online as soon as your application has been approved.'
+      );
+      return;
+    }
+
+    // Driving needs an active membership; nothing else starts it.
+    if (newStatus === 'online' && (!membershipStatus || membershipStatus === 'cancelled')) {
+      Alert.alert(
+        'Activate your membership first',
+        'You need an active membership to go online and take jobs.',
+        [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Activate', onPress: () => navigation.navigate('Membership') },
+        ]
       );
       return;
     }
@@ -428,22 +353,36 @@ export default function DriverHomeScreen() {
 
       rides.sort((a, b) => a.pickupDistanceKm - b.pickupDistanceKm);
       setRideRequests(rides);
-      setCurrentIndex(0);
-      if (rides.length) animateCard();
+      // Keep the card the driver is reading; only start again when it is gone.
+      setCurrentRideId((current) => {
+        if (current && rides.some((r) => r.id === current)) return current;
+        const next = rides[0]?.id || null;
+        if (next) animateCard();
+        return next;
+      });
     });
   }, [isOnline, location, searchRadiusKm, driverId, vehicleType, workingCityId, femaleVerified, animateCard]);
 
+  // Going offline takes the offer card down with it.
+  useEffect(() => {
+    if (isOnline) return;
+    setRideRequests([]);
+    setCurrentRideId(null);
+  }, [isOnline]);
+
   // Move to the next offer, or clear the queue when there are none left.
   const advanceQueue = useCallback(() => {
-    setCurrentIndex((index) => {
-      if (index < rideRequests.length - 1) {
+    setCurrentRideId((current) => {
+      const index = rideRequests.findIndex((r) => r.id === current);
+      const next = rideRequests[index + 1];
+      if (next) {
         animateCard();
-        return index + 1;
+        return next.id;
       }
       setRideRequests([]);
-      return 0;
+      return null;
     });
-  }, [rideRequests.length, animateCard]);
+  }, [rideRequests, animateCard]);
 
   useEffect(() => {
     if (isOnline) {
@@ -461,10 +400,10 @@ export default function DriverHomeScreen() {
 
   /* The offer countdown. When it runs out the job moves on, rather than
      sitting at "1s" forever as it used to. */
+  const waitingOnCounter = !!(currentRideId && sentOffers[currentRideId]);
   useEffect(() => {
-    if (!rideRequests.length) return undefined;
+    if (!currentRideId) return undefined;
 
-    const waitingOnCounter = sentOffers[rideRequests[currentIndex]?.id];
     setTimer(
       waitingOnCounter
         ? offerSeconds(appConfig)
@@ -483,7 +422,10 @@ export default function DriverHomeScreen() {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [currentIndex, rideRequests, dispatchConfig.requestTimeoutSeconds, advanceQueue, sentOffers, appConfig]);
+    // Restart only for a new card or a counter-offer on it, not on every
+    // change to the list behind it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentRideId, waitingOnCounter, dispatchConfig.requestTimeoutSeconds, appConfig]);
 
   /* Bidding: offer the passenger a higher price instead of accepting theirs. */
   const handleCounter = async (ride, price) => {
@@ -609,6 +551,9 @@ export default function DriverHomeScreen() {
         }
 
         const rideData = rideSnap.data();
+        // The server hands a job back (card declined, or the passenger's
+        // search timed out), so a ride that is searching, cancelled or now
+        // someone else's is no longer this driver's.
         const stillMine = rideData.driverId === driverId;
         let navigateTo = null;
 
@@ -626,7 +571,9 @@ export default function DriverHomeScreen() {
           return; // leaving this screen
         }
 
-        // Finished, cancelled, or handed to another driver: clear the pointer.
+        // Finished, cancelled, back to searching, or handed to another driver:
+        // clear the pointer and let the driver take new jobs.
+        takenOver.current = false;
         await updateDoc(driverRef, { isOnRide: false, currentRideId: null }).catch(() => null);
         setCheckingRide(false);
       } catch (error) {
@@ -653,7 +600,8 @@ export default function DriverHomeScreen() {
     );
   }
 
-  if (loading || !location) {
+  const locationProblem = !location && ['denied', 'timeout', 'error'].includes(locationStatus);
+  if (!location && !locationProblem) {
     return (
       <SafeAreaView style={styles.container}>
         <Loading label="Finding your location…" />
@@ -661,7 +609,7 @@ export default function DriverHomeScreen() {
     );
   }
 
-  const currentRide = rideRequests[currentIndex];
+  const currentRide = rideRequests.find((r) => r.id === currentRideId) || null;
   const alert = documentAlerts[0];
 
   return (
@@ -670,21 +618,22 @@ export default function DriverHomeScreen() {
         ref={mapRef}
         provider={PROVIDER_GOOGLE}
         style={StyleSheet.absoluteFill}
-        initialRegion={{
-          latitude: location.latitude,
-          longitude: location.longitude,
-          latitudeDelta: 0.01,
-          longitudeDelta: 0.01,
-        }}
+        initialRegion={
+          location
+            ? { latitude: location.latitude, longitude: location.longitude, latitudeDelta: 0.01, longitudeDelta: 0.01 }
+            : FALLBACK_REGION
+        }
         customMapStyle={mapStyle}
         showsCompass={false}
         toolbarEnabled={false}
       >
-        <Marker coordinate={location} anchor={{ x: 0.5, y: 0.5 }} flat>
-          <View style={styles.carMarker}>
-            <Ionicons name="car-sport" size={18} color={COLORS.lime} />
-          </View>
-        </Marker>
+        {location ? (
+          <Marker coordinate={location} anchor={{ x: 0.5, y: 0.5 }} flat>
+            <View style={styles.carMarker}>
+              <Ionicons name="car-sport" size={18} color={COLORS.lime} />
+            </View>
+          </Marker>
+        ) : null}
       </MapView>
 
       {/* Status and the one control that matters. */}
@@ -739,13 +688,47 @@ export default function DriverHomeScreen() {
         ) : null}
       </SafeAreaView>
 
+      {/* No position: say why, and what to do, instead of spinning. */}
+      {locationProblem ? (
+        <View style={styles.bottom}>
+          <View style={styles.locationCard}>
+            <EmptyState
+              icon="locate-outline"
+              title={locationStatus === 'denied' ? 'Location is switched off' : 'Could not find your location'}
+              body={
+                locationStatus === 'denied'
+                  ? 'TakeARoute needs your location to offer you jobs nearby. Allow it in Settings.'
+                  : 'Check that Location is on and you have a clear view of the sky, then try again.'
+              }
+              action={
+                <View style={styles.locationActions}>
+                  {locationStatus === 'denied' ? (
+                    <Button
+                      title="Open Settings"
+                      variant="secondary"
+                      style={{ flex: 1 }}
+                      onPress={() => Linking.openSettings().catch(() => {})}
+                    />
+                  ) : null}
+                  <Button
+                    title="Try again"
+                    style={{ flex: 1 }}
+                    onPress={() => requestDriverPosition(driverId)}
+                  />
+                </View>
+              }
+            />
+          </View>
+        </View>
+      ) : null}
+
       {/* Today, and the wallet. Two numbers that matter, not a dashboard. */}
-      {!currentRide ? (
+      {!currentRide && !locationProblem ? (
         <View style={styles.bottom}>
           <TouchableOpacity
             style={styles.earnings}
             activeOpacity={0.9}
-            onPress={() => navigation.navigate('EarningsScreen')}
+            onPress={() => navigation.navigate('Earnings', { screen: 'EarningsScreen' })}
           >
             <View style={{ flex: 1 }}>
               <View style={styles.earningsHead}>
@@ -805,6 +788,9 @@ export default function DriverHomeScreen() {
                   />
                 ) : null}
                 {currentRide.femaleDriverOnly ? <Chip label="Female driver" icon="female-outline" /> : null}
+                {Number(currentRide.fare?.surgeMultiplier) > 1 ? (
+                  <Chip label={`${currentRide.fare.surgeMultiplier}× busy`} icon="flash" />
+                ) : null}
               </View>
               <Text style={TYPE.figure}>
                 {currencySymbol()}
@@ -879,6 +865,9 @@ export default function DriverHomeScreen() {
   );
 }
 
+// Somewhere sensible to draw the map while there is no fix yet.
+const FALLBACK_REGION = { latitude: 51.5074, longitude: -0.1278, latitudeDelta: 0.2, longitudeDelta: 0.2 };
+
 const mapStyle = [
   { elementType: 'geometry', stylers: [{ color: COLORS.surface }] },
   { elementType: 'labels.text.fill', stylers: [{ color: COLORS.muted }] },
@@ -946,6 +935,12 @@ const styles = StyleSheet.create({
   },
   walletLabel: { ...TYPE.small, color: COLORS.onDark },
   walletValue: { fontSize: 17, fontWeight: '800', color: COLORS.white, marginTop: 2 },
+
+  locationCard: {
+    backgroundColor: COLORS.white, borderRadius: RADIUS.lg, paddingHorizontal: SPACE[2],
+    ...SHADOW.float,
+  },
+  locationActions: { flexDirection: 'row', gap: SPACE[2] },
 
   waiting: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACE[2],

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -16,6 +16,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
+import { useDriverPosition } from '../../../utils/driverLocation';
+
 import { currencySymbol, money, waitingCharge } from '../../../utils/appConfig';
 import { navigationUrl, remainingStops, stopsOf } from '../../../utils/stops';
 import { fetchRoute as fetchDrivingRoute, durationText, distanceText } from '../../../utils/routes';
@@ -47,7 +49,19 @@ export default function DriverRideToDropoffScreen() {
 
   const [ride, setRide] = useState(null);
   const [riderData, setRiderData] = useState(null);
-  const [driverLocation, setDriverLocation] = useState(null);
+  // The phone's own GPS (session watcher) first; the Firestore mirror of it
+  // as a fallback, e.g. on a cold resume before the first fix.
+  const position = useDriverPosition();
+  const [mirroredLocation, setMirroredLocation] = useState(null);
+  const liveLat = position.coords?.latitude;
+  const liveLng = position.coords?.longitude;
+  const driverLocation = useMemo(
+    () =>
+      Number.isFinite(liveLat) && Number.isFinite(liveLng)
+        ? { latitude: liveLat, longitude: liveLng }
+        : mirroredLocation,
+    [liveLat, liveLng, mirroredLocation]
+  );
   const [routeCoords, setRouteCoords] = useState([]);
   const [arrived, setArrived] = useState(false);
   const [eta, setEta] = useState('');
@@ -105,9 +119,8 @@ export default function DriverRideToDropoffScreen() {
   }, [rideId, navigation]);
 
   /* ================= WHERE THE DRIVER ACTUALLY IS =================
-     The driver's own GPS, written to drivers/{id}.location by the home
-     screen's watcher. This is the same position the passenger sees, so both
-     sides of the trip agree. */
+     drivers/{id}.location is the session watcher's mirror of the phone's GPS
+     (the same position the passenger sees). Used until the first live fix. */
   useEffect(() => {
     if (!ride?.driverId) return undefined;
 
@@ -115,12 +128,16 @@ export default function DriverRideToDropoffScreen() {
       if (!snap.exists()) return;
       const loc = snap.data().location;
       if (!loc || typeof loc.latitude !== 'number') return;
-
-      const next = { latitude: loc.latitude, longitude: loc.longitude };
-      setDriverLocation(next);
-      if (followDriver) mapRef.current?.animateCamera({ center: next });
+      setMirroredLocation({ latitude: loc.latitude, longitude: loc.longitude });
     });
-  }, [ride?.driverId, followDriver]);
+  }, [ride?.driverId]);
+
+  // Keep the camera on the car as it moves, until the driver pans away.
+  useEffect(() => {
+    if (followDriver && isCoord(driverLocation)) {
+      mapRef.current?.animateCamera({ center: driverLocation });
+    }
+  }, [driverLocation, followDriver]);
 
   useEffect(() => {
     if (!ride?.riderId) return undefined;

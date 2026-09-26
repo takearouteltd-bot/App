@@ -8,9 +8,8 @@
 // Leaving sign-up therefore means signing out, which App.js answers by
 // returning to the start screen. It asks first, because it throws away the
 // phone sign-in they just completed.
-import { signOut } from 'firebase/auth';
-import { auth } from '../config/firebase';
 import { Alert } from '../components/ui/alert';
+import { signOutEverywhere } from './notifications';
 
 export function confirmLeaveSignup() {
   Alert.alert(
@@ -22,7 +21,7 @@ export function confirmLeaveSignup() {
         text: 'Leave',
         style: 'destructive',
         onPress: () => {
-          signOut(auth).catch(() => {
+          signOutEverywhere().catch(() => {
             Alert.alert('Could not sign out', 'Please check your connection and try again.');
           });
         },

@@ -117,14 +117,20 @@ export default function EmergencyContactScreen({ navigation, route }) {
                   iconColor: COLORS.red,
                   title: 'Call 999',
                   detail: 'Emergency: danger to life, crime in progress, serious injury',
-                  onPress: () => Linking.openURL('tel:999'),
+                  onPress: () =>
+                    Linking.openURL('tel:999').catch(() =>
+                      Alert.alert('Could not open the dialler', 'Dial 999 from your phone.')
+                    ),
                 },
                 {
                   icon: 'call-outline',
                   iconColor: COLORS.midnight,
                   title: 'Call 101',
                   detail: 'Police non-emergency',
-                  onPress: () => Linking.openURL('tel:101'),
+                  onPress: () =>
+                    Linking.openURL('tel:101').catch(() =>
+                      Alert.alert('Could not open the dialler', 'Dial 101 from your phone.')
+                    ),
                 },
               ]}
             />

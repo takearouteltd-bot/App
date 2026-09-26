@@ -59,10 +59,11 @@ export default function PaymentsMethodScreen({ navigation }) {
         setError(null);
       },
       (err) => {
+        // permission-denied here is the sign-out race: the listener outlives
+        // the session for a frame. Nothing to tell the user.
+        if (err?.code === 'permission-denied') return;
         console.log('Cards listener error:', err);
-        if (String(err.message).includes('Missing or insufficient permissions')) {
-          setError('You do not have permission to view payment methods.');
-        }
+        setError('Could not load your cards. Pull down to try again.');
       }
     );
 
@@ -90,12 +91,9 @@ export default function PaymentsMethodScreen({ navigation }) {
       rows.sort((a, b) => (b.createdAtDate?.getTime() || 0) - (a.createdAtDate?.getTime() || 0));
       setTransactions(rows);
     } catch (err) {
+      if (err?.code === 'permission-denied') return; // signing out
       console.error('Error fetching transactions:', err);
-      setError(
-        String(err.message).includes('Missing or insufficient permissions')
-          ? 'Permission denied. Please contact support.'
-          : 'Could not load your payments. Pull down to try again.'
-      );
+      setError('Could not load your payments. Pull down to try again.');
     }
   }, [user]);
 

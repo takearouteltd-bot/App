@@ -18,6 +18,22 @@ import {
 } from '../../components/ui/kit';
 import { confirmLeaveSignup } from '../../utils/leaveSignup';
 
+// { latitude, longitude } within a few seconds, or null.
+async function bestEffortPosition() {
+  const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 8000));
+  try {
+    const fresh = await Promise.race([
+      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+      timeout,
+    ]);
+    const position = fresh || (await Location.getLastKnownPositionAsync().catch(() => null));
+    if (!position?.coords) return null;
+    return { latitude: position.coords.latitude, longitude: position.coords.longitude };
+  } catch (error) {
+    return null;
+  }
+}
+
 export default function EnableLocationScreen({ setOnboardingStatus }) {
   const navigation = useNavigation();
   const [busy, setBusy] = useState(false);
@@ -51,20 +67,22 @@ export default function EnableLocationScreen({ setOnboardingStatus }) {
         return;
       }
 
-      const location = await Location.getCurrentPositionAsync({});
-      const { latitude, longitude } = location.coords;
+      // Permission is all sign-up needs. A first fix is taken if the phone
+      // gives one quickly; GPS that is switched off or slow must not keep
+      // someone on this screen (getCurrentPositionAsync can hang for good).
+      const coords = await bestEffortPosition();
 
       await updateDoc(doc(db, 'riders', user.uid), {
         locationEnabled: true,
         onboardingComplete: true,
         onBoardingStep: 'complete',
-        coordinates: { latitude, longitude },
+        ...(coords ? { coordinates: coords } : {}),
       });
 
       setOnboardingStatus('complete');
     } catch (error) {
       console.log('Location error:', error);
-      Alert.alert('Could not get your location', 'Please try again.');
+      Alert.alert('Could not save', 'Please check your connection and try again.');
     } finally {
       setBusy(false);
     }

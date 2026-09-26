@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -17,7 +17,9 @@ import RouteDirections from '../../../components/RouteDirections';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { doc, onSnapshot, updateDoc, serverTimestamp, arrayUnion } from 'firebase/firestore';
-import { db } from '../../../config/firebase';
+import { auth, db } from '../../../config/firebase';
+import { useDriverPosition } from '../../../utils/driverLocation';
+
 import { currencySymbol } from '../../../utils/appConfig';
 import SafetyButton from '../../../components/SafetyButton';
 import { confirmMaskedCall } from '../../../utils/calling';
@@ -31,6 +33,21 @@ const { height } = Dimensions.get('window');
 
 const SHEET_OPEN = Math.min(height * 0.62, 560);
 const SHEET_SHUT = 190;
+// Marking "arrived" further than this from the pickup asks the driver first,
+// because arriving starts the passenger's waiting meter.
+const ARRIVE_RADIUS_M = 150;
+
+const metresBetween = (a, b) => {
+  if (!isCoord(a) || !isCoord(b)) return null;
+  const toRad = (x) => (x * Math.PI) / 180;
+  const R = 6371000;
+  const dLat = toRad(b.latitude - a.latitude);
+  const dLon = toRad(b.longitude - a.longitude);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.latitude)) * Math.cos(toRad(b.latitude)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+};
 
 export default function DriverRideInProgressScreen() {
   const route = useRoute();
@@ -42,7 +59,19 @@ export default function DriverRideInProgressScreen() {
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   const [ride, setRide] = useState(null);
-  const [driverLocation, setDriverLocation] = useState(null);
+  // The phone's own GPS (session watcher) first; the Firestore mirror of it
+  // as a fallback, e.g. on a cold resume before the first fix.
+  const position = useDriverPosition();
+  const [mirroredLocation, setMirroredLocation] = useState(null);
+  const liveLat = position.coords?.latitude;
+  const liveLng = position.coords?.longitude;
+  const driverLocation = useMemo(
+    () =>
+      Number.isFinite(liveLat) && Number.isFinite(liveLng)
+        ? { latitude: liveLat, longitude: liveLng }
+        : mirroredLocation,
+    [liveLat, liveLng, mirroredLocation]
+  );
   const [riderData, setRiderData] = useState(null);
   const [eta, setEta] = useState(null);
   const [distance, setDistance] = useState(null);
@@ -106,6 +135,25 @@ export default function DriverRideInProgressScreen() {
         Alert.alert('Job cancelled', 'The passenger cancelled this job.', [
           { text: 'OK', onPress: goHome },
         ]);
+        return;
+      }
+
+      // The job is no longer this driver's: the server put it back to
+      // "searching" (the passenger's card hold failed) or handed it to someone
+      // else. Free the driver and say why.
+      const me = auth.currentUser?.uid;
+      const takenAway =
+        data.status === 'searching' || (me && data.driverId && data.driverId !== me);
+      if (takenAway) {
+        hasLeftScreen.current = true;
+        releaseDriver();
+        Alert.alert(
+          'Job cancelled',
+          data.paymentStatus === 'auth_failed'
+            ? "This job was cancelled: the passenger's payment failed."
+            : 'This job is no longer assigned to you.',
+          [{ text: 'OK', onPress: goHome }]
+        );
       }
     });
     return () => unsubscribe();
@@ -117,7 +165,7 @@ export default function DriverRideInProgressScreen() {
       if (!snap.exists()) return;
       const driver = snap.data();
       if (driver.location) {
-        setDriverLocation({
+        setMirroredLocation({
           latitude: driver.location.latitude,
           longitude: driver.location.longitude,
         });
@@ -158,12 +206,15 @@ export default function DriverRideInProgressScreen() {
   }, [isMinimized, sheetHeight]);
 
   /* ================= ACTIONS ================= */
-  const handleArrived = useCallback(async () => {
+  const markArrived = useCallback(async (awayM) => {
     setLoadingAction(true);
     try {
       await updateDoc(doc(db, 'rides', rideId), {
         status: 'arrived',
         arrivedAt: serverTimestamp(),
+        ...(awayM != null && awayM > ARRIVE_RADIUS_M
+          ? { arrivedAwayFromPickupM: Math.round(awayM) }
+          : {}),
       });
     } catch (error) {
       console.error('Error updating status:', error);
@@ -172,6 +223,21 @@ export default function DriverRideInProgressScreen() {
       setLoadingAction(false);
     }
   }, [rideId]);
+
+  // Arriving starts the waiting meter, so it has to happen at the pickup.
+  const handleArrived = useCallback(() => {
+    const awayM = metresBetween(driverLocation, ride?.pickupLocation);
+    if (awayM == null || awayM <= ARRIVE_RADIUS_M) return markArrived(awayM);
+    const shown = awayM < 1000 ? `${Math.round(awayM)} m` : `${(awayM / 1000).toFixed(1)} km`;
+    Alert.alert(
+      "You're not at the pickup yet",
+      `You're ${shown} from the pickup. Mark as arrived anyway?`,
+      [
+        { text: 'Keep driving', style: 'cancel' },
+        { text: 'Mark as arrived', style: 'destructive', onPress: () => markArrived(awayM) },
+      ]
+    );
+  }, [driverLocation, ride?.pickupLocation, markArrived]);
 
   const handleStartRide = useCallback(async () => {
     setLoadingAction(true);

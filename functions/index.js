@@ -55,7 +55,9 @@ const CONFIG_DEFAULTS = {
   waiting: {freeMinutes: 5, ratePerMinute: 0.25, maxCharge: 10},
   subscription: {monthlyPrice: 99.99, graceDays: 3},
   drivers: {minimumPayout: 10},
-  dispatch: {searchRadiusKm: 50, requestTimeoutSeconds: 20},
+  dispatch: {
+    searchRadiusKm: 50, requestTimeoutSeconds: 20, searchTimeoutMinutes: 15,
+  },
   cancellation: {fee: 0, freeMinutes: 2, driverSharePercent: 100},
 };
 
@@ -116,6 +118,10 @@ async function loadAppConfig() {
           d.dispatch.searchRadiusKm),
       requestTimeoutSeconds: numSetting(data.dispatch,
           "requestTimeoutSeconds", d.dispatch.requestTimeoutSeconds),
+      // How long a booking may keep looking for a driver before it is
+      // cancelled for the passenger (expireSearchingRides).
+      searchTimeoutMinutes: numSetting(data.dispatch,
+          "searchTimeoutMinutes", d.dispatch.searchTimeoutMinutes),
     },
   };
 }
@@ -167,6 +173,22 @@ function toMillis(ts) {
   if (ts instanceof Date) return ts.getTime();
   const n = Number(ts);
   return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * One calendar month on, clamped to the last day of the month, so
+ * 31 January becomes 28 (or 29) February rather than 3 March.
+ * @param {Date} date Start date.
+ * @return {Date} A new Date one month later.
+ */
+function addOneMonth(date) {
+  const d = new Date(date.getTime());
+  const day = d.getDate();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + 1);
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, last));
+  return d;
 }
 
 /**
@@ -459,24 +481,88 @@ exports.authorizePaymentOnRideAccept = functions
         return null;
       }
 
+      // A hold that fails must not leave the ride "accepted": the driver
+      // would drive to a pickup that will never pay. The ride goes back to
+      // searching without this driver, both sides are told, and the
+      // passenger can add a card to keep searching.
+      const attempt = Number(after.paymentAttempts) || 0;
+      const failHold = async (reason) => {
+        const rideRef = db.collection("rides").doc(rideId);
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(rideRef);
+          if (!snap.exists) return;
+          const ride = snap.data();
+          // Only undo the accept this run was authorising.
+          if (ride.status !== "accepted" || ride.driverId !== driverId) {
+            return;
+          }
+          tx.update(rideRef, {
+            status: "searching",
+            driverId: null,
+            acceptedAt: null,
+            paymentStatus: "auth_failed",
+            paymentFailure: {
+              reason,
+              at: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            paymentAttempts: attempt + 1,
+            declinedBy: driverId ?
+              admin.firestore.FieldValue.arrayUnion(driverId) :
+              ride.declinedBy || [],
+            lastDriverCancelAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          if (driverId) {
+            // Same release as when a driver gives a job back.
+            tx.update(db.collection("drivers").doc(driverId), {
+              isOnRide: false,
+              currentRideId: null,
+              status: "online",
+            });
+          }
+        });
+        await sendPush([riderId], {
+          title: "Card declined",
+          body: "Your card was declined. Add a card to keep searching.",
+          channelId: "trip-updates",
+          data: {type: "trip", rideId},
+        }).catch(() => null);
+        if (driverId) {
+          await sendPush([driverId], {
+            title: "Job cancelled",
+            body: "Job cancelled: the passenger's payment failed.",
+            channelId: "trip-updates",
+            data: {type: "trip", rideId},
+          }).catch(() => null);
+        }
+      };
+
+      let stripeCustomerId = null;
+      let defaultPaymentMethodId = null;
       try {
         const riderDoc = await db.collection("riders").doc(riderId).get();
-        if (!riderDoc.exists) return null;
+        const rider = riderDoc.exists ? riderDoc.data() : {};
+        stripeCustomerId = rider.stripeCustomerId || null;
+        defaultPaymentMethodId = rider.defaultPaymentMethodId || null;
+      } catch (error) {
+        console.error("❌ Could not read rider for hold:", error);
+        return null;
+      }
 
-        const {stripeCustomerId, defaultPaymentMethodId} = riderDoc.data();
+      if (!stripeCustomerId || !defaultPaymentMethodId) {
+        console.log("❌ Missing Stripe setup, undoing accept:", rideId);
+        await failHold("no_card");
+        return null;
+      }
 
-        if (!stripeCustomerId || !defaultPaymentMethodId) {
-          console.log("❌ Missing Stripe setup");
-          return null;
-        }
+      const estimatedAmount = Math.round((after.fareEstimate || 0) * 100);
+      if (estimatedAmount <= 0) return null;
 
-        const estimatedAmount = Math.round((after.fareEstimate || 0) * 100);
-
-        if (estimatedAmount <= 0) return null;
-
+      try {
         // =========================
         // CREATE PAYMENT INTENT
         // =========================
+        // The key changes per attempt: Stripe replays a declined result
+        // for a reused key, which would make a new card fail too.
         const paymentIntent = await stripe.paymentIntents.create(
             {
               amount: estimatedAmount,
@@ -493,7 +579,8 @@ exports.authorizePaymentOnRideAccept = functions
               },
             },
             {
-              idempotencyKey: `auth_${rideId}`,
+              idempotencyKey: attempt ?
+                `auth_${rideId}_${attempt}` : `auth_${rideId}`,
             },
         );
 
@@ -524,18 +611,14 @@ exports.authorizePaymentOnRideAccept = functions
         await db.collection("rides").doc(rideId).update({
           paymentIntentId,
           paymentStatus: "authorized",
+          paymentFailure: admin.firestore.FieldValue.delete(),
         });
 
         console.log("✅ PAYMENT AUTHORIZED:", rideId);
         return null;
       } catch (error) {
-        console.error("❌ AUTH FAILED:", error);
-
-        await db.collection("rides").doc(rideId).update({
-          status: "payment_failed",
-          paymentStatus: "failed",
-        });
-
+        console.error("❌ AUTH FAILED:", rideId, error.message);
+        await failHold(error.code || error.message || "declined");
         return null;
       }
     });
@@ -627,6 +710,8 @@ exports.chargeOnRideCompletion = functions
         const cardBrand = chargedCard ? chargedCard.brand : null;
 
         let capturedIntent;
+        let extraChargeFailed = false;
+        let extraChargeError = null;
 
         // =========================
         // NORMAL CAPTURE
@@ -647,29 +732,46 @@ exports.chargeOnRideCompletion = functions
         // =========================
           console.log("⚠️ Extra charge required");
 
-          await stripe.paymentIntents.capture(paymentIntentId, {
-            amount_to_capture: paymentIntent.amount,
-          });
+          // Idempotent, so a retried run cannot capture twice.
+          capturedIntent = await stripe.paymentIntents.capture(
+              paymentIntentId,
+              {amount_to_capture: paymentIntent.amount},
+              {idempotencyKey: `capture_base_${rideId}`},
+          );
 
           const extraAmount = finalAmount - paymentIntent.amount;
+          const pm = paymentIntent.payment_method &&
+            paymentIntent.payment_method.id ?
+            paymentIntent.payment_method.id : paymentIntent.payment_method;
 
-          capturedIntent = await stripe.paymentIntents.create(
-              {
-                amount: extraAmount,
-                currency: rideCurrency(after),
-                customer: paymentIntent.customer,
-                payment_method: paymentIntent.payment_method,
-                confirm: true,
-                off_session: true,
-                metadata: {
-                  rideId,
-                  type: "extra_charge",
+          try {
+            const extra = await stripe.paymentIntents.create(
+                {
+                  amount: extraAmount,
+                  currency: rideCurrency(after),
+                  customer: paymentIntent.customer,
+                  payment_method: pm,
+                  confirm: true,
+                  off_session: true,
+                  metadata: {
+                    rideId,
+                    type: "extra_charge",
+                  },
                 },
-              },
-              {
-                idempotencyKey: `extra_${rideId}`,
-              },
-          );
+                {
+                  idempotencyKey: `extra_${rideId}`,
+                },
+            );
+            capturedIntent = extra;
+          } catch (extraError) {
+            // The hold amount was taken; only the waiting charge failed.
+            // Never mark a ride the passenger paid for as failed.
+            console.error("⚠️ Extra charge failed:", rideId,
+                extraError.message);
+            extraChargeFailed = true;
+            extraChargeError = extraError.message || "declined";
+            finalAmount = paymentIntent.amount;
+          }
         }
 
         // =========================
@@ -679,16 +781,23 @@ exports.chargeOnRideCompletion = functions
           status: "captured",
           amount: finalAmount,
           transactionId: capturedIntent.id,
+          extraChargeFailed,
+          extraChargeError,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
 
         // =========================
         // UPDATE RIDE (UI ONLY)
         // =========================
+        // If the extra charge failed, the total actually taken is the
+        // hold amount, and the waiting charge is recorded as unpaid.
         await db.collection("rides").doc(rideId).update({
           "paymentStatus": "captured",
           "fare.waitingCharge": waitingFee,
-          "fare.finalTotal": finalTotal,
+          "fare.finalTotal": extraChargeFailed ?
+            Math.round(finalAmount) / 100 : finalTotal,
+          "extraChargeFailed": extraChargeFailed,
+          "extraChargeError": extraChargeError,
           "cardLast4": cardLast4,
           "cardBrand": cardBrand,
         });
@@ -1542,130 +1651,33 @@ exports.detachPaymentMethod = functions
 
 exports.autoDeductSubscription = functions
     .region("europe-west2")
+    .runWith({secrets: STRIPE_SECRETS})
     .firestore.document("driverWallets/{driverId}")
     .onUpdate(async (change, context) => {
       const before = change.before.data();
       const after = change.after.data();
       const driverId = context.params.driverId;
 
-      // Only trigger if availableBalance increased
+      // Only when money has landed in the wallet.
       const prevBalance = before.availableBalance || 0;
       const newBalance = after.availableBalance || 0;
-
       if (newBalance <= prevBalance) return null;
 
-      const driverRef = db.collection("drivers").doc(driverId);
-      const driverSnap = await driverRef.get();
-
+      const driverSnap = await db.collection("drivers").doc(driverId).get();
       if (!driverSnap.exists) return null;
-
-      const driverData = driverSnap.data();
-      const sub = driverData.subscription || {};
-
-      // Price set on the dashboard (Settings, Subscription).
-      const MONTHLY_PRICE = (await loadAppConfig()).subscription.monthlyPrice;
-
+      const sub = driverSnap.data().subscription || {};
       if (!["active", "past_due", "suspended"].includes(sub.status) ||
         sub.paymentMethod !== "wallet_deduction") {
         return null;
       }
 
-      // Behind on payment: as soon as the wallet can cover it, take it and
-      // reinstate them.
-      if (sub.status !== "active") {
-        await collectMembership(driverId);
-        return null;
+      // collectMembership decides inside its own transaction whether
+      // anything is due, and takes it with an increment, so a ride credit
+      // or payout landing at the same moment is never overwritten.
+      const result = await collectMembership(driverId);
+      if (result.paid) {
+        console.log("Membership taken from wallet:", driverId, result.amount);
       }
-
-      const now = admin.firestore.FieldValue.serverTimestamp();
-      const nowDate = new Date();
-      const transactionRef = db
-          .collection("driverWallets")
-          .doc(driverId)
-          .collection("transactions")
-          .doc();
-
-      // Case 1: Has debt (first payment or missed payment)
-      if (sub.debtAmount && sub.debtAmount > 0) {
-        if (newBalance >= sub.debtAmount) {
-          const debtAmount = sub.debtAmount;
-
-          // Deduct from wallet
-          await change.after.ref.update({
-            availableBalance: newBalance - debtAmount,
-            totalWithdrawn: (after.totalWithdrawn || 0) + debtAmount,
-            updatedAt: now,
-          });
-
-          // Log transaction
-          await transactionRef.set({
-            amount: -debtAmount,
-            description: "Monthly subscription payment (debt cleared)",
-            type: "subscription_deduction",
-            status: "completed",
-            createdAt: now,
-            updatedAt: now,
-          });
-
-          const nextBilling = new Date();
-          nextBilling.setMonth(nextBilling.getMonth() + 1);
-
-          await driverRef.update({
-            "subscription.debtAmount": 0,
-            "subscription.lastPaidAt": now,
-            "subscription.nextBillingDate": admin.firestore
-                .Timestamp.fromDate(nextBilling),
-          });
-
-          console.log("Deducted debt £" +
-            debtAmount + " from driver " + driverId);
-        }
-        return null;
-      }
-
-      // Case 2: Monthly renewal due
-      const nextBilling = sub.nextBillingDate ?
-      sub.nextBillingDate.toDate() : null;
-      if (!nextBilling || nextBilling > nowDate) return null;
-
-      if (newBalance >= MONTHLY_PRICE) {
-      // Deduct from wallet
-        await change.after.ref.update({
-          availableBalance: newBalance - MONTHLY_PRICE,
-          totalWithdrawn: (after.totalWithdrawn || 0) + MONTHLY_PRICE,
-          updatedAt: now,
-        });
-
-        // Log transaction
-        const billingLabel = nextBilling.toLocaleDateString("en-GB", {
-          month: "long",
-          year: "numeric",
-        });
-
-        await transactionRef.set({
-          amount: -MONTHLY_PRICE,
-          description: "Monthly subscription — " + billingLabel,
-          type: "subscription_deduction",
-          status: "completed",
-          createdAt: now,
-          updatedAt: now,
-        });
-
-        const newNextBilling = new Date();
-        newNextBilling.setMonth(newNextBilling.getMonth() + 1);
-
-        await driverRef.update({
-          "subscription.lastPaidAt": now,
-          "subscription.nextBillingDate": admin.firestore.
-              Timestamp.fromDate(newNextBilling),
-        });
-
-        console.log("Monthly sub £" + MONTHLY_PRICE +
-          " deducted from driver " + driverId);
-      }
-      // Not enough in the wallet: leave it to renewDriverMemberships, which
-      // tries the card and gives a grace period before suspending.
-
       return null;
     });
 
@@ -1697,7 +1709,23 @@ async function ensureStripeCustomer(uid) {
 }
 
 /**
+ * Whether a membership has anything to collect right now.
+ * @param {Object} sub The driver's subscription object.
+ * @param {number} now Milliseconds.
+ * @return {boolean} True when money is owed.
+ */
+function membershipDue(sub, now) {
+  const debt = Number(sub.debtAmount) || 0;
+  if (debt > 0) return true;
+  if (sub.status && sub.status !== "active") return true;
+  const next = toMillis(sub.nextBillingDate);
+  return !!next && next <= now;
+}
+
+/**
  * Takes one membership payment for a driver: wallet first, then card.
+ * The wallet leg runs in a transaction that re-reads the driver, so two
+ * runs (the daily job and the wallet trigger) cannot both take a month.
  * @param {string} driverId Driver id.
  * @param {Object} opts {cardOnly: pay by card even if the wallet could}.
  * @return {Promise<Object>} {paid, method, amount, reason}.
@@ -1706,49 +1734,77 @@ async function collectMembership(driverId, opts = {}) {
   const cfg = await loadAppConfig();
   const price = cfg.subscription.monthlyPrice;
   const driverRef = db.collection("drivers").doc(driverId);
-  const driverSnap = await driverRef.get();
-  if (!driverSnap.exists) return {paid: false, reason: "no_driver"};
-  const sub = driverSnap.data().subscription || {};
-  const debt = Number(sub.debtAmount) || 0;
-  const amount = Math.round((debt > 0 ? debt : price) * 100) / 100;
-  if (!(amount > 0)) return {paid: false, reason: "nothing_due"};
-
+  const walletRef = db.collection("driverWallets").doc(driverId);
   const now = admin.firestore.FieldValue.serverTimestamp();
-  const next = new Date();
-  next.setMonth(next.getMonth() + 1);
-  const paidFields = {
-    "subscription.status": "active",
-    "subscription.debtAmount": 0,
-    "subscription.lastPaidAt": now,
-    "subscription.graceUntil": null,
-    "subscription.nextBillingDate": admin.firestore.Timestamp.fromDate(next),
+
+  /**
+   * What is owed and the fields that mark it paid, from a fresh read.
+   * @param {Object} sub Subscription object.
+   * @return {?Object} {amount, paidFields} or null when nothing is due.
+   */
+  const plan = (sub) => {
+    const nowMs = Date.now();
+    if (!membershipDue(sub, nowMs)) return null;
+    const debt = Number(sub.debtAmount) || 0;
+    const amount = Math.round((debt > 0 ? debt : price) * 100) / 100;
+    if (!(amount > 0)) return null;
+    // Keep a billing date that is still ahead; only advance one that
+    // has passed, so paying late never gifts an extra month.
+    const next = toMillis(sub.nextBillingDate);
+    const nextDate = next && next > nowMs ?
+      new Date(next) : addOneMonth(new Date(nowMs));
+    return {
+      amount,
+      paidFields: {
+        "subscription.status": "active",
+        "subscription.debtAmount": 0,
+        "subscription.lastPaidAt": now,
+        "subscription.graceUntil": null,
+        "subscription.nextBillingDate":
+          admin.firestore.Timestamp.fromDate(nextDate),
+      },
+    };
   };
 
-  // 1. Wallet, in a transaction so two runs cannot both spend it.
+  // 1. Wallet, in a transaction: re-read the driver, then the wallet.
+  let owed = null;
   if (!opts.cardOnly) {
-    const walletRef = db.collection("driverWallets").doc(driverId);
-    const fromWallet = await db.runTransaction(async (tx) => {
+    const outcome = await db.runTransaction(async (tx) => {
+      const d = await tx.get(driverRef);
+      if (!d.exists) return {reason: "no_driver"};
+      const p = plan(d.data().subscription || {});
+      if (!p) return {reason: "nothing_due"};
       const w = await tx.get(walletRef);
       const balance = w.exists ? Number(w.data().availableBalance) || 0 : 0;
-      if (balance < amount) return false;
+      if (balance < p.amount) return {owed: p};
       tx.update(walletRef, {
-        availableBalance: admin.firestore.FieldValue.increment(-amount),
-        totalWithdrawn: admin.firestore.FieldValue.increment(amount),
+        availableBalance: admin.firestore.FieldValue.increment(-p.amount),
+        totalFees: admin.firestore.FieldValue.increment(p.amount),
         updatedAt: now,
       });
       tx.set(walletRef.collection("transactions").doc(), {
-        amount: -amount,
+        amount: -p.amount,
         description: "Monthly membership",
         type: "subscription_deduction",
         status: "completed",
         createdAt: now,
         updatedAt: now,
       });
-      tx.update(driverRef, paidFields);
-      return true;
+      tx.update(driverRef, p.paidFields);
+      return {paid: true, amount: p.amount};
     });
-    if (fromWallet) return {paid: true, method: "wallet", amount};
+    if (outcome.paid) {
+      return {paid: true, method: "wallet", amount: outcome.amount};
+    }
+    if (outcome.reason) return {paid: false, reason: outcome.reason};
+    owed = outcome.owed;
+  } else {
+    const d = await driverRef.get();
+    if (!d.exists) return {paid: false, reason: "no_driver"};
+    owed = plan(d.data().subscription || {});
+    if (!owed) return {paid: false, reason: "nothing_due"};
   }
+  const amount = owed.amount;
 
   // 2. The card saved on the account.
   const riderSnap = await db.collection("riders").doc(driverId).get();
@@ -1767,23 +1823,46 @@ async function collectMembership(driverId, opts = {}) {
       off_session: true,
       metadata: {driverId, type: "membership"},
     }, {idempotencyKey: `membership_${driverId}_${period}_${amount}`});
-    await driverRef.update(paidFields);
-    await db.collection("driverWallets").doc(driverId)
-        .collection("transactions").doc().set({
-          amount: 0,
-          cardAmount: amount,
-          description: "Monthly membership, paid by card",
-          type: "subscription_card_payment",
-          paymentIntentId: intent.id,
-          status: "completed",
-          createdAt: now,
-          updatedAt: now,
-        });
+    await driverRef.update(owed.paidFields);
+    await walletRef.collection("transactions").doc().set({
+      amount: 0,
+      cardAmount: amount,
+      description: "Monthly membership, paid by card",
+      type: "subscription_card_payment",
+      paymentIntentId: intent.id,
+      status: "completed",
+      createdAt: now,
+      updatedAt: now,
+    });
     return {paid: true, method: "card", amount};
   } catch (error) {
     console.error("Membership card charge failed:", driverId, error.message);
     return {paid: false, reason: "card_declined", amount};
   }
+}
+
+/**
+ * A billing date has come round: add this month's price to what is owed
+ * and move the date on, once, so an unpaid month is never forgiven and
+ * the daily job never adds it twice.
+ * @param {FirebaseFirestore.DocumentReference} driverRef Driver.
+ * @param {number} price Monthly price.
+ * @return {Promise<void>}
+ */
+async function rollMembershipMonth(driverRef, price) {
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(driverRef);
+    if (!snap.exists) return;
+    const sub = snap.data().subscription || {};
+    const next = toMillis(sub.nextBillingDate);
+    if (!next || next > Date.now()) return;
+    const debt = Number(sub.debtAmount) || 0;
+    tx.update(driverRef, {
+      "subscription.debtAmount": Math.round((debt + price) * 100) / 100,
+      "subscription.nextBillingDate":
+        admin.firestore.Timestamp.fromDate(addOneMonth(new Date(next))),
+    });
+  });
 }
 
 /* Daily: renew due memberships, and suspend when a grace period has run
@@ -1793,8 +1872,11 @@ exports.renewDriverMemberships = functions
     .pubsub.schedule("every day 06:00").timeZone("Europe/London")
     .onRun(async () => {
       const cfg = await loadAppConfig();
+      const price = cfg.subscription.monthlyPrice;
       const graceMs = cfg.subscription.graceDays * 24 * 3600 * 1000;
       const now = Date.now();
+
+      // 1. Memberships whose month has come round.
       const due = await db.collection("drivers")
           .where("subscription.nextBillingDate", "<=",
               admin.firestore.Timestamp.fromMillis(now))
@@ -1807,6 +1889,7 @@ exports.renewDriverMemberships = functions
           continue;
         }
 
+        await rollMembershipMonth(doc.ref, price);
         const result = await collectMembership(doc.id);
         if (result.paid) {
           await sendPush([doc.id], {
@@ -1819,8 +1902,7 @@ exports.renewDriverMemberships = functions
           continue;
         }
 
-        const graceUntil = toMillis(sub.graceUntil);
-        if (sub.status === "active" || !graceUntil) {
+        if (sub.status === "active" || !toMillis(sub.graceUntil)) {
           await doc.ref.update({
             "subscription.status": "past_due",
             "subscription.graceUntil":
@@ -1828,19 +1910,29 @@ exports.renewDriverMemberships = functions
           });
           await sendPush([doc.id], {
             title: "Membership payment due",
-            body: "Add money to your wallet or a card within " +
+            body: "Add a card, or complete card rides, within " +
               `${cfg.subscription.graceDays} days to keep driving.`,
             channelId: "general",
           }).catch(() => null);
-        } else if (graceUntil <= now) {
-          await doc.ref.update({"subscription.status": "suspended"});
-          await sendPush([doc.id], {
-            title: "Account paused",
-            body: "Your membership is unpaid. Pay from the Membership " +
-              "screen to go online again.",
-            channelId: "general",
-          }).catch(() => null);
         }
+      }
+
+      // 2. Grace periods that have run out. Queried separately, because
+      // rolling the month moves the billing date past today.
+      const overdue = await db.collection("drivers")
+          .where("subscription.status", "==", "past_due")
+          .get();
+      for (const doc of overdue.docs) {
+        const sub = doc.data().subscription || {};
+        const graceUntil = toMillis(sub.graceUntil);
+        if (!graceUntil || graceUntil > now) continue;
+        await doc.ref.update({"subscription.status": "suspended"});
+        await sendPush([doc.id], {
+          title: "Account paused",
+          body: "Your membership is unpaid. Pay from the Membership " +
+            "screen to go online again.",
+          channelId: "general",
+        }).catch(() => null);
       }
       return null;
     });
@@ -1872,8 +1964,7 @@ exports.activateDriverMembership = functions
 
       const cfg = await loadAppConfig();
       const price = cfg.subscription.monthlyPrice;
-      const next = new Date();
-      next.setMonth(next.getMonth() + 1);
+      const next = addOneMonth(new Date());
       await driverRef.set({
         subscription: {
           status: "active",
@@ -2134,6 +2225,15 @@ exports.notifyRideUpdates = functions.firestore
       const cancelled = ["cancelled", "canceled"];
       const trip = {channelId: "trip-updates", data: {type: "trip", rideId}};
 
+      // Back to searching because the card hold failed: the passenger and
+      // driver were told by authorizePaymentOnRideAccept, and there is no
+      // point offering it again until a card is added.
+      if (after.status === "searching" &&
+          after.paymentStatus === "auth_failed" &&
+          before.paymentStatus !== "auth_failed") {
+        return null;
+      }
+
       // Driver gave the job back: offer it again.
       if (after.status === "searching" && before.status !== "searching") {
         await sendPush([after.riderId], {...trip,
@@ -2151,11 +2251,29 @@ exports.notifyRideUpdates = functions.firestore
           title: "Your driver has arrived",
           body: "Please meet your driver at the pickup point."});
       }
+      if (after.status === "ongoing") {
+        return sendPush([after.riderId], {...trip,
+          title: "Your trip has started",
+          body: "Sit back. You can follow the route in the app."});
+      }
+      if (after.status === "completed") {
+        return sendPush([after.riderId], {...trip,
+          title: "Trip complete",
+          body: after.paymentMethod === "cash" ?
+            "Trip complete. Thanks for riding with TakeARoute." :
+            "Trip complete. Your receipt is on its way."});
+      }
       if (cancelled.includes(after.status)) {
+        // Timed out with no driver: expireSearchingRides already told them.
+        if (after.cancelledBy === "timeout") return null;
         if (after.cancelledBy === "driver") {
+          const noShow = after.cancelReason === "passenger_no_show";
           return sendPush([after.riderId], {...trip,
-            title: "Ride cancelled",
-            body: "Your driver cancelled this ride. " +
+            title: noShow ? "Ride ended: no-show" : "Ride cancelled",
+            body: noShow ?
+              "The driver reported a no-show at the pickup and ended " +
+              "the ride." :
+              "Your driver cancelled this ride. " +
               "You have not been charged."});
         }
         if (before.driverId || after.driverId) {
@@ -2164,6 +2282,60 @@ exports.notifyRideUpdates = functions.firestore
             body: "The passenger cancelled this job. " +
               "You are free for the next one."});
         }
+      }
+      return null;
+    });
+
+/* Every two minutes: a booking still looking for a driver after the
+   dashboard's limit is cancelled, so it does not sit in every driver's
+   queue for hours and get accepted once the passenger has given up. Any
+   card hold is released by cancelRidePayment, as for any cancellation. */
+exports.expireSearchingRides = functions
+    .pubsub.schedule("every 2 minutes")
+    .onRun(async () => {
+      const cfg = await loadAppConfig();
+      const limitMs = cfg.dispatch.searchTimeoutMinutes * 60 * 1000;
+      const cutoff = admin.firestore.Timestamp
+          .fromMillis(Date.now() - limitMs);
+      const stale = await db.collection("rides")
+          .where("status", "==", "searching")
+          .where("timestamps.createdAt", "<=", cutoff)
+          .get();
+
+      for (const doc of stale.docs) {
+        const ride = doc.data();
+        const rideRef = doc.ref;
+        const done = await db.runTransaction(async (tx) => {
+          const snap = await tx.get(rideRef);
+          if (!snap.exists || snap.data().status !== "searching") {
+            return false;
+          }
+          tx.update(rideRef, {
+            status: "cancelled",
+            cancelledBy: "timeout",
+            cancelReason: "no_driver_found",
+            cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          if (ride.riderId) {
+            const riderRef = db.collection("riders").doc(ride.riderId);
+            const rider = await tx.get(riderRef);
+            if (rider.exists && rider.data().currentRideId === doc.id) {
+              tx.update(riderRef, {currentRideId: null});
+            }
+          }
+          return true;
+        }).catch((error) => {
+          console.error("Could not expire ride:", doc.id, error.message);
+          return false;
+        });
+        if (!done) continue;
+        await sendPush([ride.riderId], {
+          title: "No drivers found",
+          body: "No drivers were found. Please try again.",
+          channelId: "trip-updates",
+          data: {type: "trip", rideId: doc.id},
+        }).catch(() => null);
+        console.log("⌛ Search timed out:", doc.id);
       }
       return null;
     });
@@ -2426,14 +2598,16 @@ function buildReceipt(ride, rideId, extra) {
 async function riderEmail(ride) {
   if (ride.riderEmail) return ride.riderEmail;
   if (!ride.riderId) return null;
-  const snap = await db.collection("riders").doc(ride.riderId).get();
-  if (snap.exists && snap.data().email) return snap.data().email;
+  // The login email is the one they proved they own (an email change in
+  // the app only lands there once the link is clicked), so it comes first.
   try {
     const user = await admin.auth().getUser(ride.riderId);
-    return user.email || null;
+    if (user.email) return user.email;
   } catch (error) {
-    return null;
+    // Fall through to the stored one.
   }
+  const snap = await db.collection("riders").doc(ride.riderId).get();
+  return snap.exists && snap.data().email ? snap.data().email : null;
 }
 
 /**
@@ -2619,10 +2793,15 @@ exports.startMaskedCall = functions
         throw new functions.https.HttpsError("unauthenticated",
             "Please sign in.");
       }
+      // "placeholder" is what the launch guide stores before the real
+      // Twilio details exist; treat it, and anything that is not a real
+      // account SID, as not configured rather than ringing Twilio.
       const sid = process.env.TWILIO_SID;
       const token = process.env.TWILIO_TOKEN;
       const from = process.env.TWILIO_NUMBER;
-      if (!sid || !token || !from) {
+      const unset = (v) => !v || /^placeholder$/i.test(String(v).trim());
+      if (unset(sid) || unset(token) || unset(from) ||
+          !/^AC[0-9a-f]{32}$/i.test(String(sid).trim())) {
         throw new functions.https.HttpsError("failed-precondition",
             "Calling is not switched on yet.");
       }
@@ -2696,9 +2875,10 @@ exports.startMaskedCall = functions
           },
       );
 
-      const result = await response.json();
+      const result = await response.json().catch(() => ({}));
       if (!response.ok) {
-        console.error("Twilio call failed:", JSON.stringify(result));
+        console.error("Twilio call failed:", response.status,
+            result && result.message ? result.message : "no message");
         throw new functions.https.HttpsError("internal",
             "The call could not be connected. Please try again.");
       }
