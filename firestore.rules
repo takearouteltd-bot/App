@@ -1,0 +1,368 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function adminDoc() {
+      return get(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    function isAdmin() {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+        adminDoc().data.isActive == true;
+    }
+
+    function isSuperAdmin() {
+      return isAdmin() && adminDoc().data.role == "super_admin";
+    }
+
+    /* ================= APP CONFIG ================= */
+
+    match /config/{docId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    /* ================= ADMIN MESSAGES ================= */
+
+    match /announcements/{messageId} {
+      allow read: if isAdmin() || (
+        signedIn() &&
+        (resource.data.audience != "user" || resource.data.userId == request.auth.uid)
+      );
+      allow write: if isAdmin();
+    }
+
+    /* ================= PROMO CODES ================= */
+
+    match /promoCodes/{code} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    /* ================= PUSH TOKENS (NEW) ================= */
+    /* Each phone saves its own notification token. Cloud Functions read
+       these with admin access, so no read rule is needed for them. */
+
+    match /pushTokens/{userId} {
+      allow read, write: if isAdmin() || (signedIn() && request.auth.uid == userId);
+    }
+
+    /* ================= DRIVER CHANGE REQUESTS (NEW) ================= */
+    /* Drivers ask to change protected details or documents. Nothing is
+       applied until an admin approves it. */
+
+    match /changeRequests/{requestId} {
+      allow create: if signedIn() &&
+        request.resource.data.driverId == request.auth.uid &&
+        request.resource.data.status == "pending";
+      allow read: if isAdmin() || (
+        signedIn() && resource.data.driverId == request.auth.uid
+      );
+      allow update, delete: if isAdmin();
+    }
+
+    /* ================= RIDERS ================= */
+
+    match /riders/{userId} {
+      allow read: if isAdmin() || signedIn();
+      allow create: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow update: if isAdmin() || (
+        signedIn() &&
+        (
+          request.auth.uid == userId ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            "rating"
+          ])
+        )
+      );
+      allow delete: if isAdmin();
+
+      match /cards/{cardId} {
+        allow read, write: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      }
+
+      match /recentSearches/{searchId} {
+        allow read, write: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      }
+
+      match /savedPlaces/{placeId} {
+        allow read, write: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      }
+    }
+
+    /* ================= DRIVERS ================= */
+
+    /* Fields a driver may not change on their own once they are onboarded.
+       These go through changeRequests, or an admin edits them directly. */
+    function protectedDriverFields() {
+      return [
+        "firstName", "lastName", "fullName", "phoneNumber", "phone",
+        "email", "address", "documentExpiry", "approved", "blocked",
+        "driverLicenseFrontUrl", "driverLicenseBackUrl", "pcoLicenseUrl",
+        "vehicleLicenceUrl", "insuranceUrl", "motUrl", "dbsCertificateUrl"
+      ];
+    }
+
+    /* Only admins and Cloud Functions decide these. A driver may write
+       approved: false (onboarding does), never true (UPDATED). */
+    function driverGrantsNothing(data) {
+      return data.get("approved", false) == false &&
+        data.get("blocked", false) == false &&
+        data.get("femaleVerified", false) == false &&
+        !("subscription" in data);
+    }
+
+    function driverKeepsGuardedFields() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return !changed.hasAny(["subscription", "femaleVerified", "blocked"]) &&
+        (!changed.hasAny(["approved"]) || request.resource.data.approved == false);
+    }
+
+    match /drivers/{driverId} {
+      allow read: if isAdmin() || signedIn();
+      allow create: if isAdmin() || (
+        signedIn() && request.auth.uid == driverId &&
+        driverGrantsNothing(request.resource.data)
+      );
+      allow update: if isAdmin() || (
+        signedIn() &&
+        (
+          (
+            request.auth.uid == driverId &&
+            driverKeepsGuardedFields() &&
+            (
+              resource.data.onboardingComplete != true ||
+              !request.resource.data.diff(resource.data).affectedKeys()
+                .hasAny(protectedDriverFields())
+            )
+          ) ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            "rating"
+          ])
+        )
+      );
+      allow delete: if isAdmin();
+    }
+
+    /* ================= USERS ================= */
+
+    match /users/{userId} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow create, update: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow delete: if isAdmin();
+    }
+
+    /* ================= RIDES ================= */
+
+    /* Vehicle classes (NEW): a driver may only claim a job their vehicle
+       qualifies for. Keep in step with constants/vehicleClasses.js. Unknown
+       or missing classes count as RouteMini, as they do in the app. */
+    function serves(vehicleType) {
+      let m = {
+        "RouteMini":      ["RouteMini"],
+        "RoutePlus":      ["RoutePlus", "RouteMini"],
+        "RouteXL":        ["RouteXL", "RoutePlus", "RouteMini"],
+        "RouteEco":       ["RouteEco", "RouteMini"],
+        "RouteExecutive": ["RouteExecutive", "RoutePlus", "RouteMini"]
+      };
+      return (vehicleType is string && vehicleType in m) ? m[vehicleType] : m["RouteMini"];
+    }
+
+    function rideClass(rideType) {
+      return (rideType is string &&
+        rideType in ["RouteMini", "RoutePlus", "RouteXL", "RouteEco", "RouteExecutive"])
+        ? rideType : "RouteMini";
+    }
+
+    function myVehicleServes(ride) {
+      return rideClass(ride.get("rideType", "RouteMini")) in serves(
+        get(/databases/$(database)/documents/drivers/$(request.auth.uid)).data.get("vehicleType", "RouteMini")
+      );
+    }
+
+    match /rides/{rideId} {
+      allow read: if isAdmin() || signedIn();
+
+      allow create: if isAdmin() || (
+        signedIn() &&
+        request.resource.data.riderId == request.auth.uid
+      );
+
+      allow update: if isAdmin() || (
+        signedIn() && (
+          request.auth.uid == resource.data.riderId ||
+          (
+            resource.data.status == "searching" &&
+            request.resource.data.status == "accepted" &&
+            request.resource.data.driverId == request.auth.uid &&
+            myVehicleServes(resource.data)
+          ) ||
+          request.auth.uid == resource.data.driverId
+        )
+      );
+
+      allow delete: if isAdmin();
+
+      match /messages/{messageId} {
+        allow read: if isAdmin() || (
+          signedIn() && (
+            request.auth.uid == get(/databases/$(database)/documents/rides/$(rideId)).data.riderId ||
+            request.auth.uid == get(/databases/$(database)/documents/rides/$(rideId)).data.driverId
+          )
+        );
+
+        allow create: if isAdmin() || (
+          signedIn() &&
+          request.auth.uid == request.resource.data.senderId &&
+          (
+            request.auth.uid == get(/databases/$(database)/documents/rides/$(rideId)).data.riderId ||
+            request.auth.uid == get(/databases/$(database)/documents/rides/$(rideId)).data.driverId
+          )
+        );
+
+        allow update: if isAdmin() || (
+          signedIn() &&
+          request.auth.uid != resource.data.senderId &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(["read"])
+        );
+
+        allow delete: if isAdmin();
+      }
+
+      /* Bidding counter-offers (NEW): one per driver, under their own uid.
+         The ride's passenger reads them and marks the one they take. */
+      match /offers/{offerDriverId} {
+        allow read: if isAdmin() || (
+          signedIn() && (
+            request.auth.uid == offerDriverId ||
+            get(/databases/$(database)/documents/rides/$(rideId)).data.riderId == request.auth.uid
+          )
+        );
+        allow create, update: if isAdmin() || (
+          signedIn() && (
+            (
+              request.auth.uid == offerDriverId &&
+              request.resource.data.driverId == offerDriverId &&
+              request.resource.data.status == "pending" &&
+              get(/databases/$(database)/documents/rides/$(rideId)).data.status == "searching"
+            ) || (
+              resource != null &&
+              get(/databases/$(database)/documents/rides/$(rideId)).data.riderId == request.auth.uid &&
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status"])
+            )
+          )
+        );
+        allow delete: if isAdmin();
+      }
+
+      /* Masked call log (NEW). Written by Cloud Functions only. */
+      match /calls/{callId} {
+        allow read: if isAdmin();
+        allow write: if isAdmin();
+      }
+    }
+
+    /* ================= NEARBY CARS (NEW) ================= */
+    /* A bare position per free driver, so passengers see cars nearby
+       without reading driver records. */
+
+    match /driverLocations/{driverId} {
+      allow read: if signedIn();
+      allow write: if isAdmin() || (signedIn() && request.auth.uid == driverId);
+    }
+
+    /* ================= WORKING CITIES (NEW) ================= */
+
+    match /cities/{cityId} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+
+    /* ================= DRIVER WALLETS ================= */
+
+    match /driverWallets/{driverId} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == driverId);
+      allow write: if isAdmin();
+    }
+
+    match /driverWallets/{driverId}/transactions/{transactionId} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == driverId);
+      allow write: if isAdmin();
+    }
+
+    /* Subscription revenue on the dashboard reads transactions across all
+       drivers at once, which needs this collection group rule (NEW). */
+    match /{path=**}/transactions/{transactionId} {
+      allow read: if isAdmin();
+    }
+
+    /* ================= DRIVER PAYOUTS ================= */
+
+    match /driverPayouts/{payoutId} {
+      allow read: if isAdmin() || (signedIn() && resource.data.driverId == request.auth.uid);
+      allow create, update, delete: if isAdmin();
+    }
+
+    /* ================= PAYMENTS ================= */
+
+    match /payments/{paymentId} {
+      allow read: if isAdmin() || (
+        signedIn() &&
+        (
+          resource.data.riderId == request.auth.uid ||
+          resource.data.driverId == request.auth.uid
+        )
+      );
+      allow create, update, delete: if isAdmin();
+    }
+
+    /* ================= REPORTS ================= */
+
+    match /reports/{reportId} {
+      allow read: if isAdmin() || (
+        signedIn() &&
+        resource.data.reporterId == request.auth.uid
+      );
+      allow create: if isAdmin() || signedIn();
+
+      /* The reporter may only touch the reply markers; everything else
+         about a case is set by admins (UPDATED). */
+      allow update: if isAdmin() || (
+        signedIn() &&
+        resource.data.reporterId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "lastReplyAt", "lastReplyBy", "updatedAt"
+        ])
+      );
+      allow delete: if isAdmin();
+
+      /* Support replies. The app sends senderRole "driver" or "rider"
+         (UPDATED, it previously only allowed "user"). */
+      match /messages/{messageId} {
+        allow read: if isAdmin() || (
+          signedIn() &&
+          get(/databases/$(database)/documents/reports/$(reportId)).data.reporterId == request.auth.uid
+        );
+        allow create: if isAdmin() || (
+          signedIn() &&
+          request.resource.data.senderRole in ["driver", "rider", "user"] &&
+          get(/databases/$(database)/documents/reports/$(reportId)).data.reporterId == request.auth.uid
+        );
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    /* ================= ADMINS ================= */
+
+    match /admins/{userId} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow create, update, delete: if isSuperAdmin();
+    }
+  }
+}
