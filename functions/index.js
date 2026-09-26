@@ -1308,114 +1308,132 @@ exports.creditDriverWalletOnRideCompletion = functions.firestore
     });
 
 
-exports.requestDriverPayout = functions.https.onCall(async (data, context) => {
-  const {amount} = data;
-  const driverId = context.auth ? context.auth.uid : null;
+exports.requestDriverPayout = functions
+    .runWith({secrets: STRIPE_SECRETS})
+    .https.onCall(async (data, context) => {
+      const {amount} = data;
+      const driverId = context.auth ? context.auth.uid : null;
 
-  // Must be authenticated
-  if (!driverId) {
-    throw new functions.https.HttpsError("unauthenticated", "Login required");
-  }
-
-  const requestedAmount = Number(amount);
-
-  if (!requestedAmount || requestedAmount <= 0) {
-    throw new functions.https.HttpsError("invalid-argument", "Invalid amount");
-  }
-
-  // Minimum and currency set on the dashboard (Settings, Drivers / Currency).
-  const appConfig = await loadAppConfig();
-  const MIN_PAYOUT = appConfig.drivers.minimumPayout;
-  if (requestedAmount < MIN_PAYOUT) {
-    throw new functions.https.HttpsError("failed-precondition",
-        "Minimum payout is " + MIN_PAYOUT.toFixed(2));
-  }
-
-  const walletRef = db.collection("driverWallets").doc(driverId);
-  const driverRef = db.collection("drivers").doc(driverId);
-
-  try {
-    const result = await db.runTransaction(async (transaction) => {
-      const walletSnap = await transaction.get(walletRef);
-      const driverSnap = await transaction.get(driverRef);
-
-      if (!walletSnap.exists) {
-        throw new functions.https.HttpsError("not-found", "Wallet not found");
+      // Must be authenticated
+      if (!driverId) {
+        throw new functions.https.HttpsError("unauthenticated",
+            "Login required");
       }
 
-      if (!driverSnap.exists) {
-        throw new functions.https.HttpsError("not-found", "Driver not found");
+      const requestedAmount = Number(amount);
+
+      if (!requestedAmount || requestedAmount <= 0) {
+        throw new functions.https.HttpsError("invalid-argument",
+            "Invalid amount");
       }
 
-      const wallet = walletSnap.data();
-      const driver = driverSnap.data();
-
-      // Check sufficient balance
-      if (wallet.availableBalance < requestedAmount) {
+      // Minimum and currency come from the dashboard settings.
+      const appConfig = await loadAppConfig();
+      const MIN_PAYOUT = appConfig.drivers.minimumPayout;
+      if (requestedAmount < MIN_PAYOUT) {
         throw new functions.https.HttpsError("failed-precondition",
-            "Insufficient balance");
+            "Minimum payout is " + MIN_PAYOUT.toFixed(2));
       }
 
-      // Check bank details exist
-      const accountDetails = driver.accountDetails || {};
-      if (!accountDetails.sortCode || !accountDetails.accountNumber) {
-        throw new functions.https.HttpsError("failed-precondition",
-            "Bank details not provided");
+      const walletRef = db.collection("driverWallets").doc(driverId);
+      const driverRef = db.collection("drivers").doc(driverId);
+
+      try {
+        const result = await db.runTransaction(async (transaction) => {
+          const walletSnap = await transaction.get(walletRef);
+          const driverSnap = await transaction.get(driverRef);
+
+          if (!walletSnap.exists) {
+            throw new functions.https.HttpsError("not-found",
+                "Wallet not found");
+          }
+
+          if (!driverSnap.exists) {
+            throw new functions.https.HttpsError("not-found",
+                "Driver not found");
+          }
+
+          const wallet = walletSnap.data();
+          const driver = driverSnap.data();
+
+          // Check sufficient balance
+          if (wallet.availableBalance < requestedAmount) {
+            throw new functions.https.HttpsError("failed-precondition",
+                "Insufficient balance");
+          }
+
+          // Check bank details exist
+          const accountDetails = driver.accountDetails || {};
+          if (!accountDetails.sortCode || !accountDetails.accountNumber) {
+            throw new functions.https.HttpsError("failed-precondition",
+                "Bank details not provided");
+          }
+
+          const payoutId = db.collection("driverPayouts").doc().id;
+          const payoutRef = db.collection("driverPayouts").doc(payoutId);
+          const now = admin.firestore.FieldValue.serverTimestamp();
+
+          // Deduct from available balance
+          transaction.update(walletRef, {
+            availableBalance: admin.firestore.FieldValue.
+                increment(-requestedAmount),
+            updatedAt: now,
+          });
+
+          // Create payout record
+          transaction.set(payoutRef, {
+            driverId: driverId,
+            amount: requestedAmount,
+            currency: appConfig.currency,
+            status: "pending_admin",
+            method: "bank_transfer",
+            bankDetails: {
+              accountHolder: accountDetails.accountHolder || "",
+              accountNumber: accountDetails.accountNumber || "",
+              sortCode: accountDetails.sortCode || "",
+            },
+            requestedAt: now,
+            createdAt: now,
+            updatedAt: now,
+          });
+
+          // Add transaction record to wallet
+          const walletTxRef = walletRef.collection("transactions").doc();
+          transaction.set(walletTxRef, {
+            type: "payout_request",
+            amount: -requestedAmount,
+            payoutId: payoutId,
+            status: "pending",
+            description: "Payout request #" + payoutId,
+            createdAt: now,
+          });
+
+          return {payoutId: payoutId, amount:
+        requestedAmount, status: "pending_admin",
+          autoPayout: driver.autoPayout === true,
+          stripeAccountId: driver.stripeAccountId || null};
+        });
+
+        console.log("New payout request:", result.payoutId,
+            "Driver:", driverId, "Amount:", requestedAmount);
+
+        // Drivers an admin has switched to automatic payouts are paid by Stripe
+        // transfer straight away; anything that stops that leaves the request
+        // in the admin queue with a note saying why.
+        if (result.autoPayout) {
+          const outcome = await autoSettlePayout(result.payoutId, driverId,
+              requestedAmount, appConfig.currency, result.stripeAccountId);
+          return {payoutId: result.payoutId, amount: requestedAmount,
+            status: outcome.status};
+        }
+
+        return {payoutId: result.payoutId, amount: requestedAmount,
+          status: "pending_admin"};
+      } catch (error) {
+        console.error("Payout request failed:", error);
+        throw error;
       }
-
-      const payoutId = db.collection("driverPayouts").doc().id;
-      const payoutRef = db.collection("driverPayouts").doc(payoutId);
-      const now = admin.firestore.FieldValue.serverTimestamp();
-
-      // Deduct from available balance
-      transaction.update(walletRef, {
-        availableBalance: admin.firestore.FieldValue.
-            increment(-requestedAmount),
-        updatedAt: now,
-      });
-
-      // Create payout record
-      transaction.set(payoutRef, {
-        driverId: driverId,
-        amount: requestedAmount,
-        currency: appConfig.currency,
-        status: "pending_admin",
-        method: "bank_transfer",
-        bankDetails: {
-          accountHolder: accountDetails.accountHolder || "",
-          accountNumber: accountDetails.accountNumber || "",
-          sortCode: accountDetails.sortCode || "",
-        },
-        requestedAt: now,
-        createdAt: now,
-        updatedAt: now,
-      });
-
-      // Add transaction record to wallet
-      const walletTxRef = walletRef.collection("transactions").doc();
-      transaction.set(walletTxRef, {
-        type: "payout_request",
-        amount: -requestedAmount,
-        payoutId: payoutId,
-        status: "pending",
-        description: "Payout request #" + payoutId,
-        createdAt: now,
-      });
-
-      return {payoutId: payoutId, amount:
-        requestedAmount, status: "pending_admin"};
     });
-
-    // Log for admin notification (replace with actual notification later)
-    console.log("New payout request:", result.payoutId,
-        "Driver:", driverId, "Amount:", requestedAmount);
-
-    return result;
-  } catch (error) {
-    console.error("Payout request failed:", error);
-    throw error;
-  }
-});
 
 /* ======================================
    ADMIN GUARD
@@ -1436,6 +1454,121 @@ async function assertAdmin(context) {
     throw new functions.https.HttpsError("permission-denied", "Admin only");
   }
   return uid;
+}
+
+/**
+ * Marks a pending payout as paid and settles the wallet ledger. Shared by
+ * the admin's "Mark paid" and automatic Stripe transfers.
+ * @param {FirebaseFirestore.Transaction} transaction Open transaction.
+ * @param {FirebaseFirestore.DocumentReference} payoutRef Payout document.
+ * @param {Object} payout Payout data as read inside the transaction.
+ * @param {Object} fields Extra fields to record on the payout.
+ * @param {FirebaseFirestore.QuerySnapshot} walletTxQuery Wallet transaction
+ *   rows for this payout, read before the transaction's writes.
+ */
+function settlePayout(transaction, payoutRef, payout, fields, walletTxQuery) {
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  transaction.update(payoutRef, {
+    status: "completed",
+    completedAt: now,
+    updatedAt: now,
+    ...fields,
+  });
+
+  if (walletTxQuery && !walletTxQuery.empty) {
+    transaction.update(walletTxQuery.docs[0].ref, {
+      status: "completed",
+      updatedAt: now,
+    });
+  }
+
+  const walletRef = db.collection("driverWallets").doc(payout.driverId);
+  transaction.update(walletRef, {
+    totalWithdrawn: admin.firestore.FieldValue.increment(payout.amount),
+    lastPayoutAt: now,
+    updatedAt: now,
+  });
+}
+
+/**
+ * Pays a fresh payout request by Stripe transfer to the driver's connected
+ * account. On any problem the request stays pending_admin with a note.
+ * @param {string} payoutId Payout document id.
+ * @param {string} driverId Driver uid.
+ * @param {number} amount Major units.
+ * @param {string} currency ISO code.
+ * @param {string|null} stripeAccountId Connected account, if any.
+ * @return {Promise<{status: string}>} Resulting payout status.
+ */
+async function autoSettlePayout(payoutId, driverId, amount, currency,
+    stripeAccountId) {
+  const payoutRef = db.collection("driverPayouts").doc(payoutId);
+  const leaveForAdmin = async (note) => {
+    await payoutRef.update({
+      autoPayout: "skipped",
+      autoPayoutNote: note,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return {status: "pending_admin"};
+  };
+
+  if (!stripeAccountId) {
+    return leaveForAdmin("The driver has not connected a Stripe account.");
+  }
+
+  try {
+    const account = await stripe.accounts.retrieve(stripeAccountId);
+    if (!account.payouts_enabled) {
+      return leaveForAdmin(
+          "The driver's Stripe account has not finished onboarding.");
+    }
+
+    const transfer = await stripe.transfers.create({
+      amount: Math.round(amount * 100),
+      currency: String(currency || "GBP").toLowerCase(),
+      destination: stripeAccountId,
+      description: "TakeARoute payout " + payoutId,
+      metadata: {payoutId, driverId},
+    }, {idempotencyKey: "payout_" + payoutId});
+
+    const walletTxQuery = await db
+        .collection("driverWallets").doc(driverId)
+        .collection("transactions")
+        .where("payoutId", "==", payoutId)
+        .limit(1)
+        .get();
+
+    await db.runTransaction(async (transaction) => {
+      const snap = await transaction.get(payoutRef);
+      const payout = snap.data();
+      if (!snap.exists || payout.status !== "pending_admin") return;
+      settlePayout(transaction, payoutRef, payout, {
+        method: "stripe_transfer",
+        processedBy: "auto",
+        processedAt: admin.firestore.FieldValue.serverTimestamp(),
+        transactionReference: transfer.id,
+        adminNotes: "Paid automatically by Stripe transfer.",
+        autoPayout: "completed",
+      }, walletTxQuery);
+    });
+
+    await sendPush([driverId], {
+      title: "Payout sent",
+      body: "Your withdrawal is on its way to your bank.",
+      channelId: "general",
+      data: {type: "payout"},
+    });
+    return {status: "completed"};
+  } catch (error) {
+    console.error("Automatic payout failed:", payoutId, error);
+    await payoutRef.update({
+      autoPayout: "failed",
+      autoPayoutNote: error.message || "Stripe transfer failed.",
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return {status: "pending_admin"};
+  }
 }
 
 exports.completeDriverPayout = functions.https.onCall(async (data, context) => {
@@ -1464,19 +1597,6 @@ exports.completeDriverPayout = functions.https.onCall(async (data, context) => {
             "Payout not in pending status");
       }
 
-      const now = admin.firestore.FieldValue.serverTimestamp();
-
-      transaction.update(payoutRef, {
-        status: "completed",
-        processedBy: adminId,
-        processedAt: now,
-        transactionReference: transactionReference,
-        adminNotes: adminNotes || "",
-        completedAt: now,
-        updatedAt: now,
-      });
-
-      // Update wallet transaction to completed
       const walletTxQuery = await db
           .collection("driverWallets")
           .doc(payout.driverId)
@@ -1485,20 +1605,12 @@ exports.completeDriverPayout = functions.https.onCall(async (data, context) => {
           .limit(1)
           .get();
 
-      if (!walletTxQuery.empty) {
-        transaction.update(walletTxQuery.docs[0].ref, {
-          status: "completed",
-          updatedAt: now,
-        });
-      }
-
-      // Update driver wallet totals
-      const walletRef = db.collection("driverWallets").doc(payout.driverId);
-      transaction.update(walletRef, {
-        totalWithdrawn: admin.firestore.FieldValue.increment(payout.amount),
-        lastPayoutAt: now,
-        updatedAt: now,
-      });
+      settlePayout(transaction, payoutRef, payout, {
+        processedBy: adminId,
+        processedAt: admin.firestore.FieldValue.serverTimestamp(),
+        transactionReference: transactionReference,
+        adminNotes: adminNotes || "",
+      }, walletTxQuery);
     });
 
     return {success: true, payoutId: payoutId};
@@ -2954,3 +3066,183 @@ exports.updateAverageRating = functions.firestore
       return null;
     });
 
+
+/* ======================================
+   DOCUMENT EXPIRY DETECTION
+   Reads the expiry date off a driver's uploaded licence, insurance or MOT
+   with Cloud Vision, so admins do not have to type it from the image.
+   Needs the Vision API enabled on the project:
+     gcloud services enable vision.googleapis.com
+====================================== */
+
+/**
+ * Which documentExpiry key a file in drivers/{id}/ belongs to, from the
+ * names the app and the dashboard give uploads. Null for files with no
+ * expiry (selfie, DBS, company agreement).
+ * @param {string} file File name without the folder.
+ * @return {string|null} Expiry key.
+ */
+function expiryKeyForFile(file) {
+  const name = String(file || "").toLowerCase();
+  if (name.startsWith("driverlicense") || name.startsWith("drivinglicence")) {
+    return "drivingLicence";
+  }
+  if (name.startsWith("pcolicen")) return "privateHireLicence";
+  if (name.startsWith("vehiclelicence")) return "vehicleLicence";
+  if (name.startsWith("phvinsurance") || name.startsWith("insurance")) {
+    return "insurance";
+  }
+  if (name.startsWith("mot")) return "mot";
+  return null;
+}
+
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug",
+  "sep", "oct", "nov", "dec"];
+
+/**
+ * Every date mentioned in a block of OCR text, with where it was found.
+ * @param {string} text OCR output.
+ * @return {Array<{date: Date, index: number}>} Dates found.
+ */
+function datesIn(text) {
+  const found = [];
+  const push = (y, m, d, index) => {
+    if (y < 100) y += 2000;
+    if (m < 1 || m > 12 || d < 1 || d > 31 || y < 1990 || y > 2100) return;
+    const date = new Date(Date.UTC(y, m - 1, d));
+    if (date.getUTCMonth() !== m - 1) return;
+    found.push({date, index});
+  };
+  let match;
+  const numeric = /\b(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})\b/g;
+  while ((match = numeric.exec(text))) {
+    push(Number(match[3]), Number(match[2]), Number(match[1]), match.index);
+  }
+  const iso = /\b(\d{4})-(\d{2})-(\d{2})\b/g;
+  while ((match = iso.exec(text))) {
+    push(Number(match[1]), Number(match[2]), Number(match[3]), match.index);
+  }
+  const dayFirst =
+    /\b(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]{3})[a-z]*\.?,?\s+(\d{4})\b/gi;
+  while ((match = dayFirst.exec(text))) {
+    const m = MONTHS.indexOf(match[2].toLowerCase()) + 1;
+    if (m) push(Number(match[3]), m, Number(match[1]), match.index);
+  }
+  const monthFirst = /\b([a-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})\b/gi;
+  while ((match = monthFirst.exec(text))) {
+    const m = MONTHS.indexOf(match[1].toLowerCase()) + 1;
+    if (m) push(Number(match[3]), m, Number(match[2]), match.index);
+  }
+  return found;
+}
+
+const EXPIRY_WORDS =
+  /expir|valid\s*(?:until|to|till)|until|\b4b\b|renew|due|expiry|end date/i;
+
+/**
+ * The most likely expiry date in OCR text: a date introduced by an expiry
+ * word wins, otherwise the latest date that is not long past.
+ * @param {string} text OCR output.
+ * @return {{date: string, confidence: string}|null} YYYY-MM-DD and how sure.
+ */
+function findExpiryDate(text) {
+  const twoYearsAgo = Date.now() - 2 * 365 * 24 * 60 * 60 * 1000;
+  const fifteenYears = Date.now() + 15 * 365 * 24 * 60 * 60 * 1000;
+  const candidates = datesIn(text)
+      .filter((c) => c.date.getTime() > twoYearsAgo &&
+        c.date.getTime() < fifteenYears)
+      .map((c) => {
+        const before = text.slice(Math.max(0, c.index - 40), c.index);
+        return {...c, keyword: EXPIRY_WORDS.test(before)};
+      });
+  if (!candidates.length) return null;
+  candidates.sort((a, b) =>
+    (b.keyword - a.keyword) || (b.date - a.date));
+  const best = candidates[0];
+  return {
+    date: best.date.toISOString().slice(0, 10),
+    confidence: best.keyword ? "labelled" : "latest",
+  };
+}
+
+/**
+ * Full text of an uploaded image or PDF via Cloud Vision.
+ * @param {string} gcsUri gs:// path of the file.
+ * @param {string} contentType MIME type.
+ * @return {Promise<string>} Text found.
+ */
+async function readDocumentText(gcsUri, contentType) {
+  const vision = require("@google-cloud/vision");
+  const client = new vision.ImageAnnotatorClient();
+  if (contentType === "application/pdf") {
+    const [result] = await client.batchAnnotateFiles({
+      requests: [{
+        inputConfig: {gcsSource: {uri: gcsUri}, mimeType: contentType},
+        features: [{type: "DOCUMENT_TEXT_DETECTION"}],
+        pages: [1, 2],
+      }],
+    });
+    const responses = (result.responses[0] || {}).responses || [];
+    return responses
+        .map((r) => (r.fullTextAnnotation || {}).text || "")
+        .join("\n");
+  }
+  const [result] = await client.documentTextDetection(gcsUri);
+  return (result.fullTextAnnotation || {}).text || "";
+}
+
+exports.detectDocumentExpiry = functions
+    .runWith({memory: "512MB", timeoutSeconds: 120})
+    .storage.object().onFinalize(async (object) => {
+      const name = object.name || "";
+      const match = name.match(
+          /^drivers\/([^/]+)\/(?:(admin|pending)\/)?([^/]+)$/);
+      if (!match) return null;
+      const [, driverId, folder, file] = match;
+      const key = expiryKeyForFile(file);
+      if (!key) return null;
+
+      const contentType = object.contentType || "";
+      if (!contentType.startsWith("image/") &&
+          contentType !== "application/pdf") {
+        return null;
+      }
+
+      let text = "";
+      try {
+        text = await readDocumentText(`gs://${object.bucket}/${name}`,
+            contentType);
+      } catch (error) {
+        console.error("Vision could not read", name, error.message);
+        return null;
+      }
+
+      const found = findExpiryDate(text);
+      const driverRef = db.collection("drivers").doc(driverId);
+      const patch = {
+        documentExpiryDetected: {
+          [key]: {
+            date: found ? found.date : null,
+            confidence: found ? found.confidence : "none",
+            source: name,
+            pending: folder === "pending",
+            detectedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+        },
+      };
+
+      // Fill an empty expiry straight away; never overwrite one an admin
+      // set, and never apply dates from replacement requests still
+      // awaiting approval.
+      if (found && folder !== "pending") {
+        const snap = await driverRef.get();
+        const current = snap.exists ?
+          (snap.data().documentExpiry || {})[key] : null;
+        if (!current) patch.documentExpiry = {[key]: found.date};
+      }
+
+      await driverRef.set(patch, {merge: true});
+      console.log("Expiry detected for", driverId, key,
+          found ? found.date : "none");
+      return null;
+    });

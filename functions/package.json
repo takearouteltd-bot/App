@@ -14,6 +14,7 @@
   },
   "main": "index.js",
   "dependencies": {
+    "@google-cloud/vision": "^4.3.3",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "firebase-admin": "^12.7.0",

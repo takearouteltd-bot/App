@@ -95,7 +95,8 @@
           }
         }
       ],
-      "./plugins/withLightOnly"
+      "./plugins/withLightOnly",
+      "./plugins/withNotificationColorOverride"
     ]
   }
 }
