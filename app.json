@@ -18,7 +18,7 @@
       "bundleIdentifier": "com.takearoute.app",
       "googleServicesFile": "./GoogleService-Info.plist",
       "config": {
-        "googleMapsApiKey": "AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ"
+        "googleMapsApiKey": "AIzaSyD2FkUIMuw3hkXi827QxnI8W1w2XX_KGd8"
       },
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
@@ -34,7 +34,7 @@
       "package": "com.takearoute.app",
       "config": {
         "googleMaps": {
-          "apiKey": "AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ"
+          "apiKey": "AIzaSyD2FkUIMuw3hkXi827QxnI8W1w2XX_KGd8"
         }
       },
       "permissions": [

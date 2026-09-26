@@ -22,12 +22,6 @@ export function remainingStops(ride) {
   return stopsOf(ride).slice(Math.max(0, Number(ride?.stopsCompleted) || 0));
 }
 
-/* The waypoints parameter for the Directions API. */
-export function waypointsParam(stops) {
-  if (!stops?.length) return '';
-  return `&waypoints=${encodeURIComponent(stops.map((s) => `${s.latitude},${s.longitude}`).join('|'))}`;
-}
-
 /* Turn-by-turn in Google Maps through every remaining stop. */
 export function navigationUrl(destination, stops) {
   const base = `https://www.google.com/maps/dir/?api=1&destination=${destination.latitude},${destination.longitude}&travelmode=driving`;

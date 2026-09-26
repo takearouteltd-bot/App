@@ -29,6 +29,7 @@ import {
 } from '../../components/ui/kit';
 import { ACTIVE_RIDE_STATUSES } from '../../utils/modeSwitch';
 import CarMarker from '../../components/CarMarker';
+import { GOOGLE_MAPS_API_KEY } from '../../config/maps';
 
 // Nearby cars: free drivers within this distance of the pickup, whose phone
 // has reported in recently (a driver whose app was closed mid-shift drops off
@@ -48,7 +49,6 @@ function kmBetween(a, b) {
 }
 import { Alert } from '../../components/ui/alert';
 
-const GOOGLE_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ';
 
 // What the banner says about a trip that is already running.
 const RIDE_LABEL = {
@@ -232,7 +232,7 @@ export default function HomeScreen() {
   const getFullAddress = async (lat, lng) => {
     try {
       const response = await fetch(
-        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_API_KEY}`
+        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_API_KEY}`
       );
       const data = await response.json();
       const result = data.results?.[0];

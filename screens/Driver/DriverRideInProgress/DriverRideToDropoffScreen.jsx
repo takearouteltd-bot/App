@@ -15,17 +15,16 @@ import { Alert } from '../../../components/ui/alert';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import polyline from '@mapbox/polyline';
 import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 import { currencySymbol, money, waitingCharge } from '../../../utils/appConfig';
-import { navigationUrl, remainingStops, stopsOf, waypointsParam } from '../../../utils/stops';
+import { navigationUrl, remainingStops, stopsOf } from '../../../utils/stops';
+import { fetchRoute as fetchDrivingRoute, durationText, distanceText } from '../../../utils/routes';
 import SafetyButton from '../../../components/SafetyButton';
 import { confirmMaskedCall } from '../../../utils/calling';
 import { COLORS, TYPE, SPACE, RADIUS, SHADOW, Avatar, IconButton, isCoord } from '../../../components/ui/kit';
 
 const { height } = Dimensions.get('window');
-const GOOGLE_MAPS_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ';
 
 // Within this many metres of the drop-off the trip counts as arrived.
 const ARRIVAL_DISTANCE_M = 60;
@@ -132,18 +131,14 @@ export default function DriverRideToDropoffScreen() {
   // Through any stops not reached yet; the ETA shown is to the next point.
   const fetchRoute = useCallback(async (start, destination, stops = []) => {
     try {
-      const res = await fetch(
-        `https://maps.googleapis.com/maps/api/directions/json?origin=${start.latitude},${start.longitude}&destination=${destination.latitude},${destination.longitude}${waypointsParam(stops)}&key=${GOOGLE_MAPS_API_KEY}`
-      );
-      const data = await res.json();
-      if (!data.routes?.length) return;
+      const route = await fetchDrivingRoute({ origin: start, destination, waypoints: stops });
+      if (!route) return;
 
-      const points = polyline.decode(data.routes[0].overview_polyline.points);
-      setRouteCoords(points.map(([lat, lng]) => ({ latitude: lat, longitude: lng })));
+      setRouteCoords(route.coordinates);
 
-      const leg = data.routes[0].legs[0];
-      setEta(leg.duration.text);
-      setDropoffDistance(leg.distance.text);
+      const leg = route.legs[0] || route;
+      setEta(durationText(leg.duration));
+      setDropoffDistance(distanceText(leg.distance));
     } catch (error) {
       console.log('Route fetch error:', error);
     }

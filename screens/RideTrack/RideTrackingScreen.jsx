@@ -12,7 +12,7 @@ import { Alert } from '../../components/ui/alert';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import CarMarker from '../../components/CarMarker';
 import { remainingStops } from '../../utils/stops';
-import MapViewDirections from 'react-native-maps-directions';
+import RouteDirections from '../../components/RouteDirections';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
@@ -38,7 +38,6 @@ import {
 import { cancellationFeeFor } from '../../utils/cancellation';
 import { money } from '../../utils/appConfig';
 
-const GOOGLE_MAPS_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ';
 
 const STATUS = {
   accepted: { title: 'Driver on the way', detail: 'Heading to your pickup point.' },
@@ -275,11 +274,10 @@ export default function RideTrackingScreen() {
         ) : null}
 
         {drawRoute ? (
-          <MapViewDirections
+          <RouteDirections
             origin={routeFrom}
             destination={routeTo}
             waypoints={beforePickup ? [] : remainingStops(rideData)}
-            apikey={GOOGLE_MAPS_API_KEY}
             strokeWidth={4}
             strokeColor={COLORS.primary}
           />

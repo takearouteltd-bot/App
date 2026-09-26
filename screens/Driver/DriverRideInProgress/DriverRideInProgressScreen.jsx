@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { Alert } from '../../../components/ui/alert';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
-import MapViewDirections from 'react-native-maps-directions';
+import RouteDirections from '../../../components/RouteDirections';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { doc, onSnapshot, updateDoc, serverTimestamp, arrayUnion } from 'firebase/firestore';
@@ -26,7 +26,6 @@ import { useWaitingClock } from '../../../utils/useWaitingClock';
 import { COLORS, TYPE, SPACE, RADIUS, SHADOW, Avatar, IconButton, RouteLine, isCoord, validCoords } from '../../../components/ui/kit';
 
 const { height } = Dimensions.get('window');
-const GOOGLE_MAPS_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ';
 
 const SHEET_OPEN = Math.min(height * 0.62, 560);
 const SHEET_SHUT = 190;
@@ -325,10 +324,9 @@ export default function DriverRideInProgressScreen() {
         ) : null}
 
         {isCoord(pickupLocation) ? (
-        <MapViewDirections
+        <RouteDirections
           origin={driverLocation}
           destination={pickupLocation}
-          apikey={GOOGLE_MAPS_API_KEY}
           strokeWidth={4}
           strokeColor={COLORS.primary}
           onReady={(result) => {

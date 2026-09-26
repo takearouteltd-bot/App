@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { Alert } from '../../components/ui/alert';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
-import MapViewDirections from 'react-native-maps-directions';
+import RouteDirections from '../../components/RouteDirections';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { collection, doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
@@ -24,7 +24,6 @@ import {
   MapUnavailable, isCoord, validCoords, regionCovering,
 } from '../../components/ui/kit';
 
-const GOOGLE_MAPS_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ';
 
 // How long we have been looking. Real elapsed time, rather than a progress bar
 // that implies we know how far through the search we are — we do not.
@@ -265,10 +264,9 @@ export default function RideRequestScreen() {
             </Marker>
           ) : null}
           {isCoord(pickupLocation) && isCoord(dropoffLocation) ? (
-            <MapViewDirections
+            <RouteDirections
               origin={pickupLocation}
               destination={dropoffLocation}
-              apikey={GOOGLE_MAPS_API_KEY}
               strokeWidth={4}
               strokeColor={COLORS.primary}
             />

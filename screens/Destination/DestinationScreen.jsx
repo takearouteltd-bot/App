@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import * as Location from 'expo-location';
 import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
+import { GOOGLE_MAPS_API_KEY, PLACES_NEW_PROPS, placeCoords } from '../../config/maps';
 import { Ionicons } from '@expo/vector-icons';
 import {
   collection,
@@ -24,7 +25,6 @@ import {
 import { auth, db } from '../../config/firebase';
 import { COLORS, TYPE, SPACE, RADIUS, EmptyState } from '../../components/ui/kit';
 
-const GOOGLE_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ';
 
 const PICKUP = {
   home: { label: 'Home', icon: 'home' },
@@ -172,11 +172,12 @@ export default function DestinationSearchScreen({ navigation, route }) {
               autoFocus
               returnKeyType="search"
               fetchDetails
+              {...PLACES_NEW_PROPS}
               onPress={(data, details = null) => {
-                if (!details) return;
+                const point = placeCoords(details);
+                if (!point) return;
                 const destination = {
-                  latitude: details.geometry.location.lat,
-                  longitude: details.geometry.location.lng,
+                  ...point,
                   description: data.description,
                   address: data.description,
                   placeId: data.place_id,
@@ -185,7 +186,7 @@ export default function DestinationSearchScreen({ navigation, route }) {
                 Keyboard.dismiss();
                 goToFare(destination);
               }}
-              query={{ key: GOOGLE_API_KEY, language: 'en', types: 'geocode|establishment' }}
+              query={{ key: GOOGLE_MAPS_API_KEY, languageCode: 'en' }}
               styles={{
                 container: { flex: 0 },
                 textInputContainer: styles.inputContainer,

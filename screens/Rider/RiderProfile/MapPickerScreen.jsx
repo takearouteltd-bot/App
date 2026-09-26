@@ -18,12 +18,12 @@ import * as Location from "expo-location";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { auth, db } from "../../../config/firebase";
 import { COLORS } from '../../../components/ui/kit';
+import { GOOGLE_MAPS_API_KEY, PLACES_NEW_PROPS, placeCoords } from '../../../config/maps';
 
 const PRIMARY = COLORS.primary;
 const SECONDARY = COLORS.blue;
 const BG = COLORS.surface;
 
-const GOOGLE_PLACES_API_KEY = "AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ";
 
 const PLACE_TYPES = {
   home: { icon: "home", label: "Home", color: "#EEF0F4", iconColor: SECONDARY },
@@ -99,7 +99,7 @@ export default function MapPickerScreen() {
     setLoadingAddress(true);
     try {
       const response = await fetch(
-        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_PLACES_API_KEY}`
+        `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&key=${GOOGLE_MAPS_API_KEY}`
       );
       const data = await response.json();
 
@@ -139,16 +139,29 @@ export default function MapPickerScreen() {
 
     try {
       const response = await fetch(
-        `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(
-          text
-        )}&components=country:gb&key=${GOOGLE_PLACES_API_KEY}`
+        `https://places.googleapis.com/v1/places:autocomplete?key=${GOOGLE_MAPS_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ input: text, languageCode: "en", includedRegionCodes: ["gb"] }),
+        }
       );
       const data = await response.json();
 
-      if (data.predictions) {
-        setPredictions(data.predictions);
-        setShowPredictions(true);
-      }
+      // Places (New) shapes, mapped onto the fields this screen renders.
+      const found = (data.suggestions || [])
+        .map((s) => s.placePrediction)
+        .filter(Boolean)
+        .map((p) => ({
+          place_id: p.placeId,
+          description: p.text?.text || "",
+          structured_formatting: {
+            main_text: p.structuredFormat?.mainText?.text,
+            secondary_text: p.structuredFormat?.secondaryText?.text,
+          },
+        }));
+      setPredictions(found);
+      setShowPredictions(found.length > 0);
     } catch (error) {
       console.error("Places search error:", error);
     }
@@ -161,12 +174,13 @@ export default function MapPickerScreen() {
 
     try {
       const response = await fetch(
-        `https://maps.googleapis.com/maps/api/place/details/json?place_id=${prediction.place_id}&fields=geometry,formatted_address,name&key=${GOOGLE_PLACES_API_KEY}`
+        `https://places.googleapis.com/v1/places/${prediction.place_id}?key=${GOOGLE_MAPS_API_KEY}&fields=${PLACES_NEW_PROPS.fields}`
       );
-      const data = await response.json();
+      const place = await response.json();
+      const point = placeCoords(place);
 
-      if (data.result?.geometry) {
-        const { lat, lng } = data.result.geometry.location;
+      if (point) {
+        const { latitude: lat, longitude: lng } = point;
         const newRegion = {
           latitude: lat,
           longitude: lng,
@@ -177,7 +191,7 @@ export default function MapPickerScreen() {
         setRegion(newRegion);
         mapRef.current?.animateToRegion(newRegion, 1000);
 
-        const formattedAddress = data.result.formatted_address || prediction.description;
+        const formattedAddress = place.formattedAddress || prediction.description;
         setAddress(formattedAddress);
         setSelectedLocation({
           latitude: lat,
@@ -191,7 +205,7 @@ export default function MapPickerScreen() {
           const suggestedNames = {
             home: "Home",
             work: "Work",
-            other: data.result.name || "Saved Place",
+            other: place.displayName?.text || "Saved Place",
           };
           setPlaceName(suggestedNames[selectedType] || "");
         }

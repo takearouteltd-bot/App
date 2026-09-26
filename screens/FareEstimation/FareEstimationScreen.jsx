@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { Alert } from '../../components/ui/alert';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
-import MapViewDirections from 'react-native-maps-directions';
+import RouteDirections from '../../components/RouteDirections';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { db } from '../../config/firebase';
@@ -44,7 +44,6 @@ import {
   regionCovering,
 } from '../../components/ui/kit';
 
-const GOOGLE_MAPS_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ';
 
 // Vehicle classes. `multiplier` scales the fare; `passengers` is the real seat
 // count. No arrival estimates are shown here because nothing measures them —
@@ -392,11 +391,10 @@ export default function FareEstimationScreen({ route }) {
           ))}
 
           {isCoord(origin) && isCoord(destination) ? (
-          <MapViewDirections
+          <RouteDirections
             origin={origin}
             destination={destination}
             waypoints={stops.map((s) => ({ latitude: s.latitude, longitude: s.longitude }))}
-            apikey={GOOGLE_MAPS_API_KEY}
             strokeWidth={4}
             strokeColor={COLORS.primary}
             onReady={(result) => {

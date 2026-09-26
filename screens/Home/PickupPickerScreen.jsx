@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
 import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
+import { GOOGLE_MAPS_API_KEY, PLACES_NEW_PROPS, placeCoords } from '../../config/maps';
 import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
@@ -25,7 +26,6 @@ import {
   regionFrom,
 } from '../../components/ui/kit';
 
-const GOOGLE_API_KEY = 'AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ';
 
 /* Drop a pin on your exact pickup point.
    The pin is fixed to the centre of the screen and the map moves underneath
@@ -184,18 +184,16 @@ export default function PickupPickerScreen() {
             placeholder="Search for a street or postcode"
             minLength={2}
             fetchDetails
+            {...PLACES_NEW_PROPS}
             onPress={(data, details = null) => {
-              if (!details) return;
-              const point = {
-                latitude: details.geometry.location.lat,
-                longitude: details.geometry.location.lng,
-              };
+              const point = placeCoords(details);
+              if (!point) return;
               Keyboard.dismiss();
               setCentre(point);
               setAddress(data.description);
               mapRef.current?.animateToRegion(regionFrom(point, 0.004), 400);
             }}
-            query={{ key: GOOGLE_API_KEY, language: 'en', components: 'country:gb' }}
+            query={{ key: GOOGLE_MAPS_API_KEY, languageCode: 'en', includedRegionCodes: ['gb'] }}
             styles={{
               container: { flex: 0 },
               textInputContainer: { backgroundColor: 'transparent', padding: 0 },
