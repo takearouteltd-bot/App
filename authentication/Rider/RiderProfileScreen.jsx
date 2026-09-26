@@ -23,7 +23,7 @@ import { COLORS, RADIUS } from '../../components/ui/kit';
 
 import { confirmLeaveSignup } from "../../utils/leaveSignup";
 const TOTAL_STEPS = 3;
-const PRIMARY = COLORS.green;
+const PRIMARY = COLORS.primary;
 
 export default function RiderProfileScreen({ navigation }) {
   const [currentStep] = useState(1);
@@ -232,7 +232,7 @@ const styles = StyleSheet.create({
   photoText: { marginTop: 10, fontSize: 14, color: "gray" },
 
   label: { fontSize: 14, fontWeight: "600", marginBottom: 6, marginLeft: 4 },
-  input: {
+  input: { color: COLORS.ink,
     backgroundColor: "#F4F4F4",
     borderRadius: 30,
     paddingHorizontal: 18,

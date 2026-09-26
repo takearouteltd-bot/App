@@ -69,7 +69,7 @@
       [
         "expo-notifications",
         {
-          "color": "#79B531",
+          "color": "#86C814",
           "sounds": [
             "./assets/sounds/job_alert.wav"
           ]
@@ -93,7 +93,8 @@
             "backgroundColor": "#00356D"
           }
         }
-      ]
+      ],
+      "./plugins/withLightOnly"
     ]
   }
 }

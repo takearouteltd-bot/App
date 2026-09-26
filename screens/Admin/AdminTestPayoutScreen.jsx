@@ -259,7 +259,7 @@ const styles = StyleSheet.create({
     color: COLORS.faint,
     marginBottom: 12,
   },
-  input: {
+  input: { color: COLORS.ink,
     borderWidth: 1,
     borderColor: COLORS.line,
     borderRadius: 8,
@@ -273,7 +273,7 @@ const styles = StyleSheet.create({
   },
   completeBtn: {
     flex: 1,
-    backgroundColor: COLORS.green,
+    backgroundColor: COLORS.primary,
     paddingVertical: 12,
     borderRadius: 8,
     alignItems: 'center',
