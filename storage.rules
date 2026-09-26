@@ -1,47 +1,37 @@
 rules_version = '2';
-
-// Cloud Storage. Files are read through download URLs (which carry their own
-// token), so these rules mostly govern who may upload where.
 service firebase.storage {
   match /b/{bucket}/o {
+
     function signedIn() {
       return request.auth != null;
     }
 
-    // Same admin check as firestore.rules: an active admins/{uid} document.
     function isAdmin() {
       return signedIn() &&
         firestore.exists(/databases/(default)/documents/admins/$(request.auth.uid)) &&
         firestore.get(/databases/(default)/documents/admins/$(request.auth.uid)).data.isActive == true;
     }
 
-    function isOwner(userId) {
-      return signedIn() && request.auth.uid == userId;
+    function sensibleFile() {
+      return request.resource.size < 10 * 1024 * 1024 &&
+        (request.resource.contentType.matches('image/.*') ||
+         request.resource.contentType == 'application/pdf');
     }
 
-    // Images and PDFs only, 15 MB at most.
-    function isDocument() {
-      return request.resource == null ||
-        (request.resource.size < 15 * 1024 * 1024 &&
-         (request.resource.contentType.matches('image/.*') ||
-          request.resource.contentType == 'application/pdf'));
+    match /riders/{userId}/{allPaths=**} {
+      allow read: if signedIn();
+      allow write: if isAdmin() ||
+        (signedIn() && request.auth.uid == userId && sensibleFile());
     }
 
-    // A driver uploads their own onboarding documents and replacement
-    // requests (pending/); admins upload verified replacements (admin/).
-    match /drivers/{driverId}/admin/{file} {
-      allow read: if isAdmin() || isOwner(driverId);
-      allow write: if isAdmin() && isDocument();
-    }
-    match /drivers/{driverId}/{allPaths=**} {
-      allow read: if isAdmin() || isOwner(driverId);
-      allow write: if (isAdmin() || isOwner(driverId)) && isDocument();
+    match /drivers/{userId}/{allPaths=**} {
+      allow read: if signedIn();
+      allow write: if isAdmin() ||
+        (signedIn() && request.auth.uid == userId && sensibleFile());
     }
 
-    // Passenger profile photos.
-    match /riders/{riderId}/{allPaths=**} {
-      allow read: if isAdmin() || isOwner(riderId);
-      allow write: if (isAdmin() || isOwner(riderId)) && isDocument();
+    match /{allPaths=**} {
+      allow read, write: if false;
     }
   }
 }
