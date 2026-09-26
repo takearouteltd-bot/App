@@ -69,13 +69,28 @@ service cloud.firestore {
 
     /* ================= RIDERS ================= */
 
+    /* Fields the server owns on a rider: what Stripe charges, and whether
+       the account is suspended. The default card may only be one of the
+       rider's own saved cards (UPDATED). */
+    function riderKeepsGuardedFields(userId) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return !changed.hasAny(["stripeCustomerId", "blocked", "rating", "ratingCount"]) &&
+        (!changed.hasAny(["defaultPaymentMethodId"]) ||
+          request.resource.data.defaultPaymentMethodId == null ||
+          exists(/databases/$(database)/documents/riders/$(userId)/cards/$(request.resource.data.defaultPaymentMethodId)));
+    }
+
     match /riders/{userId} {
       allow read: if isAdmin() || signedIn();
-      allow create: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow create: if isAdmin() || (
+        signedIn() && request.auth.uid == userId &&
+        request.resource.data.get("blocked", false) == false &&
+        !("stripeCustomerId" in request.resource.data)
+      );
       allow update: if isAdmin() || (
         signedIn() &&
         (
-          request.auth.uid == userId ||
+          (request.auth.uid == userId && riderKeepsGuardedFields(userId)) ||
           request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             "rating"
           ])
@@ -105,7 +120,8 @@ service cloud.firestore {
         "firstName", "lastName", "fullName", "phoneNumber", "phone",
         "email", "address", "documentExpiry", "approved", "blocked",
         "driverLicenseFrontUrl", "driverLicenseBackUrl", "pcoLicenseUrl",
-        "vehicleLicenceUrl", "insuranceUrl", "motUrl", "dbsCertificateUrl"
+        "vehicleLicenceUrl", "insuranceUrl", "motUrl", "dbsCertificateUrl",
+        "accountDetails"
       ];
     }
 
@@ -180,6 +196,118 @@ service cloud.firestore {
         ? rideType : "RouteMini";
     }
 
+    function rideChanged() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    function riderCancels() {
+      return rideChanged().hasOnly(["status", "cancelledBy", "cancelReason", "endedEarly", "cancelledAt"]) &&
+        request.resource.data.status == "cancelled" &&
+        request.resource.data.cancelledBy == "rider" &&
+        resource.data.status in ["searching", "accepted", "arrived", "ongoing"];
+    }
+
+    function riderChangesPreference() {
+      return rideChanged().hasOnly(["femaleDriverOnly", "femalePreferenceDropped"]) &&
+        resource.data.status == "searching";
+    }
+
+    function riderRaisesOffer() {
+      return rideChanged().hasOnly(["offeredFare", "fareEstimate", "fare"]) &&
+        resource.data.status == "searching";
+    }
+
+    /* The offer is only read once the write has the right shape, so a
+       missing offer document cannot break the other rider paths. */
+    function offerMatchesWrite(rideId) {
+      let offer = get(/databases/$(database)/documents/rides/$(rideId)/offers/$(request.resource.data.driverId)).data;
+      return offer.driverId == request.resource.data.driverId &&
+        offer.status == "pending" &&
+        request.resource.data.offeredFare == offer.price &&
+        request.resource.data.fare.total == offer.price;
+    }
+
+    function riderTakesOffer(rideId) {
+      return rideChanged().hasOnly(["status", "driverId", "acceptedAt", "walletProcessed",
+          "offeredFare", "fareEstimate", "fare", "acceptedOfferId"]) &&
+        resource.data.status == "searching" &&
+        request.resource.data.status == "accepted" &&
+        request.resource.data.walletProcessed == false &&
+        request.resource.data.driverId is string &&
+        offerMatchesWrite(rideId);
+    }
+
+    function riderRatesDriver() {
+      return rideChanged().hasOnly(["driverRating"]) &&
+        resource.data.status == "completed" &&
+        !("driverRating" in resource.data);
+    }
+
+    function riderRideUpdate(rideId) {
+      return request.auth.uid == resource.data.riderId && (
+        riderCancels() || riderChangesPreference() || riderRaisesOffer() ||
+        riderRatesDriver() || riderTakesOffer(rideId)
+      );
+    }
+
+    /* A free driver takes a searching job. */
+    function driverClaimsRide() {
+      return rideChanged().hasOnly(["status", "driverId", "acceptedAt", "walletProcessed"]) &&
+        resource.data.status == "searching" &&
+        request.resource.data.status == "accepted" &&
+        request.resource.data.driverId == request.auth.uid &&
+        request.resource.data.walletProcessed == false &&
+        myVehicleServes(resource.data);
+    }
+
+    function driverArrives() {
+      return rideChanged().hasOnly(["status", "arrivedAt", "arrivedAwayFromPickupM"]) &&
+        resource.data.status == "accepted" && request.resource.data.status == "arrived";
+    }
+
+    function driverStarts() {
+      return rideChanged().hasOnly(["status", "startedAt"]) &&
+        resource.data.status == "arrived" && request.resource.data.status == "ongoing";
+    }
+
+    function driverReachesStop() {
+      return rideChanged().hasOnly(["stopsCompleted"]) &&
+        resource.data.status == "ongoing";
+    }
+
+    function driverCompletes() {
+      return rideChanged().hasOnly(["status", "completedAt", "expiresAt", "cashCollected",
+          "completedAwayFromDropoff", "completeDistanceKm"]) &&
+        resource.data.status == "ongoing" && request.resource.data.status == "completed";
+    }
+
+    function driverGivesBack() {
+      return rideChanged().hasOnly(["status", "driverId", "acceptedAt", "declinedBy", "lastDriverCancelAt"]) &&
+        resource.data.status in ["accepted", "arrived"] &&
+        request.resource.data.status == "searching" &&
+        request.resource.data.driverId == null;
+    }
+
+    function driverCancels() {
+      return rideChanged().hasOnly(["status", "cancelledBy", "cancelReason", "endedEarly", "cancelledAt"]) &&
+        request.resource.data.status == "cancelled" &&
+        request.resource.data.cancelledBy == "driver" &&
+        resource.data.status in ["accepted", "arrived", "ongoing"];
+    }
+
+    function driverRatesRider() {
+      return rideChanged().hasOnly(["riderRating"]) &&
+        resource.data.status == "completed" &&
+        !("riderRating" in resource.data);
+    }
+
+    function driverRideUpdate() {
+      return request.auth.uid == resource.data.driverId && (
+        driverArrives() || driverStarts() || driverReachesStop() || driverCompletes() ||
+        driverGivesBack() || driverCancels() || driverRatesRider()
+      );
+    }
+
     function myVehicleServes(ride) {
       return rideClass(ride.get("rideType", "RouteMini")) in serves(
         get(/databases/$(database)/documents/drivers/$(request.auth.uid)).data.get("vehicleType", "RouteMini")
@@ -194,19 +322,15 @@ service cloud.firestore {
         request.resource.data.riderId == request.auth.uid
       );
 
+      /* Updates are limited to what each side legitimately does, field by
+         field, so nobody can rewrite the fare, the payment state or the
+         other side's rating (UPDATED). Money is settled by the server from
+         these fields, which is why they are locked. */
       allow update: if isAdmin() || (
         signedIn() && (
-          request.auth.uid == resource.data.riderId ||
-          (
-            resource.data.status == "searching" &&
-            request.resource.data.status == "accepted" &&
-            request.resource.data.driverId == request.auth.uid &&
-            myVehicleServes(resource.data)
-          ) ||
-          request.auth.uid == resource.data.driverId
+          riderRideUpdate(rideId) || driverClaimsRide() || driverRideUpdate()
         )
       );
-
       allow delete: if isAdmin();
 
       match /messages/{messageId} {
@@ -337,7 +461,7 @@ service cloud.firestore {
         signedIn() &&
         resource.data.reporterId == request.auth.uid &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          "lastReplyAt", "lastReplyBy", "updatedAt"
+          "lastReplyAt", "lastReplyBy", "updatedAt", "reporterSeenAt"
         ])
       );
       allow delete: if isAdmin();
