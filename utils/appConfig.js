@@ -26,6 +26,7 @@ export const DEFAULT_APP_CONFIG = {
   dispatch: {
     searchRadiusKm: 50,
     requestTimeoutSeconds: 20,
+    searchTimeoutMinutes: 15,
   },
   drivers: {
     maxShiftHours: 12,

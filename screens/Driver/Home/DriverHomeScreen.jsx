@@ -80,6 +80,8 @@ export default function DriverHomeScreen() {
   // flashes "You are online" at someone who is not.
   const [isOnline, setIsOnline] = useState(false);
   const [isApproved, setIsApproved] = useState(false);
+  // Set when an admin declined the application; holds the reason they gave.
+  const [rejection, setRejection] = useState(null);
   // The class this driver's vehicle was approved as. Decides which jobs they
   // are shown; see constants/vehicleClasses.js.
   const [vehicleType, setVehicleType] = useState(null);
@@ -134,6 +136,11 @@ export default function DriverHomeScreen() {
       const data = snap.data();
       setIsOnline(data.status === 'online');
       setIsApproved(data.approved === true);
+      setRejection(
+        data.onboardingStatus === 'rejected'
+          ? data.rejectionReason || 'Contact support to find out why.'
+          : null
+      );
       setOnRide(data.isOnRide === true);
       setVehicleType(data.vehicleType || null);
       setMembershipStatus(data.subscription?.status || null);
@@ -220,8 +227,8 @@ export default function DriverHomeScreen() {
 
     if (newStatus === 'online' && !isApproved) {
       Alert.alert(
-        'Application under review',
-        'You can go online as soon as your application has been approved.'
+        rejection ? 'Application not approved' : 'Application under review',
+        rejection || 'You can go online as soon as your application has been approved.'
       );
       return;
     }
@@ -653,6 +660,8 @@ export default function DriverHomeScreen() {
                 ? shiftLabel(shiftStartedAt, maxShiftHours) || 'Waiting for jobs'
                 : isApproved
                 ? 'Go online to get jobs'
+                : rejection
+                ? 'Application not approved'
                 : 'Application under review'}
             </Text>
           </View>

@@ -33,7 +33,7 @@ export default function DriverNavigator({ onboardingStatus, setOnboardingStatus 
         </Stack.Screen>
       )}
 
-      {(onboardingStatus === "pending" || onboardingStatus === "complete") && (
+      {(onboardingStatus === "pending" || onboardingStatus === "rejected" || onboardingStatus === "complete") && (
         <Stack.Screen name="DriverTabs" component={DriverTabs} />
       )}
 

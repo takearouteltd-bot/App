@@ -1162,10 +1162,11 @@ exports.createWalletOnOnboardingComplete = functions.firestore
             .doc(driverId);
 
         try {
+          const currency = (await loadAppConfig()).currency;
           await walletRef.create({
             availableBalance: 0,
             pendingBalance: 0,
-            currency: "GBP",
+            currency,
             walletStatus: "active",
             totalEarned: 0,
             totalPaidOut: 0,
@@ -1251,7 +1252,7 @@ exports.creditDriverWalletOnRideCompletion = functions.firestore
               availableBalance: driverEarning,
               totalEarned: driverEarning,
               pendingBalance: 0,
-              currency: "GBP",
+              currency: rideCurrency(rideSnap.data()).toUpperCase(),
               walletStatus: "active",
               createdAt: admin.firestore.FieldValue.serverTimestamp(),
               updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1322,8 +1323,9 @@ exports.requestDriverPayout = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError("invalid-argument", "Invalid amount");
   }
 
-  // Minimum set on the dashboard (Settings, Drivers).
-  const MIN_PAYOUT = (await loadAppConfig()).drivers.minimumPayout;
+  // Minimum and currency set on the dashboard (Settings, Drivers / Currency).
+  const appConfig = await loadAppConfig();
+  const MIN_PAYOUT = appConfig.drivers.minimumPayout;
   if (requestedAmount < MIN_PAYOUT) {
     throw new functions.https.HttpsError("failed-precondition",
         "Minimum payout is " + MIN_PAYOUT.toFixed(2));
@@ -1376,7 +1378,7 @@ exports.requestDriverPayout = functions.https.onCall(async (data, context) => {
       transaction.set(payoutRef, {
         driverId: driverId,
         amount: requestedAmount,
-        currency: "GBP",
+        currency: appConfig.currency,
         status: "pending_admin",
         method: "bank_transfer",
         bankDetails: {
@@ -1430,7 +1432,7 @@ async function assertAdmin(context) {
     throw new functions.https.HttpsError("unauthenticated", "Login required");
   }
   const adminDoc = await db.collection("admins").doc(uid).get();
-  if (!adminDoc.exists || adminDoc.data().isActive === false) {
+  if (!adminDoc.exists || adminDoc.data().isActive !== true) {
     throw new functions.https.HttpsError("permission-denied", "Admin only");
   }
   return uid;
@@ -2406,13 +2408,29 @@ exports.notifyAnnouncement = functions.firestore
 
 exports.notifyChangeRequestDecision = functions.firestore
     .document("changeRequests/{id}")
-    .onUpdate(async (change) => {
+    .onUpdate(async (change, context) => {
       const before = change.before.data();
       const after = change.after.data();
       if (before.status === after.status || after.status === "pending") {
         return null;
       }
       const ok = after.status === "approved";
+      if (ok && after.kind === "detail" && after.requestedValue) {
+        // The dashboard already updated the driver document; keep the Auth
+        // account (what sign-in checks) in step for contact details.
+        const value = String(after.requestedValue).trim();
+        const authPatch = after.field === "email" ? {email: value} :
+          after.field === "phoneNumber" && value.startsWith("+") ?
+            {phoneNumber: value} : null;
+        if (authPatch) {
+          try {
+            await admin.auth().updateUser(after.driverId, authPatch);
+          } catch (error) {
+            console.error("Auth update failed for change request",
+                context.params.id, error);
+          }
+        }
+      }
       return sendPush([after.driverId], {
         title: ok ? "Change approved" : "Change not approved",
         body: ok ?

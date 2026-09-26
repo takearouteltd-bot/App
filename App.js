@@ -133,6 +133,8 @@ export default function App() {
             }
           } else if (!data || !data.onboardingComplete) {
             setDriverOnboardingStatus("onboarding");
+          } else if (data.onboardingStatus === "rejected") {
+            setDriverOnboardingStatus("rejected");
           } else if (!data.approved) {
             setDriverOnboardingStatus("pending");
           } else {

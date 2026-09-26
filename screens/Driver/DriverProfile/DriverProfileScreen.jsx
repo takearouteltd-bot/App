@@ -185,6 +185,8 @@ export default function DriverProfileScreen() {
         <View style={{ marginTop: SPACE[2] }}>
           {isApproved ? (
             <StatusPill status={isOnline ? "online" : "approved"} label={isOnline ? "Online" : "Approved, offline"} dot />
+          ) : driver?.onboardingStatus === "rejected" ? (
+            <StatusPill status="rejected" label="Application not approved" />
           ) : (
             <StatusPill status="pending" label="Application under review" />
           )}

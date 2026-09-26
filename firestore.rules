@@ -119,6 +119,7 @@ service cloud.firestore {
       return [
         "firstName", "lastName", "fullName", "phoneNumber", "phone",
         "email", "address", "documentExpiry", "approved", "blocked",
+        "onboardingStatus", "rejectionReason",
         "driverLicenseFrontUrl", "driverLicenseBackUrl", "pcoLicenseUrl",
         "vehicleLicenceUrl", "insuranceUrl", "motUrl", "dbsCertificateUrl",
         "accountDetails"
