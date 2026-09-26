@@ -408,7 +408,9 @@ export default function DriverRideToDropoffScreen() {
       </MapView>
 
       <SafeAreaView style={styles.topBar} pointerEvents="box-none">
-        <IconButton icon="chevron-back" onPress={() => navigation.goBack()} accessibilityLabel="Go back" />
+        {/* No back button: this screen replaced the earlier trip screens,
+            so there is nothing behind it until the trip ends. */}
+        <View />
         <View />
         <SafetyButton role="driver" rideId={rideId} />
       </SafeAreaView>

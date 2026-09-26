@@ -88,7 +88,7 @@ export default function PhoneLoginScreen({ navigation }) {
         <View style={styles.body}>
           <ScreenHeader
             title="Enter your phone number"
-            subtitle="We will send a verification code to sign you in."
+            subtitle="New or returning, we text you a code. No password to remember, and no password to forget."
             onBack={() => navigation.goBack()}
           />
 

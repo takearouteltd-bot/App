@@ -11,6 +11,7 @@ import { Alert } from "../../components/ui/alert";
 import { Ionicons } from "@expo/vector-icons";
 import {
   createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
 } from "firebase/auth";
 import { auth, db } from "../../config/firebase";
@@ -34,8 +35,38 @@ export default function EmailAuthScreen({ navigation }) {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   const isLogin = mode === "login";
+
+  // Forgot password: Firebase emails a reset link to the address typed
+  // above. Nothing is revealed about whether the address is registered.
+  const handleForgotPassword = async () => {
+    const address = email.trim().toLowerCase();
+    if (!address) {
+      Alert.alert("Enter your email", "Type your email address above and we will send a reset link to it.");
+      return;
+    }
+    setResetting(true);
+    try {
+      await sendPasswordResetEmail(auth, address);
+      Alert.alert(
+        "Check your email",
+        `If ${address} has an account, a link to choose a new password is on its way. It can take a minute, and check spam.`
+      );
+    } catch (error) {
+      console.log("Password reset error:", error);
+      const message =
+        error.code === "auth/invalid-email"
+          ? "Please enter a valid email address."
+          : error.code === "auth/too-many-requests"
+          ? "Too many attempts. Please try again later."
+          : "We could not send the email. Please try again.";
+      Alert.alert("Could not send", message);
+    } finally {
+      setResetting(false);
+    }
+  };
 
   const handleSubmit = async () => {
     const address = email.trim().toLowerCase();
@@ -212,6 +243,18 @@ export default function EmailAuthScreen({ navigation }) {
             />
           )}
 
+          {isLogin ? (
+            <TouchableOpacity
+              style={styles.forgotBtn}
+              onPress={handleForgotPassword}
+              disabled={resetting}
+              accessibilityRole="button"
+              hitSlop={{ top: 8, bottom: 8 }}
+            >
+              <Text style={styles.forgotText}>{resetting ? "Sending reset link…" : "Forgot password?"}</Text>
+            </TouchableOpacity>
+          ) : null}
+
           <Button
             title={isLogin ? "Login" : "Create Account"}
             onPress={handleSubmit}
@@ -243,6 +286,8 @@ export default function EmailAuthScreen({ navigation }) {
 const styles = StyleSheet.create({
   content: { flexGrow: 1, padding: SPACE[5], paddingBottom: SPACE[10] },
   toggle: { marginTop: SPACE[5], marginBottom: SPACE[6] },
+  forgotBtn: { alignSelf: "flex-end", paddingVertical: SPACE[2], marginTop: -SPACE[2], marginBottom: SPACE[2] },
+  forgotText: { ...TYPE.small, color: COLORS.midnight, fontWeight: "700" },
   switchBtn: { alignItems: "center", paddingVertical: SPACE[5] },
   switchText: { ...TYPE.small, color: COLORS.muted },
   switchTextBold: { color: COLORS.midnight, fontWeight: "800" },

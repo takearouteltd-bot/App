@@ -43,6 +43,7 @@ export default function EmergencyContactScreen({ navigation, route }) {
           setPhone(c.phone || '');
         }
       })
+      .catch((error) => console.log('Could not load emergency contact:', error))
       .finally(() => setLoaded(true));
   }, [uid, collectionName]);
 

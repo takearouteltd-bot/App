@@ -21,9 +21,14 @@ import {
   doc,
   updateDoc,
   getDoc,
+  getDocs,
+  limit,
   onSnapshot,
+  query,
   setDoc,
+  where,
 } from 'firebase/firestore';
+import { ACTIVE_RIDE_STATUSES } from '../../utils/modeSwitch';
 import { getAuth } from 'firebase/auth';
 import { useAppConfig, currencySymbol, surgeMultiplier, cashEnabled, femaleDriverEnabled } from '../../utils/appConfig';
 import { useCities, cityFor } from '../../utils/cities';
@@ -212,6 +217,26 @@ export default function FareEstimationScreen({ route }) {
       return;
     }
 
+    // One ride at a time. Without this, coming Back to this screen after
+    // booking and tapping Confirm again created a second ride.
+    try {
+      const active = await getDocs(
+        query(
+          collection(db, 'rides'),
+          where('riderId', '==', currentUser.uid),
+          where('status', 'in', ACTIVE_RIDE_STATUSES),
+          limit(1)
+        )
+      );
+      if (!active.empty) {
+        Alert.alert('You already have a ride', 'Finish or cancel your current ride before booking another.');
+        navigation.popToTop();
+        return;
+      }
+    } catch (error) {
+      console.log('Active ride check failed:', error);
+    }
+
     // Cash rides need no card. Card rides need what the server actually
     // charges with: a Stripe customer and a default card on the rider record,
     // not merely a card in the list.
@@ -344,7 +369,9 @@ export default function FareEstimationScreen({ route }) {
       ).catch(() => null);
 
       setLoading(false);
-      navigation.navigate('RideRequest', { rideId: rideRef.id });
+      // Replace, so Back from the ride screens cannot return here and book
+      // the same trip twice.
+      navigation.replace('RideRequest', { rideId: rideRef.id });
     } catch (error) {
       console.error(error);
       setLoading(false);

@@ -117,6 +117,17 @@ export default function RideTrackingScreen() {
         return;
       }
 
+      // Opened late (for example from a chat notification) after the trip
+      // already ended: go to the summary instead of "driver on the way".
+      if (data.status === 'completed') {
+        hasNavigatedToProgress.current = true;
+        navigation.reset({
+          index: 0,
+          routes: [{ name: 'RiderRideCompleted', params: { rideId } }],
+        });
+        return;
+      }
+
       if (data.status === 'cancelled' || data.status === 'canceled') {
         hasNavigatedToProgress.current = true;
         if (data.cancelledBy === 'driver') {

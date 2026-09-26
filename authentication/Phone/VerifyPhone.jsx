@@ -91,11 +91,13 @@ export default function VerifyPhone({ navigation, route }) {
     const userDoc = await getDoc(userRef);
 
     if (!userDoc.exists()) {
-      await setDoc(userRef, {
-        phone,
-        role: null,
-        createdAt: serverTimestamp(),
-      });
+      // Same field name App.js uses, and merged so neither write wins over
+      // the other.
+      await setDoc(
+        userRef,
+        { phoneNumber: phone, role: null, createdAt: serverTimestamp() },
+        { merge: true }
+      );
     }
     if (!userDoc.exists() || !userDoc.data().role) {
       navigation.replace("SelectUserType");

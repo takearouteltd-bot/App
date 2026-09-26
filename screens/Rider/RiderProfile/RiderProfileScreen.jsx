@@ -151,7 +151,7 @@ const fetchRiderData = useCallback(async () => {
         <EmptyState
           icon="person-circle-outline"
           title="You are signed out"
-          action={<Button title="Sign in" onPress={() => navigation.navigate("Login")} />}
+          action={<Button title="Sign in" onPress={() => signOutEverywhere()} />}
         />
       </Screen>
     );
@@ -160,7 +160,7 @@ const fetchRiderData = useCallback(async () => {
   const displayName = riderData?.fullName || currentUser.displayName || "Passenger";
   const photoURL = riderData?.profileImage;
   const memberSince = riderData?.createdAt
-    ? new Date(riderData.createdAt.toDate()).toLocaleDateString("en-GB", { month: "long", year: "numeric" })
+    ? (riderData.createdAt.toDate ? riderData.createdAt.toDate() : new Date(riderData.createdAt)).toLocaleDateString("en-GB", { month: "long", year: "numeric" })
     : currentUser.metadata?.creationTime
     ? new Date(currentUser.metadata.creationTime).toLocaleDateString("en-GB", { month: "long", year: "numeric" })
     : null;

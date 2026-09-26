@@ -79,7 +79,13 @@ export default function RideCompletedScreen() {
             <Text style={styles.heroLabel}>Trip complete</Text>
             <Text style={styles.heroAmount}>{money(earned, currency)}</Text>
             <Text style={styles.heroSub}>
-              {settled ? 'Added to your wallet' : 'Final amount confirming, including any waiting time'}
+              {ride.paymentMethod === 'cash'
+                ? 'Paid to you in cash by the passenger'
+                : ride.walletProcessed === true
+                ? 'Added to your wallet'
+                : settled
+                ? 'Being added to your wallet'
+                : 'Final amount confirming, including any waiting time'}
             </Text>
           </Card>
         </Animated.View>

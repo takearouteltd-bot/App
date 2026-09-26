@@ -70,6 +70,10 @@ const ChatScreen = ({ route }) => {
       }));
       setMessages(msgs);
       setLoading(false);
+    }, (error) => {
+      // Denied (not this person's ride) or offline: stop the spinner.
+      console.log('Chat listener error:', error);
+      setLoading(false);
     });
 
     return () => unsubscribe();
