@@ -2257,7 +2257,8 @@ exports.notifyChangeRequestDecision = functions.firestore
    RIDE RECEIPTS BY EMAIL
    Sent through Resend once payment is captured, and on request from the app.
    Set the key first:  firebase functions:secrets:set RESEND_API_KEY
-   Optional sender override: RECEIPT_FROM (default receipts@takearoute.ltd).
+   Optional sender override: RECEIPT_FROM (default
+   receipts@invoice.takearoute.ltd, the domain verified in Resend).
 ====================================== */
 const RECEIPT_SECRETS = ["RESEND_API_KEY"];
 
@@ -2476,7 +2477,7 @@ async function emailRideReceipt(rideId, ride, to) {
     },
     body: JSON.stringify({
       from: process.env.RECEIPT_FROM ||
-        "TakeARoute <receipts@takearoute.ltd>",
+        "TakeARoute <receipts@invoice.takearoute.ltd>",
       to: [address],
       subject: mail.subject,
       html: mail.html,
