@@ -6,6 +6,8 @@ import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { money, useAppConfig } from '../../../utils/appConfig';
+import { openStripeAgreement, openTerms } from '../../../utils/legal';
+import { ConsentRow } from '../../../components/onboarding/kit';
 import {
   COLORS,
   TYPE,
@@ -54,6 +56,11 @@ export default function WithdrawScreen() {
 
   // Set by an admin: withdrawals go straight to the bank on request.
   const autoPayout = driver?.autoPayout === true;
+  const instant = appConfig.drivers.instantPayouts === 1;
+  // Drivers who added bank details before the Stripe agreement existed are
+  // asked once here; automatic payouts need it.
+  const needsAgreement = autoPayout && !driver?.payoutTermsAcceptance;
+  const [agreed, setAgreed] = useState(false);
 
   const availableBalance = wallet ? wallet.availableBalance || 0 : 0;
   // Minimum set on the dashboard (Settings, Drivers). Also enforced server-side.
@@ -86,8 +93,16 @@ export default function WithdrawScreen() {
       return;
     }
 
+    if (needsAgreement && !agreed) {
+      Alert.alert('One more thing', 'Please accept the Stripe Connected Account Agreement so we can pay you automatically.');
+      return;
+    }
+
     setRequesting(true);
     try {
+      if (needsAgreement) {
+        await httpsCallable(functions, 'recordPayoutTermsAcceptance')();
+      }
       const requestPayout = httpsCallable(functions, 'requestDriverPayout');
       const result = await requestPayout({ driverId, amount: availableBalance });
 
@@ -182,9 +197,24 @@ export default function WithdrawScreen() {
             promise a bank transfer that has not happened yet. */}
         <Text style={[TYPE.small, { marginTop: SPACE[4] }]}>
           {autoPayout
-            ? 'Sent to your bank as soon as you request it. It usually arrives the same day, and always within 1 to 2 working days.'
+            ? instant
+              ? 'Sent to your bank as soon as you request it, and usually there within minutes.'
+              : 'Sent to your bank as soon as you request it. It usually arrives within 1 to 2 working days.'
             : 'Withdrawals are checked by our team before the transfer is sent, usually within 1 to 2 working days.'}
         </Text>
+
+        {needsAgreement ? (
+          <View style={{ marginTop: SPACE[4] }}>
+            <ConsentRow
+              checked={agreed}
+              onToggle={() => setAgreed((v) => !v)}
+              text="I accept the "
+              link={{ label: 'payout terms', onPress: openTerms }}
+              link2={{ label: 'Stripe Connected Account Agreement', onPress: openStripeAgreement }}
+              suffix=". Payouts are processed by Stripe."
+            />
+          </View>
+        ) : null}
       </ScrollView>
 
       <Footer>

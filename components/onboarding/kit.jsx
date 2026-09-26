@@ -236,7 +236,7 @@ export function ChoiceCard({ title, detail, meta, icon, selected, onPress, style
  * A tick box with its sentence. `link` makes part of the sentence open a
  * document without toggling the box.
  */
-export function ConsentRow({ checked, onToggle, text, link }) {
+export function ConsentRow({ checked, onToggle, text, link, joiner, link2, suffix }) {
   return (
     <TouchableOpacity
       style={styles.consent}
@@ -255,6 +255,15 @@ export function ConsentRow({ checked, onToggle, text, link }) {
             {link.label}
           </Text>
         ) : null}
+        {link2 ? (
+          <>
+            {joiner || ' and the '}
+            <Text style={styles.consentLink} onPress={link2.onPress} suppressHighlighting>
+              {link2.label}
+            </Text>
+          </>
+        ) : null}
+        {suffix || null}
       </Text>
     </TouchableOpacity>
   );

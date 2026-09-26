@@ -31,6 +31,7 @@ export const DEFAULT_APP_CONFIG = {
   drivers: {
     maxShiftHours: 12,
     minimumPayout: 10,
+    instantPayouts: 0,
   },
   subscription: {
     monthlyPrice: 99.99,

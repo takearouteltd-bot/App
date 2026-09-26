@@ -22,3 +22,9 @@ export async function openPolicy(url, label) {
 
 export const openTerms = () => openPolicy(TERMS_URL, 'Terms of use');
 export const openPrivacy = () => openPolicy(PRIVACY_URL, 'Privacy policy');
+
+// Drivers paid automatically hold a TakeARoute-managed Stripe account, so
+// they agree to Stripe's terms for it when adding bank details.
+export const STRIPE_AGREEMENT_URL = 'https://stripe.com/gb/legal/connect-account';
+export const openStripeAgreement = () =>
+  openPolicy(STRIPE_AGREEMENT_URL, 'Stripe Connected Account Agreement');

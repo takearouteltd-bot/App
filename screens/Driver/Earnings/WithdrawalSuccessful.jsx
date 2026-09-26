@@ -36,7 +36,7 @@ export default function WithdrawalSuccessScreen() {
             transfer. Nothing has left the bank yet. */}
         <Text style={styles.body}>
           {sent
-            ? 'The transfer to your bank has been sent. It usually arrives the same day, and always within 1 to 2 working days.'
+            ? 'The transfer to your bank has been sent. Instant payouts arrive within minutes; others within 1 to 2 working days.'
             : 'Our team will check this and send the transfer, usually within 1 to 2 working days. You will get a notification when it has been paid.'}
         </Text>
 

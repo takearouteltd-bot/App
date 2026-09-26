@@ -7,7 +7,9 @@ import { db, auth } from "../../config/firebase";
 import { Alert } from "../../components/ui/alert";
 import { COLORS, Field, RADIUS, SPACE, TYPE } from "../../components/ui/kit";
 import { ConsentRow, OnboardingFrame, StepSection } from "../../components/onboarding/kit";
-import { openTerms } from "../../utils/legal";
+import { openStripeAgreement, openTerms } from "../../utils/legal";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "../../config/firebase";
 
 // UK sort code: 6 digits shown as XX-XX-XX.
 const isValidSortCode = (value) => /^\d{2}-\d{2}-\d{2}$/.test(value);
@@ -76,7 +78,7 @@ export default function PayoutDetailsScreen({ navigation }) {
       return;
     }
     if (!acceptedTerms) {
-      Alert.alert("One more thing", "Please accept the payout terms to continue.");
+      Alert.alert("One more thing", "Please accept the payout terms and the Stripe Connected Account Agreement to continue.");
       return;
     }
 
@@ -88,12 +90,19 @@ export default function PayoutDetailsScreen({ navigation }) {
           sortCode,
           accountNumber,
           acceptedTerms,
+          acceptedStripeAgreement: true,
           updatedAt: new Date(),
         },
         onboardingStep: 5,
         onboardingComplete: false,
       });
 
+      // Stripe needs the moment (and IP) the driver agreed, for the account
+      // their automatic payouts go through. Recorded on the server; if it
+      // fails, the Withdraw screen asks again later.
+      httpsCallable(functions, "recordPayoutTermsAcceptance")().catch((error) =>
+        console.log("Could not record the Stripe agreement:", error)
+      );
       navigation.navigate("FinalReview");
     } catch (error) {
       console.log("Error saving payout details:", error);
@@ -153,6 +162,8 @@ export default function PayoutDetailsScreen({ navigation }) {
         onToggle={() => setAcceptedTerms((v) => !v)}
         text="I accept the "
         link={{ label: "payout terms and conditions", onPress: openTerms }}
+        link2={{ label: "Stripe Connected Account Agreement", onPress: openStripeAgreement }}
+        suffix=". Payouts are processed by Stripe."
       />
     </OnboardingFrame>
   );

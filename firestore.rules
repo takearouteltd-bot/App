@@ -120,8 +120,8 @@ service cloud.firestore {
         "firstName", "lastName", "fullName", "phoneNumber", "phone",
         "email", "address", "documentExpiry", "approved", "blocked",
         "onboardingStatus", "rejectionReason", "autoPayout",
-        "documentExpiryDetected", "stripeRecipientId", "stripePayoutMethodId",
-        "payoutMethodFingerprint",
+        "documentExpiryDetected", "payoutAccountId", "payoutAccountFingerprint",
+        "payoutTermsAcceptance",
         "driverLicenseFrontUrl", "driverLicenseBackUrl", "pcoLicenseUrl",
         "vehicleLicenceUrl", "insuranceUrl", "motUrl", "dbsCertificateUrl",
         "accountDetails"
