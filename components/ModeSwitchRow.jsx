@@ -65,11 +65,11 @@ export default function ModeSwitchRow({ uid, currentRole }) {
 
   const copy = describeMode(target, record);
   const icon = target === 'driver' ? 'car-sport-outline' : 'person-outline';
-  const iconColor = copy.tone === 'warning' ? COLORS.amber : COLORS.primary;
+  const iconColor = copy.tone === 'warning' ? COLORS.amber : COLORS.midnight;
 
   return (
     <View>
-      <Card style={{ paddingVertical: 0 }}>
+      <Card flush>
         <ListRow
           icon={icon}
           iconColor={iconColor}

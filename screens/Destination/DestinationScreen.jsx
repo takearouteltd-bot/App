@@ -23,7 +23,7 @@ import {
   setDoc,
 } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
-import { COLORS, TYPE, SPACE, RADIUS, EmptyState } from '../../components/ui/kit';
+import { COLORS, TYPE, SPACE, RADIUS, SHADOW, ScreenHeader, EmptyState } from '../../components/ui/kit';
 
 
 const PICKUP = {
@@ -128,23 +128,12 @@ export default function DestinationSearchScreen({ navigation, route }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
-          style={styles.backBtn}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <Ionicons name="chevron-back" size={24} color={COLORS.navy} />
-        </TouchableOpacity>
-        <Text style={TYPE.title}>Where to?</Text>
-      </View>
+      <ScreenHeader compact title={addingStop ? 'Add a stop' : 'Where to?'} onBack={() => navigation.goBack()} />
 
       {/* Pickup and destination as one journey, the shape people expect. */}
       <View style={styles.journey}>
         <View style={styles.gutter}>
-          <View style={styles.dotGreen} />
+          <View style={styles.dotPickup} />
           <View style={styles.stem} />
           <View style={styles.square} />
         </View>
@@ -204,7 +193,9 @@ export default function DestinationSearchScreen({ navigation, route }) {
               enablePoweredByContainer={false}
               renderRow={(rowData) => (
                 <View style={styles.suggestion}>
-                  <Ionicons name="location-outline" size={20} color={COLORS.muted} />
+                  <View style={styles.rowIcon}>
+                    <Ionicons name="location-outline" size={18} color={COLORS.midnight} />
+                  </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.suggestionMain} numberOfLines={1}>
                       {rowData.structured_formatting?.main_text || rowData.description}
@@ -239,8 +230,8 @@ export default function DestinationSearchScreen({ navigation, route }) {
                   onPress={() => handleRecentSearchPress(item)}
                   activeOpacity={0.6}
                 >
-                  <View style={styles.recentIcon}>
-                    <Ionicons name="time-outline" size={18} color={COLORS.muted} />
+                  <View style={styles.rowIcon}>
+                    <Ionicons name="time-outline" size={18} color={COLORS.midnight} />
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.recentText} numberOfLines={1}>
@@ -272,64 +263,62 @@ export default function DestinationSearchScreen({ navigation, route }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.white },
 
-  header: { paddingHorizontal: SPACE[5], paddingTop: SPACE[2], paddingBottom: SPACE[4] },
-  backBtn: {
-    width: 40, height: 40, marginLeft: -SPACE[2], marginBottom: SPACE[2],
-    alignItems: 'center', justifyContent: 'center',
-  },
-
-  journey: { flexDirection: 'row', gap: SPACE[3], paddingHorizontal: SPACE[5], zIndex: 10 },
+  journey: { flexDirection: 'row', gap: SPACE[3], paddingHorizontal: SPACE[5], paddingTop: SPACE[2], zIndex: 10 },
   gutter: { width: 12, alignItems: 'center', paddingTop: 22 },
-  dotGreen: { width: 11, height: 11, borderRadius: 6, backgroundColor: COLORS.limeDeep },
+  dotPickup: {
+    width: 12, height: 12, borderRadius: 6,
+    backgroundColor: COLORS.lime, borderWidth: 2.5, borderColor: COLORS.midnight,
+  },
   stem: { flex: 1, width: 2, backgroundColor: COLORS.line, marginVertical: 4, minHeight: 34 },
-  square: { width: 11, height: 11, borderRadius: 3, backgroundColor: COLORS.navy },
+  square: { width: 12, height: 12, borderRadius: 3, backgroundColor: COLORS.midnight },
 
   pickup: { flexDirection: 'row', alignItems: 'center', paddingBottom: SPACE[4] },
   pickupAddress: { ...TYPE.callout, marginTop: 2 },
-  change: { ...TYPE.small, color: COLORS.blue, fontWeight: '700' },
+  change: { ...TYPE.small, color: COLORS.midnight, fontWeight: '700' },
 
   searchWrap: { zIndex: 20 },
   inputContainer: { backgroundColor: 'transparent', padding: 0 },
   input: {
-    height: 52,
+    height: 54,
     marginBottom: 0,
     paddingHorizontal: SPACE[4],
     borderRadius: RADIUS.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.lineStrong,
-    backgroundColor: COLORS.surface,
+    borderWidth: 1.5,
+    borderColor: COLORS.fill,
+    backgroundColor: COLORS.fill,
     fontSize: 16,
     color: COLORS.ink,
   },
   listView: {
     position: 'absolute',
-    top: 58,
+    top: 60,
     left: 0,
     right: 0,
     backgroundColor: COLORS.white,
-    borderRadius: RADIUS.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.line,
+    borderRadius: RADIUS.lg,
+    paddingHorizontal: SPACE[2],
     zIndex: 30,
+    ...SHADOW.float,
   },
   suggestionRow: { padding: 0, height: 'auto' },
   separator: { height: StyleSheet.hairlineWidth, backgroundColor: COLORS.line },
   suggestion: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
-    paddingHorizontal: SPACE[4], paddingVertical: SPACE[3],
+    paddingHorizontal: SPACE[2], paddingVertical: SPACE[2], minHeight: 56,
   },
-  suggestionMain: { fontSize: 15, fontWeight: '600', color: COLORS.ink },
+  suggestionMain: { fontSize: 16, fontWeight: '600', color: COLORS.ink, letterSpacing: -0.2 },
   suggestionSub: { ...TYPE.small, marginTop: 1 },
+
+  rowIcon: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: COLORS.fill,
+    alignItems: 'center', justifyContent: 'center',
+  },
 
   recents: { flex: 1, paddingHorizontal: SPACE[5], paddingTop: SPACE[6] },
   rowLine: { height: StyleSheet.hairlineWidth, backgroundColor: COLORS.line },
   recentRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[3], paddingVertical: SPACE[3], minHeight: 56 },
-  recentIcon: {
-    width: 38, height: 38, borderRadius: RADIUS.sm,
-    backgroundColor: COLORS.surface,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  recentText: { fontSize: 15, fontWeight: '600', color: COLORS.ink },
+  recentText: { fontSize: 16, fontWeight: '600', color: COLORS.ink, letterSpacing: -0.2 },
   recentSub: { ...TYPE.small, marginTop: 1 },
   reuse: { transform: [{ rotate: '45deg' }] },
 });

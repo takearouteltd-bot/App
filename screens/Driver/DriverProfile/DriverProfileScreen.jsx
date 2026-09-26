@@ -1,17 +1,7 @@
 import React, { useEffect, useState } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  SafeAreaView,
-  Image,
-  ScrollView,
-  ActivityIndicator,
-  RefreshControl,
-} from "react-native";
+import { View, Text, StyleSheet, ActivityIndicator, RefreshControl } from "react-native";
 import { Alert } from "../../../components/ui/alert";
-import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import { getAuth, signOut } from "firebase/auth";
 import {
@@ -26,17 +16,25 @@ import {
   setDoc,
 } from "firebase/firestore";
 import { money } from '../../../utils/appConfig';
-import { COLORS, TYPE, Card, ListRow, StatusPill, Button, Loading } from '../../../components/ui/kit';
+import {
+  COLORS,
+  TYPE,
+  SPACE,
+  Screen,
+  Section,
+  Card,
+  RowGroup,
+  StatusPill,
+  StatRow,
+  Avatar,
+  PresenceDot,
+  Loading,
+} from '../../../components/ui/kit';
 import ModeSwitchRow from '../../../components/ModeSwitchRow';
 import SelectField from '../../../components/ui/SelectField';
 import { useCities } from '../../../utils/cities';
 import { openTerms, openPrivacy } from '../../../utils/legal';
 import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocuments';
-
-const PRIMARY = COLORS.primary;
-const SECONDARY = COLORS.blue;
-const DANGER = COLORS.red;
-const BG = COLORS.surface;
 
 export default function DriverProfileScreen() {
   const navigation = useNavigation();
@@ -168,97 +166,76 @@ export default function DriverProfileScreen() {
   const rating = driver?.rating ? Number(driver.rating).toFixed(1) : null;
   const documentAlerts = driver ? expiryAlertsFor(driver) : [];
   const vehicle = [driver?.vehicleColor, driver?.makeModel].filter(Boolean).join(" ");
+  const name = driver?.fullName || [driver?.firstName, driver?.lastName].filter(Boolean).join(" ") || "Driver";
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <Screen scroll={false}>
         <Loading />
-      </SafeAreaView>
+      </Screen>
     );
   }
 
-  const group = (items) => (
-    <Card style={{ paddingVertical: 0 }}>
-      {items.map((item, i) => (
-        <ListRow key={item.title} {...item} last={i === items.length - 1} />
-      ))}
-    </Card>
-  );
-
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
-      >
-        {/* Identity */}
-        <View style={styles.identity}>
-          <View>
-            {driver?.selfieUrl ? (
-              <Image source={{ uri: driver.selfieUrl }} style={styles.avatar} />
-            ) : (
-              <View style={[styles.avatar, styles.avatarEmpty]}>
-                <Text style={styles.initial}>{(driver?.fullName || driver?.firstName || "D").charAt(0).toUpperCase()}</Text>
-              </View>
-            )}
-            <View style={[styles.presence, { backgroundColor: isOnline ? COLORS.limeDeep : COLORS.faint }]} />
-          </View>
-          <Text style={styles.name}>{driver?.fullName || [driver?.firstName, driver?.lastName].filter(Boolean).join(" ") || "Driver"}</Text>
-          <View style={{ marginTop: 8 }}>
-            {isApproved ? (
-              <StatusPill status="approved" label={isOnline ? "Online" : "Approved, offline"} />
-            ) : (
-              <StatusPill status="pending" label="Application under review" />
-            )}
-          </View>
+    <Screen
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.midnight} />}
+    >
+      {/* Identity */}
+      <View style={styles.identity}>
+        <Avatar uri={driver?.selfieUrl} name={name} size={88} badge={<PresenceDot online={isOnline} size={22} />} />
+        <Text style={styles.name}>{name}</Text>
+        <View style={{ marginTop: SPACE[2] }}>
+          {isApproved ? (
+            <StatusPill status={isOnline ? "online" : "approved"} label={isOnline ? "Online" : "Approved, offline"} dot />
+          ) : (
+            <StatusPill status="pending" label="Application under review" />
+          )}
         </View>
+      </View>
 
-        {/* Three facts */}
-        <View style={styles.facts}>
-          <View style={styles.fact}>
-            <Text style={styles.factValue}>{tripCount}</Text>
-            <Text style={TYPE.small}>{tripCount === 1 ? "trip" : "trips"}</Text>
-          </View>
-          <View style={styles.factRule} />
-          <View style={styles.fact}>
-            <Text style={styles.factValue}>{rating || "New"}</Text>
-            <Text style={TYPE.small}>rating</Text>
-          </View>
-          <View style={styles.factRule} />
-          <View style={styles.fact}>
-            <Text style={styles.factValue}>{driver?.createdAt ? formatMemberSince(driver.createdAt) : "2026"}</Text>
-            <Text style={TYPE.small}>joined</Text>
-          </View>
-        </View>
+      {/* Three facts */}
+      <StatRow
+        style={styles.facts}
+        items={[
+          { value: String(tripCount), label: tripCount === 1 ? "trip" : "trips" },
+          { value: rating || "New", label: "rating" },
+          { value: driver?.createdAt ? formatMemberSince(driver.createdAt) : "2026", label: "joined" },
+        ]}
+      />
 
-        {/* Earnings: the one bold element. */}
-        <TouchableOpacity activeOpacity={0.9} style={styles.earnings} onPress={() => navigation.navigate("EarningsScreen")}>
+      {/* Earnings: the one bold element. */}
+      <Card tone="dark" onPress={() => navigation.navigate("EarningsScreen")}>
+        <View style={styles.earnings}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.earningsLabel}>Available to withdraw</Text>
+            <Text style={styles.earningsLabel}>Available balance</Text>
             <Text style={styles.earningsValue}>{money(availableBalance)}</Text>
             <Text style={styles.earningsSub}>{money(totalEarned)} earned in total</Text>
           </View>
-          <Ionicons name="chevron-forward" size={22} color={COLORS.onDark} />
-        </TouchableOpacity>
+          <View style={styles.earningsArrow}>
+            <Ionicons name="arrow-forward" size={20} color={COLORS.midnight} />
+          </View>
+        </View>
+      </Card>
 
-        {documentAlerts.length ? (
-          <Card tone={documentAlerts[0].status === "expired" ? "danger" : "warning"} style={{ marginTop: 12 }} onPress={() => navigation.navigate("DriverDocuments")}>
-            <Text style={[TYPE.body, { fontWeight: "700" }]}>
-              {documentAlerts[0].label}: {describeExpiry(documentAlerts[0]).toLowerCase()}
-            </Text>
-            <Text style={TYPE.small}>
-              {documentAlerts.length > 1 ? `and ${documentAlerts.length - 1} more. ` : ""}Tap to upload a replacement.
-            </Text>
-          </Card>
-        ) : null}
+      {documentAlerts.length ? (
+        <Card tone={documentAlerts[0].status === "expired" ? "danger" : "warning"} style={{ marginTop: SPACE[3] }} onPress={() => navigation.navigate("DriverDocuments")}>
+          <Text style={TYPE.callout}>
+            {documentAlerts[0].label}: {describeExpiry(documentAlerts[0]).toLowerCase()}
+          </Text>
+          <Text style={TYPE.small}>
+            {documentAlerts.length > 1 ? `and ${documentAlerts.length - 1} more. ` : ""}Tap to upload a replacement.
+          </Text>
+        </Card>
+      ) : null}
 
-        <Text style={styles.groupTitle}>Driving</Text>
-        {group([
-          { icon: "car-outline", title: vehicle || "Vehicle", detail: driver?.registrationNumber ? driver.registrationNumber.toUpperCase() : "Add your vehicle details", onPress: () => navigation.navigate("VehicleInformation") },
-          { icon: "folder-open-outline", title: "My documents", detail: documentAlerts.length ? `${documentAlerts.length} need${documentAlerts.length === 1 ? "s" : ""} updating` : "Licence, insurance, MOT and more", onPress: () => navigation.navigate("DriverDocuments") },
-          { icon: "ribbon-outline", title: "Membership", detail: ({ active: "Active", past_due: "Payment due", suspended: "Paused, payment needed" })[driver?.subscription?.status] || "Not set up", onPress: () => navigation.navigate("SubscriptionDetails") },
-        ])}
+      <Section title="Driving">
+        <RowGroup
+          items={[
+            { icon: "car-outline", iconColor: COLORS.midnight, title: vehicle || "Vehicle", detail: driver?.registrationNumber ? driver.registrationNumber.toUpperCase() : "Add your vehicle details", onPress: () => navigation.navigate("VehicleInformation") },
+            { icon: "folder-open-outline", iconColor: COLORS.midnight, title: "My documents", detail: documentAlerts.length ? `${documentAlerts.length} need${documentAlerts.length === 1 ? "s" : ""} updating` : "Licence, insurance, MOT and more", onPress: () => navigation.navigate("DriverDocuments") },
+            { icon: "ribbon-outline", iconColor: COLORS.midnight, title: "Membership", detail: ({ active: "Active", past_due: "Payment due", suspended: "Paused, payment needed" })[driver?.subscription?.status] || "Not set up", onPress: () => navigation.navigate("SubscriptionDetails") },
+          ]}
+        />
 
         {/* Working city: jobs are only offered from here once chosen. Hidden
             until the dashboard lists at least one city. */}
@@ -269,71 +246,80 @@ export default function DriverProfileScreen() {
             options={cities.map((c) => ({ value: c.id, label: c.name }))}
             onChange={saveWorkingCity}
             renderTrigger={(open, selected) => (
-              <Card flush style={{ marginTop: 12 }}>
-                <ListRow
-                  icon="navigate-outline"
-                  title="Working city"
-                  detail={selected ? `${selected.label} · jobs picked up here only` : "Any area, choose a city"}
-                  onPress={open}
-                  last
-                />
-              </Card>
+              <RowGroup
+                style={{ marginTop: SPACE[3] }}
+                items={[
+                  {
+                    icon: "navigate-outline",
+                    iconColor: COLORS.midnight,
+                    title: "Working city",
+                    detail: selected ? `${selected.label} · jobs picked up here only` : "Any area, choose a city",
+                    onPress: open,
+                  },
+                ]}
+              />
             )}
           />
         ) : null}
+      </Section>
 
-        <Text style={styles.groupTitle}>Account</Text>
-        {group([
-          { icon: "person-outline", title: "Personal details", detail: "Name, phone, email and address", onPress: () => navigation.navigate("DriverPersonalInformation") },
-          { icon: "mail-outline", title: "Messages", detail: "Updates from TakeARoute", onPress: () => navigation.navigate("Inbox", { role: "driver" }) },
-        ])}
+      <Section title="Account">
+        <RowGroup
+          items={[
+            { icon: "person-outline", iconColor: COLORS.midnight, title: "Personal details", detail: "Name, phone, email and address", onPress: () => navigation.navigate("DriverPersonalInformation") },
+            { icon: "mail-outline", iconColor: COLORS.midnight, title: "Messages", detail: "Updates from TakeARoute", onPress: () => navigation.navigate("Inbox", { role: "driver" }) },
+          ]}
+        />
+      </Section>
 
-        {/* Same account, other mode. Hidden until it knows what to offer. */}
-        <View style={{ marginTop: 26 }}>
-          <ModeSwitchRow uid={user?.uid} currentRole="driver" />
-        </View>
+      {/* Same account, other mode. Hidden until it knows what to offer. */}
+      <View style={{ marginTop: SPACE[7] }}>
+        <ModeSwitchRow uid={user?.uid} currentRole="driver" />
+      </View>
 
-        <Text style={styles.groupTitle}>Help and safety</Text>
-        {group([
-          { icon: "chatbubbles-outline", title: "My reports", detail: "Issues, lost property and replies from support", onPress: () => navigation.navigate("MyReports", { role: "driver" }) },
-          { icon: "shield-checkmark-outline", iconColor: COLORS.red, title: "Safety", detail: driver?.emergencyContact?.name ? `Emergency contact: ${driver.emergencyContact.name}` : "Add your next of kin", onPress: () => navigation.navigate("EmergencyContact", { role: "driver" }) },
-          { icon: "document-text-outline", title: "Terms of use", onPress: openTerms },
-          { icon: "lock-closed-outline", title: "Privacy policy", onPress: openPrivacy },
-        ])}
+      <Section title="Help and safety">
+        <RowGroup
+          items={[
+            { icon: "chatbubbles-outline", iconColor: COLORS.midnight, title: "My reports", detail: "Issues, lost property and replies from support", onPress: () => navigation.navigate("MyReports", { role: "driver" }) },
+            { icon: "shield-checkmark-outline", iconColor: COLORS.red, title: "Safety", detail: driver?.emergencyContact?.name ? `Emergency contact: ${driver.emergencyContact.name}` : "Add your next of kin", onPress: () => navigation.navigate("EmergencyContact", { role: "driver" }) },
+            { icon: "document-text-outline", iconColor: COLORS.midnight, title: "Terms of use", onPress: openTerms },
+            { icon: "lock-closed-outline", iconColor: COLORS.midnight, title: "Privacy policy", onPress: openPrivacy },
+          ]}
+        />
+      </Section>
 
-        <Button title="Sign out" variant="secondary" style={{ marginTop: 28 }} loading={loggingOut} onPress={handleLogout} />
+      <RowGroup
+        style={{ marginTop: SPACE[7] }}
+        items={[
+          {
+            icon: "log-out-outline",
+            title: "Sign out",
+            danger: true,
+            onPress: loggingOut ? undefined : handleLogout,
+            right: loggingOut ? <ActivityIndicator color={COLORS.red} /> : undefined,
+          },
+        ]}
+      />
 
-        <View style={styles.footer}>
-          <Text style={TYPE.small}>TakeARoute Driver 1.0</Text>
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+      <View style={styles.footer}>
+        <Text style={TYPE.small}>TakeARoute Driver 1.0</Text>
+      </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.surface },
-  content: { padding: 20, paddingBottom: 40 },
-  identity: { alignItems: "center", paddingTop: 20, paddingBottom: 6 },
-  avatar: { width: 108, height: 108, borderRadius: 36 },
-  avatarEmpty: { backgroundColor: COLORS.navy, alignItems: "center", justifyContent: "center" },
-  initial: { fontSize: 44, fontWeight: "800", color: COLORS.white },
-  presence: {
-    position: "absolute", right: -2, bottom: -2, width: 22, height: 22, borderRadius: 11,
-    borderWidth: 3, borderColor: COLORS.surface,
+  identity: { alignItems: "center", paddingTop: SPACE[5], paddingBottom: SPACE[2] },
+  name: { ...TYPE.title, marginTop: SPACE[4], textAlign: "center" },
+  facts: { marginTop: SPACE[5], marginBottom: SPACE[5] },
+  earnings: { flexDirection: "row", alignItems: "center", gap: SPACE[3] },
+  earningsLabel: { ...TYPE.label, color: COLORS.lime },
+  earningsValue: { ...TYPE.display, fontSize: 36, color: COLORS.white, marginTop: SPACE[1] },
+  earningsSub: { ...TYPE.small, color: COLORS.onDark, marginTop: 2 },
+  earningsArrow: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: COLORS.lime,
+    alignItems: "center", justifyContent: "center",
   },
-  name: { fontSize: 26, fontWeight: "800", color: COLORS.navy, letterSpacing: -0.4, marginTop: 14 },
-  facts: { flexDirection: "row", alignItems: "center", justifyContent: "center", marginTop: 20, marginBottom: 18 },
-  fact: { alignItems: "center", paddingHorizontal: 22, minWidth: 90 },
-  factValue: { fontSize: 22, fontWeight: "800", color: COLORS.navy, letterSpacing: -0.3 },
-  factRule: { width: 1, height: 36, backgroundColor: COLORS.line },
-  earnings: {
-    flexDirection: "row", alignItems: "center", backgroundColor: COLORS.navy,
-    borderRadius: 22, padding: 22,
-  },
-  earningsLabel: { fontSize: 14, fontWeight: "600", color: COLORS.onDark },
-  earningsValue: { fontSize: 36, fontWeight: "800", color: COLORS.white, letterSpacing: -1, marginTop: 2 },
-  earningsSub: { fontSize: 13, color: COLORS.onDark, marginTop: 2 },
-  groupTitle: { ...TYPE.heading, marginTop: 26, marginBottom: 10 },
-  footer: { alignItems: "center", marginTop: 36 },
+  footer: { alignItems: "center", marginTop: SPACE[8] },
 });

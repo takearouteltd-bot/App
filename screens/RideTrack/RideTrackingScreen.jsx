@@ -5,7 +5,6 @@ import {
   StyleSheet,
   SafeAreaView,
   TouchableOpacity,
-  ActivityIndicator,
   Animated,
 } from 'react-native';
 import { Alert } from '../../components/ui/alert';
@@ -26,10 +25,16 @@ import {
   TYPE,
   SPACE,
   RADIUS,
-  SHADOW,
+  Screen,
+  Sheet,
+  Card,
+  Button,
+  Banner,
   Avatar,
+  PresenceDot,
   IconButton,
   RouteLine,
+  Loading,
   MapUnavailable,
   isCoord,
   validCoords,
@@ -215,10 +220,9 @@ export default function RideTrackingScreen() {
 
   if (!rideData) {
     return (
-      <SafeAreaView style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={[TYPE.small, { marginTop: SPACE[4] }]}>Loading your ride…</Text>
-      </SafeAreaView>
+      <Screen scroll={false}>
+        <Loading label="Loading your ride…" />
+      </Screen>
     );
   }
 
@@ -260,7 +264,7 @@ export default function RideTrackingScreen() {
 
         {isCoord(dropoffLocation) ? (
           <Marker coordinate={dropoffLocation} anchor={{ x: 0.5, y: 1 }}>
-            <Ionicons name="location" size={30} color={COLORS.navy} />
+            <Ionicons name="location" size={30} color={COLORS.midnight} />
           </Marker>
         ) : null}
 
@@ -297,51 +301,47 @@ export default function RideTrackingScreen() {
         </View>
       </View>
 
-      <View style={styles.sheet}>
-        <View style={styles.grabber} />
-
+      <Sheet style={styles.sheet}>
+        <Text style={TYPE.label}>Your ride</Text>
         <Text style={TYPE.title}>{state.title}</Text>
         <Text style={[TYPE.small, { marginTop: SPACE[1] }]}>{state.detail}</Text>
 
         {waiting ? (
-          <View
-            style={[
-              styles.waiting,
-              waiting.inFreeTime ? styles.waitingFree : styles.waitingCharged,
-            ]}
-          >
-            <Ionicons
-              name="time-outline"
-              size={18}
-              color={waiting.inFreeTime ? COLORS.blue : COLORS.amber}
+          <View style={{ marginTop: SPACE[4] }}>
+            <Banner
+              tone={waiting.inFreeTime ? 'info' : 'warning'}
+              icon="time-outline"
+              title={waiting.label}
+              body={waiting.detail}
             />
-            <View style={{ flex: 1 }}>
-              <Text
-                style={[
-                  styles.waitingLabel,
-                  { color: waiting.inFreeTime ? COLORS.blue : COLORS.amber },
-                ]}
-              >
-                {waiting.label}
-              </Text>
-              <Text style={TYPE.small}>{waiting.detail}</Text>
-            </View>
           </View>
         ) : null}
 
         {driverData ? (
-          <View style={styles.driverCard}>
-            <Avatar uri={driverData.selfieUrl} name={driverData.fullName} size={52} />
+          <Card style={styles.driverCard}>
+            <Avatar
+              uri={driverData.selfieUrl}
+              name={driverData.fullName}
+              size={52}
+              badge={<PresenceDot online />}
+            />
 
             <View style={{ flex: 1 }}>
               <Text style={styles.driverName} numberOfLines={1}>
                 {driverData.fullName || 'Your driver'}
               </Text>
-              <Text style={TYPE.small} numberOfLines={1}>
-                {[driverData.vehicleColor, driverData.makeModel].filter(Boolean).join(' ') ||
-                  'Vehicle'}
-                {rating ? ` · ★ ${rating}` : ''}
-              </Text>
+              <View style={styles.vehicleRow}>
+                <Text style={[TYPE.small, { flexShrink: 1 }]} numberOfLines={1}>
+                  {[driverData.vehicleColor, driverData.makeModel].filter(Boolean).join(' ') ||
+                    'Vehicle'}
+                </Text>
+                {rating ? (
+                  <View style={styles.rating}>
+                    <Ionicons name="star" size={13} color={COLORS.star} />
+                    <Text style={styles.ratingText}>{rating}</Text>
+                  </View>
+                ) : null}
+              </View>
               {driverData.registrationNumber ? (
                 <View style={styles.plate}>
                   <Text style={styles.plateText}>
@@ -350,11 +350,27 @@ export default function RideTrackingScreen() {
                 </View>
               ) : null}
             </View>
+          </Card>
+        ) : null}
 
-            <View style={styles.contact}>
-              <IconButton icon="chatbubble-ellipses" onPress={handleChat} size={42} accessibilityLabel="Message your driver" />
-              <IconButton icon="call" onPress={handleCall} size={42} tone="dark" accessibilityLabel="Call your driver" />
-            </View>
+        {driverData ? (
+          <View style={styles.contact}>
+            <Button
+              title="Message"
+              icon="chatbubble-ellipses-outline"
+              variant="secondary"
+              size="small"
+              style={{ flex: 1 }}
+              onPress={handleChat}
+            />
+            <Button
+              title="Call"
+              icon="call-outline"
+              variant="secondary"
+              size="small"
+              style={{ flex: 1 }}
+              onPress={handleCall}
+            />
           </View>
         ) : null}
 
@@ -364,33 +380,26 @@ export default function RideTrackingScreen() {
 
         {/* The trip screen opens by itself when the driver starts the ride. */}
         {beforePickup ? (
-          <TouchableOpacity style={styles.cancel} onPress={handleCancelRide} activeOpacity={0.8}>
+          <TouchableOpacity
+            style={styles.cancel}
+            onPress={handleCancelRide}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+          >
             <Text style={styles.cancelText}>Cancel ride</Text>
           </TouchableOpacity>
         ) : null}
-      </View>
+      </Sheet>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.white },
-  centered: { alignItems: 'center', justifyContent: 'center' },
+  container: { flex: 1, backgroundColor: COLORS.surface },
 
   pickupMarker: {
     width: 16, height: 16, borderRadius: 8,
     backgroundColor: COLORS.lime, borderWidth: 3, borderColor: COLORS.midnight,
-  },
-  driverMarkerWrap: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center' },
-  driverPulse: {
-    position: 'absolute', width: 46, height: 46, borderRadius: 23,
-    backgroundColor: COLORS.navy, opacity: 0.18,
-  },
-  driverMarker: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: COLORS.navy,
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 2, borderColor: COLORS.white,
   },
 
   topBar: {
@@ -399,53 +408,36 @@ const styles = StyleSheet.create({
   },
   topRight: { flexDirection: 'row', gap: SPACE[2] },
 
-  sheet: {
-    position: 'absolute', left: 0, right: 0, bottom: 0,
-    backgroundColor: COLORS.white,
-    borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl,
-    paddingHorizontal: SPACE[5], paddingTop: SPACE[3], paddingBottom: SPACE[8],
-    ...SHADOW.sheet,
-  },
-  grabber: {
-    width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.line,
-    alignSelf: 'center', marginBottom: SPACE[5],
-  },
-
-  waiting: {
-    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
-    borderRadius: RADIUS.md, borderWidth: StyleSheet.hairlineWidth,
-    padding: SPACE[3], marginTop: SPACE[4],
-  },
-  waitingFree: { backgroundColor: COLORS.blueSoft, borderColor: '#E6E8EC' },
-  waitingCharged: { backgroundColor: COLORS.amberSoft, borderColor: '#FCD34D' },
-  waitingLabel: { fontSize: 14, fontWeight: '700' },
+  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0 },
 
   driverCard: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
-    marginTop: SPACE[5], paddingTop: SPACE[5],
-    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
+    marginTop: SPACE[4], padding: SPACE[4],
   },
-  driverName: { fontSize: 17, fontWeight: '700', color: COLORS.navy, letterSpacing: -0.3 },
+  driverName: { ...TYPE.subhead, fontSize: 17, color: COLORS.midnight },
+  vehicleRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[2], marginTop: 2 },
+  rating: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  ratingText: { ...TYPE.caption, color: COLORS.inkSoft, fontWeight: '700' },
   plate: {
     alignSelf: 'flex-start', marginTop: SPACE[2],
-    backgroundColor: COLORS.surface,
-    borderRadius: RADIUS.sm,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.line,
-    paddingHorizontal: SPACE[2], paddingVertical: 3,
+    backgroundColor: COLORS.fill,
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: SPACE[3], paddingVertical: 4,
   },
-  plateText: { fontSize: 13, fontWeight: '800', color: COLORS.ink, letterSpacing: 1 },
-  contact: { flexDirection: 'row', gap: SPACE[2] },
+  plateText: { fontSize: 13, fontWeight: '800', color: COLORS.midnight, letterSpacing: 1 },
+  contact: { flexDirection: 'row', gap: SPACE[2], marginTop: SPACE[3] },
 
   journey: {
-    marginTop: SPACE[5], paddingTop: SPACE[5],
+    marginTop: SPACE[4], paddingTop: SPACE[4],
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
   },
 
+  // A quiet red pill: destructive, but not the screen's main action.
   cancel: {
-    minHeight: 50, marginTop: SPACE[5],
+    minHeight: 52, marginTop: SPACE[4],
     alignItems: 'center', justifyContent: 'center',
-    borderRadius: RADIUS.md,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.lineStrong,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.redSoft,
   },
-  cancelText: { fontSize: 15, fontWeight: '700', color: COLORS.red },
+  cancelText: { fontSize: 16, fontWeight: '800', color: COLORS.red, letterSpacing: -0.2 },
 });

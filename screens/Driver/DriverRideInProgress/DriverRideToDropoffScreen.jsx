@@ -5,7 +5,6 @@ import {
   StyleSheet,
   SafeAreaView,
   TouchableOpacity,
-  ActivityIndicator,
   Animated,
   Dimensions,
   StatusBar,
@@ -22,7 +21,10 @@ import { navigationUrl, remainingStops, stopsOf } from '../../../utils/stops';
 import { fetchRoute as fetchDrivingRoute, durationText, distanceText } from '../../../utils/routes';
 import SafetyButton from '../../../components/SafetyButton';
 import { confirmMaskedCall } from '../../../utils/calling';
-import { COLORS, TYPE, SPACE, RADIUS, SHADOW, Avatar, IconButton, isCoord } from '../../../components/ui/kit';
+import {
+  COLORS, TYPE, SPACE, RADIUS, SHADOW,
+  Avatar, Button, Chip, IconButton, Loading, StatRow, isCoord,
+} from '../../../components/ui/kit';
 
 const { height } = Dimensions.get('window');
 
@@ -330,11 +332,8 @@ export default function DriverRideToDropoffScreen() {
 
   if (!ride || !isCoord(driverLocation) || !isCoord(ride.dropoffLocation)) {
     return (
-      <SafeAreaView style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={[TYPE.small, { marginTop: SPACE[4] }]}>
-          {ride ? 'Waiting for your location…' : 'Loading the trip…'}
-        </Text>
+      <SafeAreaView style={styles.container}>
+        <Loading label={ride ? 'Waiting for your location…' : 'Loading the trip…'} />
       </SafeAreaView>
     );
   }
@@ -367,7 +366,7 @@ export default function DriverRideToDropoffScreen() {
           <View style={styles.markerWrap}>
             <Animated.View style={[styles.markerPulse, { transform: [{ scale: pulseAnim }] }]} />
             <View style={styles.driverMarker}>
-              <Ionicons name="car-sport" size={16} color={COLORS.white} />
+              <Ionicons name="car-sport" size={16} color={COLORS.lime} />
             </View>
           </View>
         </Marker>
@@ -382,30 +381,18 @@ export default function DriverRideToDropoffScreen() {
 
         {isCoord(destination) ? (
           <Marker coordinate={destination} anchor={{ x: 0.5, y: 1 }}>
-            <Ionicons name="location" size={32} color={COLORS.navy} />
+            <Ionicons name="location" size={32} color={COLORS.midnight} />
           </Marker>
         ) : null}
 
         {routeCoords.length ? (
-          <Polyline coordinates={routeCoords} strokeColor={COLORS.primary} strokeWidth={4} />
+          <Polyline coordinates={routeCoords} strokeColor={COLORS.midnight} strokeWidth={4} />
         ) : null}
       </MapView>
 
       <SafeAreaView style={styles.topBar} pointerEvents="box-none">
         <IconButton icon="chevron-back" onPress={() => navigation.goBack()} accessibilityLabel="Go back" />
-        {eta ? (
-          <View style={styles.etaPill}>
-            <Text style={styles.etaText}>{eta}</Text>
-            {dropoffDistance ? (
-              <>
-                <View style={styles.pillDivider} />
-                <Text style={styles.etaText}>{dropoffDistance}</Text>
-              </>
-            ) : null}
-          </View>
-        ) : (
-          <View />
-        )}
+        <View />
         <SafetyButton role="driver" rideId={rideId} />
       </SafeAreaView>
 
@@ -436,26 +423,34 @@ export default function DriverRideToDropoffScreen() {
               {nextStop ? nextStop.address : destination?.address || 'Unknown destination'}
             </Text>
             {nextStop ? (
-              <TouchableOpacity
-                style={styles.stopDone}
+              <Button
+                size="small"
+                title={markingStop ? 'Saving…' : `Arrived at stop ${stopNumber}`}
+                icon="flag"
                 onPress={markStopReached}
                 disabled={markingStop}
-                accessibilityRole="button"
-              >
-                <Text style={styles.stopDoneText}>
-                  {markingStop ? 'Saving…' : `Arrived at stop ${stopNumber}`}
-                </Text>
-              </TouchableOpacity>
+                style={styles.stopDone}
+              />
             ) : null}
           </View>
-          <View style={{ alignItems: 'flex-end' }}>
-            <Text style={styles.fare}>
+          <View style={{ alignItems: 'flex-end', gap: SPACE[1] }}>
+            <Text style={TYPE.figure}>
               {currencySymbol()}
               {Number(ride.fare?.total || 0).toFixed(2)}
             </Text>
-            {ride.paymentMethod === 'cash' ? <Text style={styles.cashTag}>Cash</Text> : null}
+            {ride.paymentMethod === 'cash' ? <Chip label="Cash" icon="cash-outline" /> : null}
           </View>
         </View>
+
+        {eta ? (
+          <StatRow
+            style={styles.stats}
+            items={[
+              { value: eta, label: nextStop ? 'To next stop' : 'To drop-off' },
+              dropoffDistance ? { value: dropoffDistance, label: 'Distance' } : null,
+            ]}
+          />
+        ) : null}
 
         {riderData ? (
           <View style={styles.riderRow}>
@@ -468,10 +463,11 @@ export default function DriverRideToDropoffScreen() {
               {riderData.fullName || 'Passenger'}
             </Text>
             <View style={styles.contact}>
-              <IconButton
-                icon="chatbubble-ellipses"
-                size={38}
-                accessibilityLabel="Message your passenger"
+              <Button
+                size="small"
+                variant="secondary"
+                icon="chatbubble-ellipses-outline"
+                title="Message"
                 onPress={() =>
                   navigation.navigate('ChatScreen', {
                     rideId,
@@ -482,38 +478,33 @@ export default function DriverRideToDropoffScreen() {
                   })
                 }
               />
-              <IconButton
-                icon="call"
-                size={38}
-                tone="dark"
-                accessibilityLabel="Call your passenger"
+              <Button
+                size="small"
+                variant="secondary"
+                icon="call-outline"
+                title="Call"
                 onPress={() => confirmMaskedCall(rideId, 'your passenger')}
               />
             </View>
           </View>
         ) : null}
 
-        <TouchableOpacity
-          style={[styles.complete, !arrived && styles.completeIdle, completing && { opacity: 0.6 }]}
+        <Button
+          title={arrived ? 'Complete the trip' : 'End trip here'}
+          variant={arrived ? 'primary' : 'secondary'}
           onPress={handleCompleteRide}
           disabled={completing}
-          activeOpacity={0.9}
-          accessibilityRole="button"
-        >
-          {completing ? (
-            <ActivityIndicator color={arrived ? COLORS.white : COLORS.navy} />
-          ) : (
-            <Text style={[styles.completeText, !arrived && { color: COLORS.navy }]}>
-              {arrived ? 'Complete the trip' : 'End trip here'}
-            </Text>
-          )}
-        </TouchableOpacity>
+          loading={completing}
+        />
 
         {!arrived ? (
-          <TouchableOpacity style={styles.secondary} onPress={handleNavigate} activeOpacity={0.8}>
-            <Ionicons name="navigate" size={18} color={COLORS.navy} />
-            <Text style={styles.secondaryText}>Open in Maps</Text>
-          </TouchableOpacity>
+          <Button
+            title="Open in Maps"
+            icon="navigate"
+            variant="dark"
+            onPress={handleNavigate}
+            style={styles.secondary}
+          />
         ) : null}
 
         <TouchableOpacity
@@ -521,6 +512,7 @@ export default function DriverRideToDropoffScreen() {
           onPress={handleCancelTrip}
           disabled={completing}
           activeOpacity={0.7}
+          accessibilityRole="button"
         >
           <Text style={styles.cancelTripText}>Cannot finish this trip?</Text>
         </TouchableOpacity>
@@ -530,43 +522,33 @@ export default function DriverRideToDropoffScreen() {
 }
 
 const customMapStyle = [
-  { elementType: 'geometry', stylers: [{ color: '#F5F7FA' }] },
+  { elementType: 'geometry', stylers: [{ color: COLORS.surface }] },
   { elementType: 'labels.text.fill', stylers: [{ color: COLORS.muted }] },
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
   { featureType: 'road', elementType: 'geometry', stylers: [{ color: COLORS.white }] },
   { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: COLORS.line }] },
   { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#DCE6F2' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: COLORS.fill }] },
 ];
 
 const styles = StyleSheet.create({
-  stopDone: {
-    alignSelf: 'flex-start', marginTop: SPACE[3],
-    paddingHorizontal: SPACE[4], height: 40, borderRadius: RADIUS.sm,
-    backgroundColor: COLORS.navy, justifyContent: 'center',
-  },
-  stopDoneText: { fontSize: 14, fontWeight: '700', color: COLORS.white },
+  container: { flex: 1, backgroundColor: COLORS.surface },
+
+  stopDone: { alignSelf: 'flex-start', marginTop: SPACE[3] },
   stopMarker: {
-    width: 24, height: 24, borderRadius: 12, backgroundColor: COLORS.navy,
+    width: 24, height: 24, borderRadius: 12, backgroundColor: COLORS.midnight,
     borderWidth: 2, borderColor: COLORS.white, alignItems: 'center', justifyContent: 'center',
   },
-  stopMarkerText: { fontSize: 11, fontWeight: '800', color: COLORS.white },
-  cashTag: {
-    marginTop: 4, fontSize: 11, fontWeight: '800', letterSpacing: 0.5,
-    color: COLORS.amber, backgroundColor: COLORS.amberSoft,
-    paddingHorizontal: 8, paddingVertical: 2, borderRadius: 999, overflow: 'hidden',
-  },
-  container: { flex: 1, backgroundColor: COLORS.surface },
-  centered: { alignItems: 'center', justifyContent: 'center' },
+  stopMarkerText: { fontSize: 11, fontWeight: '800', color: COLORS.lime },
 
   markerWrap: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center' },
   markerPulse: {
     position: 'absolute', width: 46, height: 46, borderRadius: 23,
-    backgroundColor: COLORS.navy, opacity: 0.18,
+    backgroundColor: COLORS.lime, opacity: 0.45,
   },
   driverMarker: {
     width: 32, height: 32, borderRadius: 16,
-    backgroundColor: COLORS.navy,
+    backgroundColor: COLORS.midnight,
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 2, borderColor: COLORS.white,
   },
@@ -576,14 +558,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingTop: SPACE[3],
   },
-  etaPill: {
-    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
-    backgroundColor: COLORS.white, height: 40,
-    paddingHorizontal: SPACE[4], borderRadius: RADIUS.pill,
-    ...SHADOW.float,
-  },
-  etaText: { fontSize: 13, fontWeight: '700', color: COLORS.navy },
-  pillDivider: { width: StyleSheet.hairlineWidth, height: 16, backgroundColor: COLORS.line },
 
   mapControls: { position: 'absolute', right: SPACE[5], bottom: height * 0.42 },
 
@@ -595,38 +569,23 @@ const styles = StyleSheet.create({
     ...SHADOW.sheet,
   },
   handle: {
-    width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.line,
+    width: 44, height: 5, borderRadius: 3, backgroundColor: COLORS.lineStrong,
     alignSelf: 'center', marginBottom: SPACE[5],
   },
 
   headRow: { flexDirection: 'row', alignItems: 'flex-start', gap: SPACE[4] },
-  fare: { fontSize: 24, fontWeight: '800', color: COLORS.navy, letterSpacing: -0.6 },
+
+  stats: { marginTop: SPACE[5] },
 
   riderRow: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
     marginTop: SPACE[5], paddingTop: SPACE[4], paddingBottom: SPACE[5],
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
   },
-  riderName: { flex: 1, fontSize: 16, fontWeight: '700', color: COLORS.navy },
+  riderName: { flex: 1, ...TYPE.subhead },
   contact: { flexDirection: 'row', gap: SPACE[2] },
 
-  complete: {
-    minHeight: 54, borderRadius: 999,
-    backgroundColor: COLORS.primary,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  completeIdle: {
-    backgroundColor: COLORS.white,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.lineStrong,
-  },
-  completeText: { fontSize: 16, fontWeight: '800', color: COLORS.onPrimary, letterSpacing: -0.2 },
-
-  secondary: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACE[2],
-    minHeight: 50, marginTop: SPACE[3],
-    borderRadius: RADIUS.md,
-  },
-  secondaryText: { fontSize: 15, fontWeight: '700', color: COLORS.navy },
+  secondary: { marginTop: SPACE[3] },
 
   cancelTrip: { alignItems: 'center', paddingVertical: SPACE[4] },
   cancelTripText: { fontSize: 14, fontWeight: '700', color: COLORS.red },

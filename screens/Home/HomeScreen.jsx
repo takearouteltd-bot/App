@@ -24,7 +24,8 @@ import {
   SHADOW,
   Sheet,
   IconButton,
-  ListRow,
+  Chip,
+  Button,
   isCoord,
 } from '../../components/ui/kit';
 import { ACTIVE_RIDE_STATUSES } from '../../utils/modeSwitch';
@@ -348,9 +349,7 @@ export default function HomeScreen() {
             <Marker coordinate={pickup} anchor={{ x: 0.5, y: 0.5 }}>
               <View style={styles.marker}>
                 <View style={styles.markerHalo} />
-                <View
-                  style={[styles.markerDot, pinnedPickup && { backgroundColor: COLORS.navy }]}
-                />
+                <View style={styles.markerDot} />
               </View>
             </Marker>
           ) : null}
@@ -371,7 +370,7 @@ export default function HomeScreen() {
           accessibilityRole="button"
           accessibilityLabel="Change your pickup point"
         >
-          <View style={[styles.locationDot, pinnedPickup && { backgroundColor: COLORS.navy }]} />
+          <View style={[styles.locationDot, pinnedPickup && { backgroundColor: COLORS.midnight }]} />
           <Text style={styles.locationText} numberOfLines={1}>
             {loadingLocation
               ? 'Finding you…'
@@ -434,10 +433,12 @@ export default function HomeScreen() {
               accessibilityRole="button"
               accessibilityLabel="Choose where you are going"
             >
-              <Ionicons name="search" size={20} color={COLORS.navy} />
+              <View style={styles.searchIcon}>
+                <Ionicons name="search" size={18} color={COLORS.midnight} />
+              </View>
               <Text style={styles.searchText}>Where to?</Text>
               <View style={styles.searchGo}>
-                <Ionicons name="arrow-forward" size={18} color={COLORS.onPrimary} />
+                <Ionicons name="arrow-forward" size={18} color={COLORS.lime} />
               </View>
             </TouchableOpacity>
           </View>
@@ -448,41 +449,44 @@ export default function HomeScreen() {
             </Text>
           ) : null}
 
-          <TouchableOpacity style={styles.pinRow} onPress={openPicker} activeOpacity={0.7}>
-            <Ionicons name="pin-outline" size={18} color={COLORS.navy} />
-            <Text style={styles.pinRowText}>
-              {pinnedPickup ? 'Change your pickup pin' : 'Set pickup on the map'}
-            </Text>
-            {pinnedPickup ? (
-              <Text style={styles.pinClear} onPress={() => setPinnedPickup(null)}>
-                Use GPS
+          <View style={styles.pinRow}>
+            <TouchableOpacity
+              style={styles.pinRowMain}
+              onPress={openPicker}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+            >
+              <Ionicons name="pin-outline" size={18} color={COLORS.midnight} />
+              <Text style={styles.pinRowText}>
+                {pinnedPickup ? 'Change your pickup pin' : 'Set pickup on the map'}
               </Text>
+            </TouchableOpacity>
+            {pinnedPickup ? (
+              <Button title="Use GPS" variant="ghost" size="small" onPress={() => setPinnedPickup(null)} />
             ) : null}
-          </TouchableOpacity>
+          </View>
 
           {savedPlaces.length ? (
             <View style={styles.places}>
-              {savedPlaces.slice(0, 3).map((place, i) => (
-                <ListRow
+              {savedPlaces.slice(0, 3).map((place) => (
+                <Chip
                   key={place.id}
                   icon={placeIcon(place.type)}
-                  iconColor={COLORS.navy}
-                  title={place.name}
-                  detail={place.address}
+                  label={place.name || place.address || "Saved place"}
                   onPress={() => handleSavedPlacePress(place)}
-                  last={i === Math.min(savedPlaces.length, 3) - 1}
                 />
               ))}
             </View>
           ) : (
-            <TouchableOpacity
-              style={styles.addPlaces}
-              onPress={() => navigation.navigate('Profile', { screen: 'SavedPlaces' })}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="add-circle-outline" size={20} color={COLORS.blue} />
-              <Text style={styles.addPlacesText}>Save home and work for one-tap booking</Text>
-            </TouchableOpacity>
+            <View style={styles.addPlaces}>
+              <Button
+                title="Save home and work for one-tap booking"
+                icon="add-circle-outline"
+                variant="secondary"
+                size="small"
+                onPress={() => navigation.navigate('Profile', { screen: 'SavedPlaces' })}
+              />
+            </View>
           )}
         </Sheet>
       </Animated.View>
@@ -492,7 +496,7 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.surface },
-  mapLoading: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#E9ECF1' },
+  mapLoading: { alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.fill },
 
   marker: { alignItems: 'center', justifyContent: 'center' },
   markerHalo: {
@@ -502,8 +506,8 @@ const styles = StyleSheet.create({
   },
   markerDot: {
     width: 16, height: 16, borderRadius: 8,
-    backgroundColor: COLORS.primary,
-    borderWidth: 3, borderColor: COLORS.white,
+    backgroundColor: COLORS.lime,
+    borderWidth: 3, borderColor: COLORS.midnight,
   },
 
   topBar: { position: 'absolute', top: SPACE[3], left: SPACE[5], right: SPACE[5], alignItems: 'center' },
@@ -516,39 +520,43 @@ const styles = StyleSheet.create({
     ...SHADOW.float,
   },
   locationDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.limeDeep },
-  locationText: { ...TYPE.small, color: COLORS.ink, fontWeight: '600', flexShrink: 1 },
+  locationText: { ...TYPE.small, color: COLORS.midnight, fontWeight: '700', flexShrink: 1 },
 
   recenter: { position: 'absolute', right: SPACE[5], top: -(44 + SPACE[4]) },
 
   handle: { alignSelf: 'stretch', alignItems: 'center', paddingBottom: SPACE[4] },
-  grabber: { width: 40, height: 5, borderRadius: 3, backgroundColor: COLORS.lineStrong },
+  grabber: { width: 44, height: 5, borderRadius: 3, backgroundColor: COLORS.lineStrong },
 
   sheetWrap: { position: 'absolute', left: 0, right: 0, bottom: 0 },
 
   activeRide: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
-    backgroundColor: COLORS.navy,
+    backgroundColor: COLORS.midnight,
     borderRadius: RADIUS.lg,
     padding: SPACE[4],
     marginBottom: SPACE[4],
   },
   activePulseWrap: { width: 22, alignItems: 'center', justifyContent: 'center' },
-  activePulse: { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.limeDeep },
-  activeTitle: { fontSize: 16, fontWeight: '700', color: COLORS.white, letterSpacing: -0.2 },
+  activePulse: { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.lime },
+  activeTitle: { fontSize: 16, fontWeight: '800', color: COLORS.white, letterSpacing: -0.2 },
   activeDetail: { ...TYPE.small, color: COLORS.onDark, marginTop: 2 },
 
   search: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
-    backgroundColor: COLORS.surface,
-    borderRadius: RADIUS.md,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.line,
-    paddingLeft: SPACE[4], paddingRight: SPACE[2],
-    height: 62,
+    backgroundColor: COLORS.fill,
+    borderRadius: RADIUS.pill,
+    paddingLeft: SPACE[2], paddingRight: SPACE[2],
+    height: 64,
   },
-  searchText: { flex: 1, fontSize: 19, fontWeight: '700', color: COLORS.navy, letterSpacing: -0.4 },
+  searchIcon: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: COLORS.white,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  searchText: { flex: 1, ...TYPE.subhead, fontSize: 19, fontWeight: '800', color: COLORS.midnight, letterSpacing: -0.4 },
   searchGo: {
-    width: 44, height: 44, borderRadius: RADIUS.sm,
-    backgroundColor: COLORS.primary,
+    width: 48, height: 48, borderRadius: 24,
+    backgroundColor: COLORS.midnight,
     alignItems: 'center', justifyContent: 'center',
   },
 
@@ -556,17 +564,13 @@ const styles = StyleSheet.create({
 
   pinRow: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[2],
-    marginTop: SPACE[4], paddingTop: SPACE[4],
+    marginTop: SPACE[4], paddingTop: SPACE[3],
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
   },
-  pinRowText: { flex: 1, ...TYPE.small, color: COLORS.navy, fontWeight: '600' },
-  pinClear: { ...TYPE.small, color: COLORS.blue, fontWeight: '700' },
+  pinRowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: SPACE[2], minHeight: 42 },
+  pinRowText: { flex: 1, ...TYPE.small, color: COLORS.midnight, fontWeight: '700' },
 
-  places: { marginTop: SPACE[2] },
+  places: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACE[2], marginTop: SPACE[3] },
 
-  addPlaces: {
-    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
-    marginTop: SPACE[4], paddingVertical: SPACE[2],
-  },
-  addPlacesText: { ...TYPE.small, color: COLORS.blue, fontWeight: '600', flex: 1 },
+  addPlaces: { marginTop: SPACE[3], alignItems: 'flex-start' },
 });

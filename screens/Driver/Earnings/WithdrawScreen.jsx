@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { Alert } from '../../../components/ui/alert';
 import { useNavigation } from '@react-navigation/native';
 import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
@@ -10,10 +10,14 @@ import {
   COLORS,
   TYPE,
   SPACE,
+  Screen,
   Card,
   Button,
   Banner,
+  Divider,
+  Footer,
   ScreenHeader,
+  Loading,
 } from '../../../components/ui/kit';
 
 export default function WithdrawScreen() {
@@ -99,41 +103,45 @@ export default function WithdrawScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={[styles.safe, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-      </SafeAreaView>
+      <Screen scroll={false}>
+        <Loading />
+      </Screen>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen scroll={false}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <ScreenHeader title="Withdraw" onBack={() => navigation.goBack()} />
 
-        <Card tone="dark" style={styles.balance}>
-          <Text style={styles.balanceLabel}>Available to withdraw</Text>
-          <Text style={styles.balanceValue}>{money(availableBalance)}</Text>
+        <Card tone="dark" style={styles.hero}>
+          <Text style={styles.heroLabel}>Available balance</Text>
+          <Text style={styles.heroValue}>{money(availableBalance)}</Text>
           {wallet?.totalEarned ? (
-            <Text style={styles.balanceSub}>{money(wallet.totalEarned)} earned in total</Text>
+            <Text style={styles.heroSub}>{money(wallet.totalEarned)} earned in total</Text>
           ) : null}
         </Card>
 
         {belowMinimum && availableBalance > 0 ? (
-          <Banner
-            tone="warning"
-            title={`Minimum is ${money(minimumPayout)}`}
-            body="Keep earning and you will be able to withdraw."
-          />
+          <View style={styles.gap}>
+            <Banner
+              tone="warning"
+              title={`Minimum is ${money(minimumPayout)}`}
+              body="Keep earning and you will be able to withdraw."
+            />
+          </View>
         ) : null}
 
         {!hasBank ? (
-          <Banner
-            tone="danger"
-            title="No bank details on file"
-            body="We cannot pay you out until your bank details are added. Contact support and they will set them up for you."
-          />
+          <View style={styles.gap}>
+            <Banner
+              tone="danger"
+              title="No bank details on file"
+              body="We cannot pay you out until your bank details are added. Contact support and they will set them up for you."
+            />
+          </View>
         ) : (
-          <Card style={{ marginTop: SPACE[4] }}>
+          <Card style={styles.gap}>
             <Text style={TYPE.label}>Paying into</Text>
             <Text style={styles.bankValue}>{maskedAccountNumber}</Text>
             <Text style={TYPE.small}>
@@ -152,15 +160,15 @@ export default function WithdrawScreen() {
             <Text style={TYPE.body}>Amount</Text>
             <Text style={styles.rowValue}>{money(availableBalance)}</Text>
           </View>
-          <View style={styles.divider} />
+          <Divider />
           <View style={styles.row}>
             <Text style={TYPE.body}>Fee</Text>
             <Text style={styles.rowValue}>{money(0)}</Text>
           </View>
-          <View style={styles.divider} />
+          <Divider />
           <View style={styles.row}>
-            <Text style={TYPE.body}>You receive</Text>
-            <Text style={[styles.rowValue, { color: COLORS.navy }]}>{money(availableBalance)}</Text>
+            <Text style={TYPE.subhead}>You receive</Text>
+            <Text style={styles.rowTotal}>{money(availableBalance)}</Text>
           </View>
         </Card>
 
@@ -170,32 +178,32 @@ export default function WithdrawScreen() {
           Withdrawals are checked by our team before the transfer is sent, usually within 1 to 2
           working days.
         </Text>
+      </ScrollView>
 
+      <Footer>
         <Button
           title="Request withdrawal"
           onPress={handleWithdraw}
           loading={requesting}
           disabled={!hasBank || belowMinimum || availableBalance <= 0}
-          style={{ marginTop: SPACE[6] }}
         />
-      </ScrollView>
-    </SafeAreaView>
+      </Footer>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.surface },
-  centered: { alignItems: 'center', justifyContent: 'center' },
-  content: { padding: SPACE[5], paddingBottom: SPACE[12] },
+  content: { padding: SPACE[5], paddingBottom: SPACE[8] },
 
-  balance: { marginTop: SPACE[5], marginBottom: SPACE[4] },
-  balanceLabel: { ...TYPE.small, color: COLORS.onDark },
-  balanceValue: { fontSize: 38, fontWeight: '800', color: COLORS.white, letterSpacing: -1.2, marginTop: 2 },
-  balanceSub: { ...TYPE.small, color: COLORS.onDark, marginTop: 2 },
+  hero: { marginTop: SPACE[5] },
+  heroLabel: { ...TYPE.label, color: COLORS.lime },
+  heroValue: { ...TYPE.display, color: COLORS.white, marginTop: SPACE[1] },
+  heroSub: { ...TYPE.small, color: COLORS.onDark, marginTop: SPACE[1] },
 
-  bankValue: { fontSize: 18, fontWeight: '700', color: COLORS.ink, letterSpacing: 1, marginVertical: SPACE[1] },
+  gap: { marginTop: SPACE[4] },
+  bankValue: { ...TYPE.figure, letterSpacing: 1, marginVertical: SPACE[1] },
 
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: SPACE[2] },
-  rowValue: { fontSize: 16, fontWeight: '700', color: COLORS.ink },
-  divider: { height: StyleSheet.hairlineWidth, backgroundColor: COLORS.line },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: SPACE[3] },
+  rowValue: { ...TYPE.callout },
+  rowTotal: { ...TYPE.figure },
 });

@@ -3,10 +3,7 @@ import {
   View,
   Text,
   StyleSheet,
-  Image,
   TouchableOpacity,
-  ScrollView,
-  TextInput,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
@@ -27,19 +24,25 @@ import {
   verifyBeforeUpdateEmail,
   EmailAuthProvider,
   reauthenticateWithCredential,
-  sendEmailVerification,
-  signInWithPhoneNumber,
-  PhoneAuthProvider,
-  updatePhoneNumber,
 } from "firebase/auth";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { uriToBlob } from "../../../helpers/uploadPicker";
 import { db, auth, storage } from "../../../config/firebase";
-import { COLORS } from '../../../components/ui/kit';
-
-const PRIMARY = COLORS.primary;
-const SECONDARY = COLORS.blue;
-const BG = COLORS.surface;
+import {
+  COLORS,
+  TYPE,
+  SPACE,
+  RADIUS,
+  SHADOW,
+  Screen,
+  ScreenHeader,
+  Avatar,
+  Field,
+  Button,
+  Banner,
+  Loading,
+  EmptyState,
+} from '../../../components/ui/kit';
 
 export default function EditProfileScreen() {
   const navigation = useNavigation();
@@ -204,7 +207,7 @@ export default function EditProfileScreen() {
   // ============================================
   // EMAIL CHANGE FLOW (THE IMPORTANT PART)
   // ============================================
-  
+
   const initiateEmailChange = async () => {
     if (!email.trim() || !email.includes("@")) {
       Alert.alert("Error", "Please enter a valid email");
@@ -272,7 +275,7 @@ export default function EditProfileScreen() {
 
       setShowReauth(false);
       setReauthPassword("");
-      
+
       // Execute the pending action (email change)
       if (reauthCallback) {
         reauthCallback();
@@ -328,7 +331,7 @@ export default function EditProfileScreen() {
 
   // Normalize to UK E.164 format (+44)
   let formattedPhone = phoneNumber.trim().replace(/\s/g, "");
-  
+
   if (!formattedPhone.startsWith("+")) {
     if (formattedPhone.startsWith("07")) {
       // UK mobile: 07XXX XXXXXX → +447XXX XXXXXX
@@ -372,17 +375,17 @@ export default function EditProfileScreen() {
 
   if (loading) {
     return (
-      <View style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={PRIMARY} />
-      </View>
+      <Screen scroll={false}>
+        <Loading />
+      </Screen>
     );
   }
 
   if (!user) {
     return (
-      <View style={[styles.container, styles.centered]}>
-        <Text style={{ color: COLORS.muted }}>Please sign in to edit your profile</Text>
-      </View>
+      <Screen scroll={false} style={{ justifyContent: "center" }}>
+        <EmptyState icon="person-circle-outline" title="Please sign in to edit your profile" />
+      </Screen>
     );
   }
 
@@ -393,207 +396,152 @@ export default function EditProfileScreen() {
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={24} color={COLORS.white} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Personal Information</Text>
-        <View style={styles.backBtn} />
-      </View>
+      <Screen>
+        <ScreenHeader title="Personal Information" />
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
         {/* Photo */}
         <View style={styles.photoSection}>
-          <TouchableOpacity onPress={pickImage} disabled={uploadingImage}>
-            <View style={styles.avatarContainer}>
-              {profileImage ? (
-                <Image source={{ uri: profileImage }} style={styles.avatar} />
+          <TouchableOpacity
+            onPress={pickImage}
+            disabled={uploadingImage}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Change profile photo"
+          >
+            <Avatar uri={profileImage} name={displayName} size={96} />
+            <View style={styles.cameraBadge}>
+              {uploadingImage ? (
+                <ActivityIndicator size="small" color={COLORS.lime} />
               ) : (
-                <View style={[styles.avatar, styles.avatarPlaceholder]}>
-                  <Text style={styles.avatarInitial}>
-                    {displayName.charAt(0).toUpperCase()}
-                  </Text>
-                </View>
+                <Ionicons name="camera" size={16} color={COLORS.lime} />
               )}
-              <View style={styles.cameraOverlay}>
-                {uploadingImage ? (
-                  <ActivityIndicator size="small" color={COLORS.white} />
-                ) : (
-                  <Ionicons name="camera" size={18} color={COLORS.white} />
-                )}
-              </View>
             </View>
           </TouchableOpacity>
-          <Text style={styles.photoHint}>Tap to change photo</Text>
+          <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>Tap to change photo</Text>
         </View>
 
-        {/* Form */}
-        <View style={styles.formSection}>
-          
-          {/* Full Name */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Full Name</Text>
-            <View style={styles.inputWrapper}>
-              <Ionicons name="person-outline" size={18} color={PRIMARY} style={styles.inputIcon} />
-              <TextInput
-                style={styles.input}
-                value={fullName}
-                onChangeText={setFullName}
-                placeholder="Your full name"
-                placeholderTextColor={COLORS.faint}
-              />
-            </View>
-            {fullName !== originalData.fullName && (
-              <TouchableOpacity
+        {/* Full Name */}
+        <Field
+          label="Full Name"
+          left="person-outline"
+          value={fullName}
+          onChangeText={setFullName}
+          placeholder="Your full name"
+          style={fullName !== originalData.fullName && { marginBottom: SPACE[2] }}
+        />
+        {fullName !== originalData.fullName && (
+          <Button
+            title="Save Name"
+            size="small"
+            style={styles.saveBtn}
+            onPress={handleSaveName}
+            loading={savingField === "name"}
+            disabled={savingField === "name"}
+          />
+        )}
+
+        {/* Email */}
+        {emailPending ? (
+          <View style={{ marginBottom: SPACE[4] }}>
+            <Text style={styles.fieldLabel}>Email Address</Text>
+            <Banner
+              tone="info"
+              icon="mail-unread-outline"
+              title="Verification Pending"
+              body={`A verification link was sent to ${pendingEmailAddress}. Click the link in that email to complete the change.\n\nYour current email (${originalData.email}) remains active until verified.`}
+              action={
+                <Button title="Cancel This Change" variant="ghost" size="small" style={{ alignSelf: "flex-start" }} onPress={cancelPendingEmail} />
+              }
+            />
+          </View>
+        ) : (
+          <>
+            <Field
+              label="Email Address"
+              left="mail-outline"
+              value={email}
+              onChangeText={setEmail}
+              placeholder="your@email.com"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              style={email !== originalData.email && { marginBottom: SPACE[2] }}
+            />
+            {email !== originalData.email && (
+              <Button
+                title="Send Verification Email"
+                size="small"
                 style={styles.saveBtn}
-                onPress={handleSaveName}
-                disabled={savingField === "name"}
-              >
-                {savingField === "name" ? (
-                  <ActivityIndicator size="small" color={COLORS.white} />
-                ) : (
-                  <Text style={styles.saveBtnText}>Save Name</Text>
-                )}
-              </TouchableOpacity>
+                onPress={initiateEmailChange}
+                loading={savingField === "email"}
+                disabled={savingField === "email"}
+              />
             )}
-          </View>
+          </>
+        )}
 
-          {/* Email */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Email Address</Text>
-            
-            {emailPending ? (
-              <View style={styles.pendingCard}>
-                <View style={styles.pendingHeader}>
-                  <Ionicons name="mail-unread-outline" size={20} color={SECONDARY} />
-                  <Text style={styles.pendingTitle}>Verification Pending</Text>
-                </View>
-                <Text style={styles.pendingDesc}>
-                  A verification link was sent to{" "}
-                  <Text style={styles.pendingEmail}>{pendingEmailAddress}</Text>. 
-                  Click the link in that email to complete the change.
-                </Text>
-                <Text style={styles.pendingNote}>
-                  Your current email ({originalData.email}) remains active until verified.
-                </Text>
-                <TouchableOpacity style={styles.cancelPendingBtn} onPress={cancelPendingEmail}>
-                  <Text style={styles.cancelPendingText}>Cancel This Change</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <>
-                <View style={styles.inputWrapper}>
-                  <Ionicons name="mail-outline" size={18} color={PRIMARY} style={styles.inputIcon} />
-                  <TextInput
-                    style={styles.input}
-                    value={email}
-                    onChangeText={setEmail}
-                    placeholder="your@email.com"
-                    placeholderTextColor={COLORS.faint}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                  />
-                </View>
-                {email !== originalData.email && (
-                  <TouchableOpacity
-                    style={styles.saveBtn}
-                    onPress={initiateEmailChange}
-                    disabled={savingField === "email"}
-                  >
-                    {savingField === "email" ? (
-                      <ActivityIndicator size="small" color={COLORS.white} />
-                    ) : (
-                      <Text style={styles.saveBtnText}>Send Verification Email</Text>
-                    )}
-                  </TouchableOpacity>
-                )}
-              </>
-            )}
-          </View>
-
-          {/* Phone Number */}
-          {/* Phone Number - Simple Save */}
-<View style={styles.inputGroup}>
-  <Text style={styles.label}>
-    Phone Number {originalData.phoneNumber ? "" : "(Not added)"}
-  </Text>
-  <View style={styles.inputWrapper}>
-    <Ionicons name="call-outline" size={18} color={PRIMARY} style={styles.inputIcon} />
-    <TextInput
-      style={styles.input}
-      value={phoneNumber}
-      onChangeText={setPhoneNumber}
-      placeholder="+44 312 3456789"
-      placeholderTextColor={COLORS.faint}
-      keyboardType="phone-pad"
-    />
-  </View>
-  {phoneNumber !== originalData.phoneNumber && (
-    <TouchableOpacity
-      style={styles.saveBtn}
-      onPress={handleSavePhone}
-      disabled={savingField === "phone"}
-    >
-      {savingField === "phone" ? (
-        <ActivityIndicator size="small" color={COLORS.white} />
-      ) : (
-        <Text style={styles.saveBtnText}>
-          {originalData.phoneNumber ? "Update Phone" : "Add Phone Number"}
-        </Text>
-      )}
-    </TouchableOpacity>
-  )}
-</View>
-        </View>
+        {/* Phone Number - Simple Save */}
+        <Field
+          label={`Phone Number ${originalData.phoneNumber ? "" : "(Not added)"}`}
+          left="call-outline"
+          value={phoneNumber}
+          onChangeText={setPhoneNumber}
+          placeholder="+44 312 3456789"
+          keyboardType="phone-pad"
+          style={phoneNumber !== originalData.phoneNumber && { marginBottom: SPACE[2] }}
+        />
+        {phoneNumber !== originalData.phoneNumber && (
+          <Button
+            title={originalData.phoneNumber ? "Update Phone" : "Add Phone Number"}
+            size="small"
+            style={styles.saveBtn}
+            onPress={handleSavePhone}
+            loading={savingField === "phone"}
+            disabled={savingField === "phone"}
+          />
+        )}
 
         {/* Info */}
-        <View style={styles.infoCard}>
-          <Ionicons name="shield-checkmark-outline" size={20} color={SECONDARY} />
-          <Text style={styles.infoText}>
-            For your security, email changes require verification. Phone changes use SMS confirmation. Your data is encrypted and never shared.
-          </Text>
+        <View style={{ marginTop: SPACE[4] }}>
+          <Banner
+            tone="success"
+            icon="shield-checkmark-outline"
+            body="For your security, email changes require verification. Phone changes use SMS confirmation. Your data is encrypted and never shared."
+          />
         </View>
-      </ScrollView>
+      </Screen>
 
-      {/* Re-auth Modal */}
+      {/* Re-auth sheet */}
       {showReauth && (
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <View style={styles.sheet}>
+            <View style={styles.grabber} />
             <View style={styles.modalIcon}>
-              <Ionicons name="lock-closed" size={32} color={SECONDARY} />
+              <Ionicons name="lock-closed" size={28} color={COLORS.midnight} />
             </View>
-            <Text style={styles.modalTitle}>Verify Identity</Text>
+            <Text style={[TYPE.heading, { textAlign: "center" }]}>Verify Identity</Text>
             <Text style={styles.modalSubtitle}>
               For security reasons, please re-enter your current password to change your email address.
             </Text>
-            <TextInput
-              style={styles.modalInput}
+            <Field
               value={reauthPassword}
               onChangeText={setReauthPassword}
               placeholder="Current password"
-              placeholderTextColor="#aaa"
               secureTextEntry
               autoFocus
             />
             <View style={styles.modalActions}>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalBtnSecondary]}
+              <Button
+                title="Cancel"
+                variant="secondary"
+                style={{ flex: 1 }}
                 onPress={() => {
                   setShowReauth(false);
                   setReauthPassword("");
                   setReauthCallback(null);
                 }}
-              >
-                <Text style={styles.modalBtnSecondaryText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalBtn, styles.modalBtnPrimary]}
-                onPress={handleReauthenticate}
-              >
-                <Text style={styles.modalBtnPrimaryText}>Verify</Text>
-              </TouchableOpacity>
+              />
+              <Button title="Verify" style={{ flex: 1 }} onPress={handleReauthenticate} />
             </View>
           </View>
         </View>
@@ -605,320 +553,72 @@ export default function EditProfileScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: BG,
-  },
-  centered: {
-    justifyContent: "center",
-    alignItems: "center",
-    flex: 1,
-  },
-
-  // Header
-  header: {
-    backgroundColor: SECONDARY,
-    paddingTop: 50,
-    paddingBottom: 16,
-    paddingHorizontal: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-  },
-  backBtn: {
-    width: 40,
-    height: 40,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: COLORS.white,
-  },
-
-  scrollContent: {
-    paddingBottom: 40,
+    backgroundColor: COLORS.surface,
   },
 
   // Photo
   photoSection: {
     alignItems: "center",
-    paddingVertical: 28,
+    paddingVertical: SPACE[6],
   },
-  avatarContainer: {
-    position: "relative",
-  },
-  avatar: {
-    width: 110,
-    height: 110,
-    borderRadius: 55,
-    borderWidth: 4,
-    borderColor: COLORS.white,
-  },
-  avatarPlaceholder: {
-    backgroundColor: "#E8E8E8",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  avatarInitial: {
-    fontSize: 44,
-    fontWeight: "700",
-    color: SECONDARY,
-  },
-  cameraOverlay: {
+  cameraBadge: {
     position: "absolute",
-    bottom: 0,
-    right: 0,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: PRIMARY,
+    bottom: -2,
+    right: -2,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.midnight,
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 3,
-    borderColor: COLORS.white,
-  },
-  photoHint: {
-    marginTop: 10,
-    fontSize: 13,
-    color: COLORS.faint,
+    borderColor: COLORS.surface,
   },
 
-  // Form
-  formSection: {
-    paddingHorizontal: 20,
-  },
-  inputGroup: {
-    marginBottom: 24,
-  },
-  label: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: COLORS.muted,
-    marginBottom: 8,
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
-  },
-  inputWrapper: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: COLORS.white,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  inputIcon: {
-    marginRight: 10,
-  },
-  input: {
-    flex: 1,
-    fontSize: 15,
-    color: COLORS.ink,
-    paddingVertical: 14,
-  },
-  saveBtn: {
-    backgroundColor: PRIMARY,
-    marginTop: 10,
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: "center",
-  },
-  saveBtnText: {
-    color: COLORS.white,
-    fontSize: 14,
-    fontWeight: "600",
-  },
+  fieldLabel: { fontSize: 13, fontWeight: "700", color: COLORS.inkSoft, marginBottom: SPACE[2] },
+  saveBtn: { alignSelf: "flex-start", marginBottom: SPACE[4] },
 
-  // Pending Email Card
-  pendingCard: {
-    backgroundColor: "#EEF0F4",
-    borderRadius: 12,
-    padding: 16,
-    borderLeftWidth: 4,
-    borderLeftColor: SECONDARY,
-  },
-  pendingHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 10,
-  },
-  pendingTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: SECONDARY,
-  },
-  pendingDesc: {
-    fontSize: 13,
-    color: "#444",
-    lineHeight: 20,
-    marginBottom: 8,
-  },
-  pendingEmail: {
-    fontWeight: "700",
-    color: SECONDARY,
-  },
-  pendingNote: {
-    fontSize: 12,
-    color: COLORS.muted,
-    fontStyle: "italic",
-    marginBottom: 12,
-  },
-  cancelPendingBtn: {
-    alignSelf: "flex-start",
-  },
-  cancelPendingText: {
-    fontSize: 13,
-    color: PRIMARY,
-    fontWeight: "600",
-  },
-
-  // Phone Verification
-  verificationCard: {
-    backgroundColor: COLORS.white,
-    borderRadius: 12,
-    padding: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  verifyLabel: {
-    fontSize: 14,
-    color: "#555",
-    marginBottom: 12,
-  },
-  codeInput: {
-    fontSize: 32,
-    fontWeight: "700",
-    color: COLORS.ink,
-    letterSpacing: 8,
-    textAlign: "center",
-    paddingVertical: 10,
-    marginBottom: 16,
-  },
-  verifyActions: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  verifyBtn: {
-    flex: 2,
-    marginTop: 0,
-  },
-  cancelBtn: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
-    alignItems: "center",
-    backgroundColor: "#F0F0F0",
-  },
-  cancelBtnText: {
-    color: COLORS.muted,
-    fontSize: 14,
-    fontWeight: "600",
-  },
-
-  // Info
-  infoCard: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    marginHorizontal: 20,
-    marginTop: 10,
-    backgroundColor: "#F2FADF",
-    padding: 14,
-    borderRadius: 12,
-    gap: 10,
-  },
-  infoText: {
-    flex: 1,
-    fontSize: 12,
-    color: "#555",
-    lineHeight: 18,
-  },
-
-  // Modal
+  // Re-auth sheet
   modalOverlay: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(0,0,0,0.5)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
+    backgroundColor: COLORS.overlay,
+    justifyContent: "flex-end",
   },
-  modalContent: {
+  sheet: {
     backgroundColor: COLORS.white,
-    borderRadius: 20,
-    padding: 24,
-    width: "100%",
-    maxWidth: 340,
-    alignItems: "center",
+    borderTopLeftRadius: RADIUS.xl,
+    borderTopRightRadius: RADIUS.xl,
+    paddingHorizontal: SPACE[5],
+    paddingTop: SPACE[3],
+    paddingBottom: SPACE[8],
+    ...SHADOW.sheet,
+  },
+  grabber: {
+    width: 44, height: 5, borderRadius: 3, backgroundColor: COLORS.lineStrong,
+    alignSelf: "center", marginBottom: SPACE[4],
   },
   modalIcon: {
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: "#EEF0F4",
+    backgroundColor: COLORS.lime,
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 16,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: COLORS.ink,
-    marginBottom: 8,
+    alignSelf: "center",
+    marginBottom: SPACE[4],
   },
   modalSubtitle: {
-    fontSize: 13,
-    color: COLORS.muted,
-    marginBottom: 20,
+    ...TYPE.small,
     textAlign: "center",
-    lineHeight: 18,
-  },
-  modalInput: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 15,
-    color: COLORS.ink,
-    width: "100%",
-    marginBottom: 16,
+    marginTop: SPACE[2],
+    marginBottom: SPACE[5],
   },
   modalActions: {
     flexDirection: "row",
-    gap: 10,
-    width: "100%",
-  },
-  modalBtn: {
-    flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
-    alignItems: "center",
-  },
-  modalBtnPrimary: {
-    backgroundColor: PRIMARY,
-  },
-  modalBtnPrimaryText: {
-    color: COLORS.white,
-    fontWeight: "700",
-    fontSize: 14,
-  },
-  modalBtnSecondary: {
-    backgroundColor: "#F0F0F0",
-  },
-  modalBtnSecondaryText: {
-    color: COLORS.muted,
-    fontWeight: "600",
-    fontSize: 14,
+    gap: SPACE[3],
   },
 });

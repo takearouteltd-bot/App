@@ -1,22 +1,13 @@
 import React, { useEffect, useState } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  SafeAreaView,
-  TouchableOpacity,
-  ScrollView,
-  ActivityIndicator,
-  RefreshControl,
-} from "react-native";
-import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { View, Text, StyleSheet, RefreshControl } from "react-native";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { getAuth } from "firebase/auth";
 import { doc, getDoc, getFirestore } from "firebase/firestore";
-import { COLORS } from '../../../components/ui/kit';
+import {
+  COLORS, TYPE, SPACE, RADIUS,
+  Screen, ScreenHeader, Section, Card, RowGroup, StatRow, StatusPill, Loading,
+} from '../../../components/ui/kit';
 
-const PRIMARY = COLORS.primary;
-const SECONDARY = COLORS.blue;
-const BG = COLORS.surface;
 const VEHICLE_TYPE_META = {
   RouteMini: {
     label: "RouteMini",
@@ -54,18 +45,6 @@ const formatValue = (value, fallback = "Not provided") => {
   if (value === undefined || value === null || value === "") return fallback;
   return String(value);
 };
-
-const InfoRow = ({ icon, label, value }) => (
-  <View style={styles.infoRow}>
-    <View style={styles.infoIconWrap}>
-      <MaterialCommunityIcons name={icon} size={20} color={SECONDARY} />
-    </View>
-    <View style={styles.infoContent}>
-      <Text style={styles.infoLabel}>{label}</Text>
-      <Text style={styles.infoValue}>{formatValue(value)}</Text>
-    </View>
-  </View>
-);
 
 export default function VehicleInformationScreen({ navigation }) {
   const auth = getAuth();
@@ -124,67 +103,52 @@ export default function VehicleInformationScreen({ navigation }) {
 
   if (loading) {
     return (
-      <SafeAreaView style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={PRIMARY} />
-      </SafeAreaView>
+      <Screen scroll={false}>
+        <Loading />
+      </Screen>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[PRIMARY]} />
-        }
-      >
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={24} color={SECONDARY} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Vehicle Information</Text>
-          <View style={{ width: 24 }} />
-        </View>
+    <Screen
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.midnight} colors={[COLORS.midnight]} />
+      }
+    >
+      <ScreenHeader title="Vehicle Information" onBack={() => navigation.goBack()} />
 
-        <View style={styles.heroCard}>
-          <View style={styles.heroTopRow}>
-            <View style={styles.heroIconWrap}>
-              <MaterialCommunityIcons name={heroIcon} size={34} color={SECONDARY} />
-            </View>
-            <View style={styles.heroBadge}>
-              <Text style={styles.heroBadgeText}>{heroLabel}</Text>
-            </View>
+      <Card tone="dark" style={styles.hero}>
+        <View style={styles.heroTopRow}>
+          <View style={styles.heroIconWrap}>
+            <MaterialCommunityIcons name={heroIcon} size={30} color={COLORS.lime} />
           </View>
-          <Text style={styles.heroTitle}>{formatValue(makeModel, "Vehicle not set")}</Text>
-          <Text style={styles.heroSubtitle}>
-            {formatValue(registration, "No registration added")}
-          </Text>
-          <Text style={styles.heroDescription}>{heroDescription}</Text>
-          <View style={styles.heroMetaRow}>
-            <View style={styles.heroMetaCard}>
-              <Text style={styles.heroMetaValue}>{formatValue(seats, "-")}</Text>
-              <Text style={styles.heroMetaLabel}>Seats</Text>
-            </View>
-            <View style={styles.heroMetaCard}>
-              <Text style={styles.heroMetaValue}>{formatValue(year, "-")}</Text>
-              <Text style={styles.heroMetaLabel}>Year</Text>
-            </View>
-            <View style={styles.heroMetaCard}>
-              <Text style={styles.heroMetaValue}>{driver?.approved ? "Live" : "Review"}</Text>
-              <Text style={styles.heroMetaLabel}>Status</Text>
-            </View>
+          <View style={styles.heroBadge}>
+            <Text style={styles.heroBadgeText}>{heroLabel}</Text>
           </View>
         </View>
+        <Text style={styles.heroTitle}>{formatValue(makeModel, "Vehicle not set")}</Text>
+        <Text style={styles.heroSubtitle}>{formatValue(registration, "No registration added")}</Text>
+        <Text style={styles.heroDescription}>{heroDescription}</Text>
+        <StatRow
+          tone="onDark"
+          style={styles.heroStats}
+          items={[
+            { value: formatValue(seats, "-"), label: "Seats" },
+            { value: formatValue(year, "-"), label: "Year" },
+            { value: driver?.approved ? "Live" : "Review", label: "Status" },
+          ]}
+        />
+      </Card>
 
-        <Text style={styles.sectionTitle}>Ride Category</Text>
-        <View style={styles.categoryCard}>
+      <Section title="Ride Category">
+        <Card>
           <View style={styles.categoryHeader}>
             <View style={styles.categoryIconWrap}>
-              <MaterialCommunityIcons name={heroIcon} size={22} color={PRIMARY} />
+              <MaterialCommunityIcons name={heroIcon} size={22} color={COLORS.midnight} />
             </View>
-            <View style={styles.categoryContent}>
-              <Text style={styles.categoryTitle}>{heroLabel}</Text>
-              <Text style={styles.categoryDescription}>{heroDescription}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={TYPE.subhead}>{heroLabel}</Text>
+              <Text style={[TYPE.small, { marginTop: 2 }]}>{heroDescription}</Text>
             </View>
           </View>
           <View style={styles.categoryFooter}>
@@ -192,268 +156,79 @@ export default function VehicleInformationScreen({ navigation }) {
               Best for {formatValue(seats, "4")} passengers
             </Text>
           </View>
-        </View>
+        </Card>
+      </Section>
 
-        <Text style={styles.sectionTitle}>Vehicle Details</Text>
-        <View style={styles.sectionCard}>
-          <InfoRow icon="car-info" label="Make & Model" value={makeModel} />
-          <InfoRow icon="card-text-outline" label="Registration" value={registration} />
-          <InfoRow icon="palette-outline" label="Color" value={color} />
-          <InfoRow icon="calendar-outline" label="Year" value={year} />
-          <InfoRow icon="car-estate" label="Ride Category" value={heroLabel} />
-          <InfoRow icon="seat-passenger" label="Seats" value={seats} />
-        </View>
+      <Section title="Vehicle Details">
+        <RowGroup
+          items={[
+            { icon: "car-outline", iconColor: COLORS.midnight, title: "Make & Model", detail: formatValue(makeModel) },
+            { icon: "card-outline", iconColor: COLORS.midnight, title: "Registration", detail: formatValue(registration) },
+            { icon: "color-palette-outline", iconColor: COLORS.midnight, title: "Color", detail: formatValue(color) },
+            { icon: "calendar-outline", iconColor: COLORS.midnight, title: "Year", detail: formatValue(year) },
+            { icon: "pricetag-outline", iconColor: COLORS.midnight, title: "Ride Category", detail: formatValue(heroLabel) },
+            { icon: "people-outline", iconColor: COLORS.midnight, title: "Seats", detail: formatValue(seats) },
+          ]}
+        />
+      </Section>
 
-        <Text style={styles.sectionTitle}>Status</Text>
-        <View style={styles.statusCard}>
-          <View style={[styles.statusPill, { backgroundColor: driver?.approved ? PRIMARY : "#9E9E9E" }]}>
-            <Text style={styles.statusPillText}>
-              {driver?.approved ? "Approved Vehicle" : "Pending Review"}
-            </Text>
-          </View>
-          <Text style={styles.statusDescription}>
+      <Section title="Status">
+        <Card>
+          <StatusPill
+            status={driver?.approved ? "approved" : "pending"}
+            label={driver?.approved ? "Approved Vehicle" : "Pending Review"}
+            dot
+          />
+          <Text style={[TYPE.body, { color: COLORS.muted, marginTop: SPACE[3] }]}>
             Keep your vehicle details up to date so your account stays compliant.
           </Text>
-        </View>
-
-        <View style={{ height: 32 }} />
-      </ScrollView>
-    </SafeAreaView>
+        </Card>
+      </Section>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: BG,
-  },
-  centered: {
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 12,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: SECONDARY,
-  },
-  heroCard: {
-    marginHorizontal: 20,
-    marginTop: 10,
-    backgroundColor: COLORS.white,
-    borderRadius: 20,
-    paddingVertical: 28,
-    paddingHorizontal: 20,
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    elevation: 3,
-  },
+  hero: { marginTop: SPACE[4] },
   heroTopRow: {
-    width: "100%",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 14,
+    marginBottom: SPACE[4],
   },
   heroIconWrap: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: SECONDARY + "12",
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: COLORS.midnightSoft,
     justifyContent: "center",
     alignItems: "center",
   },
   heroBadge: {
-    backgroundColor: COLORS.limeSoft,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
+    backgroundColor: COLORS.lime,
+    paddingHorizontal: SPACE[3],
+    paddingVertical: SPACE[2],
+    borderRadius: RADIUS.pill,
   },
-  heroBadgeText: {
-    color: PRIMARY,
-    fontSize: 12,
-    fontWeight: "800",
-  },
-  heroTitle: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: COLORS.ink,
-    textAlign: "center",
-  },
-  heroSubtitle: {
-    fontSize: 14,
-    color: "#7A7A7A",
-    marginTop: 6,
-    textAlign: "center",
-  },
-  heroDescription: {
-    fontSize: 13,
-    lineHeight: 19,
-    color: COLORS.muted,
-    textAlign: "center",
-    marginTop: 10,
-  },
-  heroMetaRow: {
-    flexDirection: "row",
-    gap: 10,
-    marginTop: 18,
-  },
-  heroMetaCard: {
-    flex: 1,
-    backgroundColor: BG,
-    borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    alignItems: "center",
-  },
-  heroMetaValue: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: COLORS.ink,
-  },
-  heroMetaLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#8E8E93",
-    textTransform: "uppercase",
-    marginTop: 4,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: COLORS.ink,
-    marginTop: 24,
-    marginHorizontal: 20,
-    marginBottom: 12,
-  },
-  categoryCard: {
-    marginHorizontal: 20,
-    backgroundColor: COLORS.white,
-    borderRadius: 18,
-    padding: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  categoryHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
+  heroBadgeText: { color: COLORS.midnight, fontSize: 12, fontWeight: "800" },
+  heroTitle: { ...TYPE.heading, color: COLORS.white },
+  heroSubtitle: { ...TYPE.callout, color: COLORS.lime, marginTop: SPACE[1] },
+  heroDescription: { ...TYPE.small, color: COLORS.onDark, marginTop: SPACE[2] },
+  heroStats: { marginTop: SPACE[5], justifyContent: "space-between" },
+  categoryHeader: { flexDirection: "row", alignItems: "center", gap: SPACE[3] },
   categoryIconWrap: {
     width: 46,
     height: 46,
-    borderRadius: 14,
+    borderRadius: 23,
     backgroundColor: COLORS.limeSoft,
     justifyContent: "center",
     alignItems: "center",
-    marginRight: 12,
-  },
-  categoryContent: {
-    flex: 1,
-  },
-  categoryTitle: {
-    fontSize: 16,
-    fontWeight: "800",
-    color: COLORS.ink,
-  },
-  categoryDescription: {
-    fontSize: 13,
-    color: "#777",
-    marginTop: 4,
-    lineHeight: 18,
   },
   categoryFooter: {
-    marginTop: 14,
-    paddingTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: "#EFEFF4",
+    marginTop: SPACE[4],
+    paddingTop: SPACE[4],
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.line,
   },
-  categoryFooterText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: PRIMARY,
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
-  },
-  sectionCard: {
-    marginHorizontal: 20,
-    backgroundColor: COLORS.white,
-    borderRadius: 18,
-    padding: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-    gap: 12,
-  },
-  infoRow: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  infoIconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
-    backgroundColor: SECONDARY + "10",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  infoContent: {
-    flex: 1,
-  },
-  infoLabel: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#8E8E93",
-    textTransform: "uppercase",
-    letterSpacing: 0.3,
-  },
-  infoValue: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: COLORS.ink,
-    marginTop: 4,
-  },
-  statusCard: {
-    marginHorizontal: 20,
-    backgroundColor: COLORS.white,
-    borderRadius: 18,
-    padding: 18,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  statusPill: {
-    alignSelf: "flex-start",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-  },
-  statusPillText: {
-    color: COLORS.white,
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  statusDescription: {
-    fontSize: 14,
-    lineHeight: 20,
-    color: COLORS.muted,
-    marginTop: 12,
-  },
+  categoryFooterText: { ...TYPE.label, color: COLORS.limeInk },
 });

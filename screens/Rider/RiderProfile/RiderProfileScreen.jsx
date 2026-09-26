@@ -1,30 +1,26 @@
 import React, { useEffect, useState, useCallback } from "react";
-import {
-  SafeAreaView,
-  View,
-  Text,
-  StyleSheet,
-  Image,
-  TouchableOpacity,
-  ScrollView,
-  ActivityIndicator,
-  RefreshControl,
-} from "react-native";
+import { View, Text, StyleSheet, Image, RefreshControl } from "react-native";
 import { Alert } from "../../../components/ui/alert";
-import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "../../../config/firebase";
 import { money } from '../../../utils/appConfig';
-import { COLORS, TYPE, Card, ListRow, Button, Loading } from '../../../components/ui/kit';
+import {
+  COLORS,
+  TYPE,
+  SPACE,
+  Screen,
+  Section,
+  RowGroup,
+  Button,
+  Loading,
+  Avatar,
+  StatRow,
+  EmptyState,
+} from '../../../components/ui/kit';
 import ModeSwitchRow from '../../../components/ModeSwitchRow';
 import { openTerms, openPrivacy } from '../../../utils/legal';
-
-const PRIMARY = COLORS.primary;
-const SECONDARY = COLORS.blue;
-const DANGER = COLORS.red;
-const BG = COLORS.surface;
 
 export default function RiderProfileScreen() {
   const navigation = useNavigation();
@@ -41,8 +37,6 @@ export default function RiderProfileScreen() {
     });
     return unsubscribe;
   }, []);
-
-  
 
 const fetchRiderData = useCallback(async () => {
   if (!currentUser?.uid) {
@@ -139,24 +133,24 @@ const fetchRiderData = useCallback(async () => {
       },
     ]);
   };
-  
 
-  
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <Screen scroll={false}>
         <Loading />
-      </SafeAreaView>
+      </Screen>
     );
   }
 
   if (!currentUser) {
     return (
-      <SafeAreaView style={[styles.safe, styles.centered]}>
-        <Ionicons name="person-circle-outline" size={64} color={COLORS.line} />
-        <Text style={[TYPE.heading, { marginTop: 12 }]}>You are signed out</Text>
-        <Button title="Sign in" style={{ marginTop: 20, alignSelf: 'stretch' }} onPress={() => navigation.navigate("Login")} />
-      </SafeAreaView>
+      <Screen scroll={false} style={{ justifyContent: 'center' }}>
+        <EmptyState
+          icon="person-circle-outline"
+          title="You are signed out"
+          action={<Button title="Sign in" onPress={() => navigation.navigate("Login")} />}
+        />
+      </Screen>
     );
   }
 
@@ -168,101 +162,91 @@ const fetchRiderData = useCallback(async () => {
     ? new Date(currentUser.metadata.creationTime).toLocaleDateString("en-GB", { month: "long", year: "numeric" })
     : null;
 
-  const group = (items) => (
-    <Card style={{ paddingVertical: 0 }}>
-      {items.map((item, i) => (
-        <ListRow key={item.title} {...item} last={i === items.length - 1} />
-      ))}
-    </Card>
-  );
+  const openEdit = () => navigation.navigate("EditProfile", { riderData });
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
-      >
-        {/* Identity. The photo is the one large element on the screen. */}
-        <View style={styles.identity}>
-          <TouchableOpacity onPress={() => navigation.navigate("EditProfile", { riderData })} activeOpacity={0.85}>
-            {photoURL ? (
-              <Image source={{ uri: photoURL }} style={styles.avatar} />
-            ) : (
-              <View style={[styles.avatar, styles.avatarEmpty]}>
-                <Text style={styles.initial}>{displayName.charAt(0).toUpperCase()}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-          <Text style={styles.name}>{displayName}</Text>
-          <Text style={TYPE.small}>
+    <Screen
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.midnight} />}
+    >
+      {/* Identity. The photo is the one large element on the screen. */}
+      <View style={styles.hero}>
+        <Avatar uri={photoURL} name={displayName} size={72} />
+        <View style={{ flex: 1 }}>
+          <Text style={TYPE.title} numberOfLines={2}>{displayName}</Text>
+          <Text style={[TYPE.small, { marginTop: SPACE[1] }]}>
             {memberSince ? `Riding with TakeARoute since ${memberSince}` : "Riding with TakeARoute"}
           </Text>
         </View>
+      </View>
+      <Button title="Edit" variant="secondary" size="small" icon="create-outline" style={styles.editBtn} onPress={openEdit} />
 
-        {/* Two facts, not a dashboard. */}
-        <View style={styles.facts}>
-          <View style={styles.fact}>
-            <Text style={styles.factValue}>{stats.totalRides}</Text>
-            <Text style={TYPE.small}>{stats.totalRides === 1 ? "trip" : "trips"}</Text>
-          </View>
-          <View style={styles.factRule} />
-          <View style={styles.fact}>
-            <Text style={styles.factValue}>{money(stats.totalSpent)}</Text>
-            <Text style={TYPE.small}>spent</Text>
-          </View>
-        </View>
+      {/* Two facts, not a dashboard. */}
+      <StatRow
+        style={styles.facts}
+        items={[
+          { value: stats.totalRides, label: stats.totalRides === 1 ? "trip" : "trips" },
+          { value: money(stats.totalSpent), label: "spent" },
+        ]}
+      />
 
-        <Text style={styles.groupTitle}>Account</Text>
-        {group([
-          { icon: "person-outline", title: "Personal details", detail: "Name, phone, email and photo", onPress: () => navigation.navigate("EditProfile", { riderData }) },
-          { icon: "location-outline", title: "Saved places", detail: "Home, work and regular destinations", onPress: () => navigation.navigate("SavedPlaces") },
-          { icon: "card-outline", title: "Payment", detail: riderData?.defaultPaymentMethodId ? "Card saved" : "Add a card to book", onPress: () => navigation.navigate("PaymentMethods") },
-          { icon: "time-outline", title: "Trip history", detail: "Past trips and receipts", onPress: () => navigation.navigate("RideHistory") },
-          { icon: "mail-outline", title: "Messages", detail: "Updates from TakeARoute", onPress: () => navigation.navigate("Inbox", { role: "rider" }) },
-        ])}
+      <Section title="Account">
+        <RowGroup
+          items={[
+            { icon: "person-outline", title: "Personal details", detail: "Name, phone, email and photo", onPress: openEdit },
+            { icon: "location-outline", title: "Saved places", detail: "Home, work and regular destinations", onPress: () => navigation.navigate("SavedPlaces") },
+            { icon: "time-outline", title: "Trip history", detail: "Past trips and receipts", onPress: () => navigation.navigate("RideHistory") },
+            { icon: "mail-outline", title: "Messages", detail: "Updates from TakeARoute", onPress: () => navigation.navigate("Inbox", { role: "rider" }) },
+          ]}
+        />
+      </Section>
 
-        {/* Same account, other mode. Hidden until it knows what to offer. */}
-        <View style={{ marginTop: 26 }}>
-          <ModeSwitchRow uid={currentUser.uid} currentRole="rider" />
-        </View>
+      <Section title="Payments">
+        <RowGroup
+          items={[
+            { icon: "card-outline", title: "Payment", detail: riderData?.defaultPaymentMethodId ? "Card saved" : "Add a card to book", onPress: () => navigation.navigate("PaymentMethods") },
+          ]}
+        />
+      </Section>
 
-        <Text style={styles.groupTitle}>Help and safety</Text>
-        {group([
-          { icon: "chatbubbles-outline", title: "My reports", detail: "Issues, lost property and replies from support", onPress: () => navigation.navigate("MyReports", { role: "rider" }) },
-          { icon: "shield-checkmark-outline", iconColor: COLORS.red, title: "Safety", detail: riderData?.emergencyContact?.name ? `Emergency contact: ${riderData.emergencyContact.name}` : "Add an emergency contact", onPress: () => navigation.navigate("EmergencyContact", { role: "rider" }) },
-          { icon: "document-text-outline", title: "Terms of use", onPress: openTerms },
-          { icon: "lock-closed-outline", title: "Privacy policy", onPress: openPrivacy },
-        ])}
+      {/* Same account, other mode. Hidden until it knows what to offer. */}
+      <View style={{ marginTop: SPACE[7] }}>
+        <ModeSwitchRow uid={currentUser.uid} currentRole="rider" />
+      </View>
 
-        <Button title="Sign out" variant="secondary" style={{ marginTop: 28 }} onPress={handleLogout} />
+      <Section title="Safety">
+        <RowGroup
+          items={[
+            { icon: "shield-checkmark-outline", iconColor: COLORS.red, title: "Safety", detail: riderData?.emergencyContact?.name ? `Emergency contact: ${riderData.emergencyContact.name}` : "Add an emergency contact", onPress: () => navigation.navigate("EmergencyContact", { role: "rider" }) },
+          ]}
+        />
+      </Section>
 
-        <View style={styles.footer}>
-          <Image source={require("../../../assets/myicon.png")} style={styles.footerLogo} resizeMode="contain" />
-          <Text style={TYPE.small}>TakeARoute 1.0</Text>
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+      <Section title="Support">
+        <RowGroup
+          items={[
+            { icon: "chatbubbles-outline", title: "My reports", detail: "Issues, lost property and replies from support", onPress: () => navigation.navigate("MyReports", { role: "rider" }) },
+            { icon: "document-text-outline", title: "Terms of use", onPress: openTerms },
+            { icon: "lock-closed-outline", title: "Privacy policy", onPress: openPrivacy },
+          ]}
+        />
+      </Section>
+
+      <Section>
+        <RowGroup items={[{ icon: "log-out-outline", title: "Sign out", danger: true, onPress: handleLogout }]} />
+      </Section>
+
+      <View style={styles.footer}>
+        <Image source={require("../../../assets/myicon.png")} style={styles.footerLogo} resizeMode="contain" />
+        <Text style={TYPE.small}>TakeARoute 1.0</Text>
+      </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.surface },
-  centered: { alignItems: "center", justifyContent: "center", padding: 32 },
-  content: { padding: 20, paddingBottom: 40 },
-  identity: { alignItems: "center", paddingTop: 20, paddingBottom: 8 },
-  avatar: { width: 108, height: 108, borderRadius: 36 },
-  avatarEmpty: { backgroundColor: COLORS.navy, alignItems: "center", justifyContent: "center" },
-  initial: { fontSize: 44, fontWeight: "800", color: COLORS.white },
-  name: { fontSize: 26, fontWeight: "800", color: COLORS.navy, letterSpacing: -0.4, marginTop: 14 },
-  facts: {
-    flexDirection: "row", alignItems: "center", justifyContent: "center",
-    marginTop: 22, marginBottom: 6,
-  },
-  fact: { alignItems: "center", paddingHorizontal: 28 },
-  factValue: { fontSize: 22, fontWeight: "800", color: COLORS.navy, letterSpacing: -0.3 },
-  factRule: { width: 1, height: 36, backgroundColor: COLORS.line },
-  groupTitle: { ...TYPE.heading, marginTop: 26, marginBottom: 10 },
-  footer: { alignItems: "center", marginTop: 36, gap: 6 },
+  hero: { flexDirection: "row", alignItems: "center", gap: SPACE[4], paddingTop: SPACE[2] },
+  editBtn: { alignSelf: "flex-start", marginTop: SPACE[4] },
+  facts: { marginTop: SPACE[6] },
+  footer: { alignItems: "center", marginTop: SPACE[10], gap: SPACE[2] },
   footerLogo: { width: 40, height: 40, opacity: 0.6 },
 });

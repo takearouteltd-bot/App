@@ -2,12 +2,14 @@
 // Replaces two near-identical screens. Defaults to "All" so the list is never
 // empty just because there was no trip today.
 import React, { useEffect, useMemo, useState } from 'react';
-import { SafeAreaView, View, Text, FlatList, TouchableOpacity, StyleSheet } from 'react-native';
+import { SafeAreaView, View, Text, FlatList, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { collection, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
 import { money } from '../../utils/appConfig';
-import { COLORS, TYPE, SPACE, RADIUS, ScreenHeader, EmptyState, Loading, Chip } from '../ui/kit';
+import {
+  COLORS, TYPE, SPACE, ScreenHeader, Card, StatusPill, RouteLine, EmptyState, Loading, Chip,
+} from '../ui/kit';
 
 const FILTERS = [
   { key: 'all', label: 'All' },
@@ -34,54 +36,58 @@ function whenLabel(date) {
   return `${date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}, ${time}`;
 }
 
-const STATUS = {
-  completed: { label: 'Completed', fg: COLORS.success, bg: COLORS.limeSoft },
-  cancelled: { label: 'Cancelled', fg: COLORS.red, bg: COLORS.redSoft },
-  canceled: { label: 'Cancelled', fg: COLORS.red, bg: COLORS.redSoft },
-  ongoing: { label: 'On the way', fg: COLORS.blue, bg: COLORS.blueSoft },
-  accepted: { label: 'Driver assigned', fg: COLORS.blue, bg: COLORS.blueSoft },
-  arrived: { label: 'Driver arrived', fg: COLORS.blue, bg: COLORS.blueSoft },
-  searching: { label: 'Finding driver', fg: COLORS.amber, bg: COLORS.amberSoft },
+// Trip statuses the kit's StatusPill does not know, in its own words.
+const STATUS_LABEL = {
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+  canceled: 'Cancelled',
+  ongoing: 'On the way',
+  accepted: 'Driver assigned',
+  arrived: 'Driver arrived',
+  searching: 'Finding driver',
+};
+
+// Map each trip status onto a pill tone the kit already styles.
+const STATUS_PILL = {
+  completed: 'approved',
+  cancelled: 'rejected',
+  canceled: 'rejected',
+  ongoing: 'open',
+  accepted: 'open',
+  arrived: 'open',
+  searching: 'pending',
 };
 
 function TripRow({ trip, role, onPress }) {
-  const s = STATUS[trip.status] || { label: trip.status || 'Unknown', fg: COLORS.muted, bg: COLORS.surface };
   const cancelled = trip.status === 'cancelled' || trip.status === 'canceled';
   const amount = trip.fare?.finalTotal ?? trip.fare?.total ?? trip.fareEstimate ?? 0;
   return (
-    <TouchableOpacity activeOpacity={0.8} onPress={onPress} style={styles.card}>
+    <Card onPress={onPress} style={styles.card}>
       <View style={styles.top}>
         <Text style={TYPE.small}>{whenLabel(tripDate(trip))}</Text>
-        <View style={[styles.pill, { backgroundColor: s.bg }]}>
-          <Text style={[styles.pillText, { color: s.fg }]}>{s.label}</Text>
-        </View>
+        <StatusPill
+          status={STATUS_PILL[trip.status] || trip.status}
+          label={STATUS_LABEL[trip.status] || trip.status || 'Unknown'}
+        />
       </View>
 
-      {/* Route: pickup dot, line, drop-off square */}
-      <View style={styles.route}>
-        <View style={styles.rail}>
-          <View style={[styles.dot, { backgroundColor: COLORS.lime }]} />
-          <View style={styles.line} />
-          <View style={[styles.dot, styles.square, { backgroundColor: COLORS.navy }]} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.place} numberOfLines={1}>{trip.pickupLocation?.address || 'Pickup'}</Text>
-          <View style={{ height: 14 }} />
-          <Text style={styles.place} numberOfLines={1}>{trip.dropoffLocation?.address || 'Drop-off'}</Text>
-        </View>
-      </View>
+      <RouteLine
+        compact
+        pickup={trip.pickupLocation?.address || 'Pickup'}
+        dropoff={trip.dropoffLocation?.address || 'Drop-off'}
+      />
 
       <View style={styles.bottom}>
         <Text style={TYPE.small}>
           {trip.route?.distanceKm ? `${trip.route.distanceKm} km` : ''}
           {trip.route?.durationMinutes ? `, ${Math.ceil(trip.route.durationMinutes)} min` : ''}
         </Text>
-        <Text style={[styles.amount, cancelled && { color: COLORS.muted, textDecorationLine: 'line-through' }]}>
+        <Text style={[TYPE.figure, cancelled && { color: COLORS.muted, textDecorationLine: 'line-through' }]}>
           {role === 'driver' && !cancelled ? '+' : ''}
           {money(amount, trip.currency || trip.fare?.currency)}
         </Text>
       </View>
-    </TouchableOpacity>
+    </Card>
   );
 }
 
@@ -140,7 +146,7 @@ export default function TripsList({ role = 'rider' }) {
         contentContainerStyle={styles.content}
         renderItem={({ item }) => <TripRow trip={item} role={role} onPress={() => open(item)} />}
         ListHeaderComponent={
-          <View style={{ marginBottom: 16 }}>
+          <View style={{ marginBottom: SPACE[4] }}>
             <ScreenHeader title="Your trips" />
             <View style={styles.filters}>
               {FILTERS.map((f) => (
@@ -153,10 +159,14 @@ export default function TripsList({ role = 'rider' }) {
               ))}
             </View>
             {completed.length ? (
-              <Text style={[TYPE.small, { marginTop: 12 }]}>
-                {completed.length} completed {completed.length === 1 ? 'trip' : 'trips'},{' '}
-                {role === 'driver' ? 'earned' : 'spent'} {money(total)}
-              </Text>
+              <Card tone="dark" style={styles.summary}>
+                <Text style={[TYPE.label, { color: COLORS.onDark }]}>
+                  {completed.length} completed {completed.length === 1 ? 'trip' : 'trips'}
+                </Text>
+                <Text style={[TYPE.figure, { color: COLORS.lime, marginTop: SPACE[1] }]}>
+                  {role === 'driver' ? 'Earned' : 'Spent'} {money(total)}
+                </Text>
+              </Card>
             ) : null}
           </View>
         }
@@ -190,30 +200,15 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.surface },
   content: { padding: SPACE[5], paddingBottom: SPACE[12] },
   filters: { flexDirection: 'row', gap: SPACE[2], marginTop: SPACE[4] },
-  card: {
-    backgroundColor: COLORS.white,
-    borderRadius: RADIUS.lg,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.line,
-    padding: SPACE[4],
-    marginBottom: SPACE[3],
-  },
+  summary: { marginTop: SPACE[4] },
+  card: { marginBottom: SPACE[3] },
   top: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     marginBottom: SPACE[3],
   },
-  pill: { paddingHorizontal: SPACE[3], paddingVertical: 4, borderRadius: RADIUS.pill },
-  pillText: { fontSize: 12, fontWeight: '700' },
-  route: { flexDirection: 'row', gap: SPACE[3] },
-  rail: { alignItems: 'center', paddingTop: 5 },
-  dot: { width: 9, height: 9, borderRadius: 5 },
-  square: { borderRadius: 2 },
-  line: { width: 2, flex: 1, minHeight: 18, backgroundColor: COLORS.line, marginVertical: 3 },
-  place: { fontSize: 15, fontWeight: '600', color: COLORS.ink },
   bottom: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     marginTop: SPACE[4], paddingTop: SPACE[3],
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
   },
-  amount: { fontSize: 17, fontWeight: '800', color: COLORS.navy },
 });

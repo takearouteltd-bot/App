@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, FlatList, SafeAreaView, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, FlatList, StyleSheet } from 'react-native';
 import { Alert } from '../../../components/ui/alert';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -7,7 +7,6 @@ import {
   onSnapshot,
   doc,
   deleteDoc,
-  getDoc,
   setDoc,
   updateDoc,
 } from 'firebase/firestore';
@@ -18,10 +17,11 @@ import {
   COLORS,
   TYPE,
   SPACE,
-  RADIUS,
+  Screen,
   Card,
   Button,
   EmptyState,
+  Loading,
   ScreenHeader,
   StatusPill,
 } from '../../../components/ui/kit';
@@ -150,18 +150,21 @@ export default function AllPaymentMethodsScreen({ navigation }) {
     const brand = item.brand ? item.brand.replace(/^./, (c) => c.toUpperCase()) : 'Card';
 
     return (
-      <Card style={{ marginBottom: SPACE[3] }}>
+      <Card style={[styles.card, isDefault && styles.cardDefault]}>
         <View style={styles.top}>
           <View style={styles.brandRow}>
-            <Ionicons name="card" size={20} color={COLORS.navy} />
-            <Text style={styles.brand}>{brand}</Text>
+            <View style={[styles.brandIcon, isDefault && { backgroundColor: COLORS.midnight }]}>
+              <Ionicons name="card" size={20} color={isDefault ? COLORS.lime : COLORS.midnight} />
+            </View>
+            <View>
+              <Text style={styles.brand}>{brand}</Text>
+              <Text style={styles.number}>···· {item.last4}</Text>
+            </View>
           </View>
-          {isDefault ? <StatusPill status="valid" label="Default" /> : null}
+          {isDefault ? <StatusPill status="approved" label="Default" /> : null}
         </View>
 
-        <Text style={styles.number}>···· ···· ···· {item.last4}</Text>
-
-        <Text style={TYPE.small}>
+        <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>
           {item.cardholderName ? `${item.cardholderName} · ` : ''}
           Expires {String(item.exp_month).padStart(2, '0')}/{String(item.exp_year).slice(-2)}
         </Text>
@@ -193,25 +196,27 @@ export default function AllPaymentMethodsScreen({ navigation }) {
 
   if (loading) {
     return (
-      <SafeAreaView style={[styles.safe, styles.centered]}>
-        <ActivityIndicator color={COLORS.primary} size="large" />
-      </SafeAreaView>
+      <Screen scroll={false}>
+        <Loading />
+      </Screen>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen scroll={false}>
       <FlatList
         data={cards}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         ListHeaderComponent={
-          <ScreenHeader
-            title="Your cards"
-            subtitle="The default card is the one your rides are charged to."
-            onBack={() => navigation.goBack()}
-          />
+          <View style={{ marginBottom: SPACE[5] }}>
+            <ScreenHeader
+              title="Your cards"
+              subtitle="The default card is the one your rides are charged to."
+              onBack={() => navigation.goBack()}
+            />
+          </View>
         }
         renderItem={renderCard}
         ListEmptyComponent={
@@ -228,32 +233,33 @@ export default function AllPaymentMethodsScreen({ navigation }) {
           cards.length ? (
             <Button
               title="Add another card"
-              variant="secondary"
+              icon="add"
               style={{ marginTop: SPACE[3] }}
               onPress={() => navigation.navigate('AddPaymentMethod')}
             />
           ) : null
         }
       />
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.surface },
-  centered: { alignItems: 'center', justifyContent: 'center' },
   content: { padding: SPACE[5], paddingBottom: SPACE[12] },
 
-  top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[2] },
-  brand: { fontSize: 15, fontWeight: '700', color: COLORS.navy },
-  number: {
-    fontSize: 18, fontWeight: '700', color: COLORS.ink,
-    letterSpacing: 1.5, marginTop: SPACE[3], marginBottom: SPACE[1],
+  card: { marginBottom: SPACE[3] },
+  cardDefault: { borderWidth: 2, borderColor: COLORS.midnight, backgroundColor: COLORS.limeSoft },
+  top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: SPACE[3] },
+  brandRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[3], flex: 1 },
+  brandIcon: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: COLORS.fill,
+    alignItems: 'center', justifyContent: 'center',
   },
+  brand: { ...TYPE.subhead, color: COLORS.midnight },
+  number: { ...TYPE.small, letterSpacing: 1.5, marginTop: 2 },
   actions: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
-    marginTop: SPACE[4], paddingTop: SPACE[4],
-    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
+    marginTop: SPACE[4],
   },
 });

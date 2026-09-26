@@ -7,7 +7,7 @@ import { TouchableOpacity, Modal, View, Text, Linking, Pressable, StyleSheet } f
 import { Ionicons } from '@expo/vector-icons';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../config/firebase';
-import { COLORS, TYPE, ListRow, Button } from './ui/kit';
+import { COLORS, TYPE, SPACE, SHADOW, ListRow, Button, Sheet } from './ui/kit';
 
 import { AlertHost } from './ui/alert';
 export default function SafetyButton({ role = 'rider', rideId, style }) {
@@ -31,36 +31,36 @@ export default function SafetyButton({ role = 'rider', rideId, style }) {
     <>
       <TouchableOpacity
         onPress={() => setOpen(true)}
-        style={[styles.btn, style]}
+        style={[styles.btn, SHADOW.float, style]}
+        activeOpacity={0.8}
         accessibilityRole="button"
         accessibilityLabel="Safety options"
       >
-        <Ionicons name="shield-checkmark" size={20} color={COLORS.red} />
+        <Ionicons name="shield-checkmark" size={20} color={COLORS.lime} />
       </TouchableOpacity>
 
       <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setOpen(false)} />
-        <View style={styles.sheet}>
-          <View style={styles.handle} />
+        <Sheet>
           <Text style={TYPE.title}>Safety</Text>
-          <Text style={[TYPE.small, { marginTop: 4, marginBottom: 8 }]}>
+          <Text style={[TYPE.small, { marginTop: SPACE[1], marginBottom: SPACE[2] }]}>
             If you are in danger, call 999.
             {rideId ? ` Trip reference ${String(rideId).slice(0, 8).toUpperCase()}.` : ''}
           </Text>
           <ListRow icon="alert-circle" iconColor={COLORS.red} title="Call 999" detail="Emergency services" onPress={() => call('999')} />
-          <ListRow icon="call-outline" title="Call 101" detail="Police non-emergency" onPress={() => call('101')} last={!contact?.phone} />
+          <ListRow icon="call-outline" iconColor={COLORS.midnight} title="Call 101" detail="Police non-emergency" onPress={() => call('101')} last={!contact?.phone} />
           {contact?.phone ? (
             <ListRow
               icon="person-outline"
-              iconColor={COLORS.primary}
+              iconColor={COLORS.limeInk}
               title={`Call ${contact.name || 'emergency contact'}`}
               detail={contact.relationship || 'Your emergency contact'}
               onPress={() => call(contact.phone)}
               last
             />
           ) : null}
-          <Button title="Close" variant="secondary" style={{ marginTop: 16 }} onPress={() => setOpen(false)} />
-        </View>
+          <Button title="Close" variant="secondary" style={{ marginTop: SPACE[4] }} onPress={() => setOpen(false)} />
+        </Sheet>
         <AlertHost />
       </Modal>
     </>
@@ -72,22 +72,9 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.midnight,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 4,
   },
-  backdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.45)' },
-  sheet: {
-    backgroundColor: COLORS.white,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    paddingBottom: 36,
-  },
-  handle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.line, marginBottom: 16 },
+  backdrop: { flex: 1, backgroundColor: COLORS.overlay },
 });

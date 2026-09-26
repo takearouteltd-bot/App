@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   SafeAreaView,
-  ActivityIndicator,
   TouchableOpacity,
   Animated,
   Easing,
@@ -20,8 +19,8 @@ import { getAuth } from 'firebase/auth';
 import { currencySymbol, useAppConfig, money } from '../../utils/appConfig';
 import { acceptCounterOffer, raiseOffer } from '../../utils/bidding';
 import {
-  COLORS, TYPE, SPACE, RADIUS, SHADOW, IconButton, RouteLine,
-  MapUnavailable, isCoord, validCoords, regionCovering,
+  COLORS, TYPE, SPACE, RADIUS, Screen, Sheet, Card, Button, Banner, Avatar, IconButton,
+  RouteLine, Loading, MapUnavailable, isCoord, validCoords, regionCovering,
 } from '../../components/ui/kit';
 
 
@@ -219,10 +218,9 @@ export default function RideRequestScreen() {
 
   if (!rideData) {
     return (
-      <SafeAreaView style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={[TYPE.small, { marginTop: SPACE[4] }]}>Loading your ride…</Text>
-      </SafeAreaView>
+      <Screen scroll={false}>
+        <Loading label="Loading your ride…" />
+      </Screen>
     );
   }
 
@@ -237,7 +235,7 @@ export default function RideRequestScreen() {
   const initialRegion = regionCovering([pickupLocation, dropoffLocation], 0.05);
 
   const haloStyle = {
-    opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0] }),
+    opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0] }),
     transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.6, 2.4] }) }],
   };
 
@@ -260,7 +258,7 @@ export default function RideRequestScreen() {
           ) : null}
           {isCoord(dropoffLocation) ? (
             <Marker coordinate={dropoffLocation} anchor={{ x: 0.5, y: 1 }}>
-              <Ionicons name="location" size={30} color={COLORS.navy} />
+              <Ionicons name="location" size={30} color={COLORS.midnight} />
             </Marker>
           ) : null}
           {isCoord(pickupLocation) && isCoord(dropoffLocation) ? (
@@ -282,18 +280,17 @@ export default function RideRequestScreen() {
         <IconButton icon="chevron-back" onPress={() => navigation.goBack()} accessibilityLabel="Go back" />
       </View>
 
-      <View style={styles.sheet}>
-        <View style={styles.grabber} />
-
+      <Sheet style={styles.sheet}>
         {isSearching ? (
           <View style={styles.searching}>
             <View style={styles.radar}>
               <Animated.View style={[styles.halo, haloStyle]} />
               <View style={styles.radarCore}>
-                <Ionicons name="car-sport" size={26} color={COLORS.white} />
+                <Ionicons name="car-sport" size={26} color={COLORS.lime} />
               </View>
             </View>
 
+            <Text style={TYPE.label}>Searching</Text>
             <Text style={styles.searchTitle}>
               {rideData.femaleDriverOnly ? 'Finding a female driver' : 'Finding your driver'}
             </Text>
@@ -301,77 +298,86 @@ export default function RideRequestScreen() {
 
             {askToWiden ? (
               <View style={styles.widen}>
-                <Text style={styles.widenTitle}>No female driver is free right now</Text>
-                <Text style={styles.widenBody}>
-                  Switch the preference off for this ride and we will find the nearest driver.
-                </Text>
-                <View style={styles.widenRow}>
-                  <TouchableOpacity
-                    style={[styles.widenButton, styles.widenSecondary]}
-                    onPress={() => setKeepWaitingUntil(elapsed + femaleWait)}
-                  >
-                    <Text style={[styles.widenButtonText, { color: COLORS.navy }]}>Keep waiting</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.widenButton, widening && { opacity: 0.6 }]}
-                    onPress={findAnyDriver}
-                    disabled={widening}
-                  >
-                    <Text style={styles.widenButtonText}>Find any driver</Text>
-                  </TouchableOpacity>
-                </View>
+                <Banner
+                  tone="warning"
+                  title="No female driver is free right now"
+                  body="Switch the preference off for this ride and we will find the nearest driver."
+                  action={
+                    <View style={styles.widenRow}>
+                      <Button
+                        title="Keep waiting"
+                        variant="secondary"
+                        size="small"
+                        style={{ flex: 1 }}
+                        onPress={() => setKeepWaitingUntil(elapsed + femaleWait)}
+                      />
+                      <Button
+                        title="Find any driver"
+                        size="small"
+                        style={{ flex: 1 }}
+                        onPress={findAnyDriver}
+                        loading={widening}
+                      />
+                    </View>
+                  }
+                />
               </View>
             ) : null}
 
             {rideData.bidding ? (
               <View style={styles.bid}>
-                <View style={styles.bidRow}>
+                <Card tone="accent" style={styles.bidRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={TYPE.label}>Your offer</Text>
+                    <Text style={styles.bidLabel}>Your offer</Text>
                     <Text style={styles.bidValue}>{money(rideData.offeredFare ?? fareEstimate, rideData.currency)}</Text>
                   </View>
-                  <TouchableOpacity
-                    style={[styles.raise, raising && { opacity: 0.6 }]}
+                  <Button
+                    title={`Raise ${money(1, rideData.currency)}`}
+                    variant="dark"
+                    size="small"
                     onPress={() => bumpOffer(1)}
-                    disabled={raising}
-                  >
-                    <Text style={styles.raiseText}>Raise {money(1, rideData.currency)}</Text>
-                  </TouchableOpacity>
-                </View>
+                    loading={raising}
+                  />
+                </Card>
 
                 {liveOffers.length ? (
-                  <Text style={[TYPE.label, { marginTop: SPACE[3] }]}>Drivers offering</Text>
+                  <Text style={[TYPE.label, { marginTop: SPACE[4], marginBottom: SPACE[2] }]}>Drivers offering</Text>
                 ) : (
-                  <Text style={[TYPE.small, { marginTop: SPACE[2] }]}>
+                  <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>
                     Nearby drivers can accept your offer or come back with theirs.
                   </Text>
                 )}
                 {liveOffers.map((o) => {
                   const left = Math.max(0, Math.round((Number(o.expiresAtMs) - Date.now()) / 1000));
                   return (
-                    <View key={o.id} style={styles.driverOffer}>
-                      <View style={styles.offerAvatar}>
-                        <Text style={styles.offerInitial}>{(o.driverName || 'D').charAt(0).toUpperCase()}</Text>
-                      </View>
+                    <Card key={o.id} style={styles.driverOffer}>
+                      <Avatar name={o.driverName || 'D'} size={44} />
                       <View style={{ flex: 1 }}>
-                        <Text style={styles.offerName} numberOfLines={1}>
-                          {o.driverName}{o.rating ? `  ★ ${Number(o.rating).toFixed(1)}` : ''}
-                        </Text>
+                        <View style={styles.offerNameRow}>
+                          <Text style={styles.offerName} numberOfLines={1}>{o.driverName}</Text>
+                          {o.rating ? (
+                            <View style={styles.rating}>
+                              <Ionicons name="star" size={13} color={COLORS.star} />
+                              <Text style={styles.ratingText}>{Number(o.rating).toFixed(1)}</Text>
+                            </View>
+                          ) : null}
+                        </View>
                         <Text style={TYPE.caption} numberOfLines={1}>
                           {[o.vehicle, `${left}s left`].filter(Boolean).join(' · ')}
                         </Text>
                       </View>
-                      <TouchableOpacity
-                        style={[styles.takeOffer, taking && { opacity: 0.6 }]}
-                        onPress={() => takeOffer(o)}
-                        disabled={!!taking}
-                        accessibilityLabel={`Accept ${o.driverName}'s offer of ${money(o.price, rideData.currency)}`}
-                      >
-                        <Text style={styles.takeOfferText}>
-                          {taking === o.driverId ? '…' : money(o.price, rideData.currency)}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
+                      <View style={styles.offerRight}>
+                        <Text style={styles.offerPrice}>{money(o.price, rideData.currency)}</Text>
+                        <Button
+                          title={taking === o.driverId ? '…' : 'Accept'}
+                          size="small"
+                          style={styles.acceptBtn}
+                          onPress={() => takeOffer(o)}
+                          disabled={!!taking}
+                          accessibilityLabel={`Accept ${o.driverName}'s offer of ${money(o.price, rideData.currency)}`}
+                        />
+                      </View>
+                    </Card>
                   );
                 })}
               </View>
@@ -401,9 +407,12 @@ export default function RideRequestScreen() {
           <View style={styles.accepted}>
             <View style={styles.foundRow}>
               <View style={styles.foundTick}>
-                <Ionicons name="checkmark" size={18} color={COLORS.white} />
+                <Ionicons name="checkmark" size={18} color={COLORS.midnight} />
               </View>
-              <Text style={styles.foundText}>Driver found</Text>
+              <View>
+                <Text style={TYPE.label}>Good news</Text>
+                <Text style={styles.foundText}>Driver found</Text>
+              </View>
             </View>
 
             <View style={styles.journey}>
@@ -428,7 +437,7 @@ export default function RideRequestScreen() {
             <Text style={styles.handover}>Opening live tracking…</Text>
           </View>
         ) : null}
-      </View>
+      </Sheet>
     </SafeAreaView>
   );
 }
@@ -436,56 +445,14 @@ export default function RideRequestScreen() {
 function Fact({ icon, text }) {
   return (
     <View style={styles.fact}>
-      <Ionicons name={icon} size={15} color={COLORS.muted} />
+      <Ionicons name={icon} size={15} color={COLORS.inkSoft} />
       <Text style={styles.factText}>{text}</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  bid: { alignSelf: 'stretch', marginTop: SPACE[4] },
-  bidRow: {
-    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
-    padding: SPACE[4], borderRadius: RADIUS.md, backgroundColor: COLORS.limeSoft,
-  },
-  bidValue: { fontSize: 24, fontWeight: '800', color: COLORS.navy, letterSpacing: -0.5, marginTop: 2 },
-  raise: {
-    height: 40, paddingHorizontal: SPACE[4], borderRadius: RADIUS.sm,
-    backgroundColor: COLORS.white, borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.lineStrong,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  raiseText: { fontSize: 14, fontWeight: '700', color: COLORS.navy },
-  driverOffer: {
-    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
-    paddingVertical: SPACE[3],
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.line,
-  },
-  offerAvatar: {
-    width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.blueSoft,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  offerInitial: { fontSize: 16, fontWeight: '800', color: COLORS.navy },
-  offerName: { ...TYPE.callout, color: COLORS.navy },
-  takeOffer: {
-    minWidth: 84, height: 42, paddingHorizontal: SPACE[3], borderRadius: 999,
-    backgroundColor: COLORS.primary, alignItems: 'center', justifyContent: 'center',
-  },
-  takeOfferText: { fontSize: 15, fontWeight: '800', color: COLORS.onPrimary },
-  widen: {
-    alignSelf: 'stretch', marginTop: SPACE[4], padding: SPACE[4],
-    borderRadius: RADIUS.md, backgroundColor: COLORS.amberSoft,
-  },
-  widenTitle: { ...TYPE.callout, color: COLORS.amber },
-  widenBody: { ...TYPE.small, color: COLORS.inkSoft, marginTop: SPACE[1] },
-  widenRow: { flexDirection: 'row', gap: SPACE[3], marginTop: SPACE[3] },
-  widenButton: {
-    flex: 1, height: 44, borderRadius: RADIUS.sm, backgroundColor: COLORS.primary,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  widenSecondary: { backgroundColor: COLORS.white, borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.lineStrong },
-  widenButtonText: { fontSize: 15, fontWeight: '700', color: COLORS.white },
-  container: { flex: 1, backgroundColor: COLORS.white },
-  centered: { alignItems: 'center', justifyContent: 'center' },
+  container: { flex: 1, backgroundColor: COLORS.surface },
 
   originMarker: {
     width: 16, height: 16, borderRadius: 8,
@@ -494,54 +461,66 @@ const styles = StyleSheet.create({
 
   topBar: { position: 'absolute', top: SPACE[3], left: SPACE[5] },
 
-  sheet: {
-    position: 'absolute', left: 0, right: 0, bottom: 0,
-    backgroundColor: COLORS.white,
-    borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl,
-    paddingHorizontal: SPACE[5], paddingTop: SPACE[3], paddingBottom: SPACE[8],
-    ...SHADOW.sheet,
-  },
-  grabber: {
-    width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.line,
-    alignSelf: 'center', marginBottom: SPACE[5],
-  },
+  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0 },
 
   searching: { alignItems: 'center' },
-  radar: { width: 96, height: 96, alignItems: 'center', justifyContent: 'center' },
+  radar: { width: 96, height: 96, alignItems: 'center', justifyContent: 'center', marginBottom: SPACE[4] },
   halo: {
     position: 'absolute', width: 96, height: 96, borderRadius: 48,
-    backgroundColor: COLORS.primary,
+    backgroundColor: COLORS.lime,
   },
   radarCore: {
     width: 62, height: 62, borderRadius: 31,
-    backgroundColor: COLORS.navy,
+    backgroundColor: COLORS.midnight,
     alignItems: 'center', justifyContent: 'center',
   },
-  searchTitle: { ...TYPE.title, marginTop: SPACE[5] },
+  searchTitle: { ...TYPE.title, marginTop: SPACE[1], textAlign: 'center' },
   searchClock: { ...TYPE.small, marginTop: SPACE[1] },
 
-  facts: {
-    flexDirection: 'row', gap: SPACE[5],
-    marginTop: SPACE[6], paddingTop: SPACE[5],
-    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
-    alignSelf: 'stretch', justifyContent: 'center',
-  },
-  fact: { flexDirection: 'row', alignItems: 'center', gap: SPACE[2] },
-  factText: { ...TYPE.small, color: COLORS.ink, fontWeight: '600' },
+  widen: { alignSelf: 'stretch', marginTop: SPACE[4] },
+  widenRow: { flexDirection: 'row', gap: SPACE[2] },
 
+  bid: { alignSelf: 'stretch', marginTop: SPACE[4] },
+  bidRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[3], padding: SPACE[4] },
+  bidLabel: { ...TYPE.label, color: COLORS.midnight },
+  bidValue: { ...TYPE.figure, marginTop: 2 },
+  driverOffer: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
+    padding: SPACE[3], marginBottom: SPACE[2],
+  },
+  offerNameRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[2] },
+  offerName: { ...TYPE.callout, flexShrink: 1 },
+  rating: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  ratingText: { ...TYPE.caption, color: COLORS.inkSoft, fontWeight: '700' },
+  offerRight: { alignItems: 'flex-end', gap: SPACE[1] },
+  offerPrice: { ...TYPE.figure, fontSize: 18 },
+  acceptBtn: { minHeight: 36, paddingHorizontal: SPACE[3] },
+
+  facts: {
+    flexDirection: 'row', gap: SPACE[2], flexWrap: 'wrap',
+    marginTop: SPACE[5], alignSelf: 'stretch', justifyContent: 'center',
+  },
+  fact: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[2],
+    paddingHorizontal: SPACE[3], height: 34, borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.fill,
+  },
+  factText: { ...TYPE.small, color: COLORS.ink, fontWeight: '700' },
+
+  // A quiet red pill: destructive, but not the screen's main action.
   cancel: {
     alignSelf: 'stretch', minHeight: 52,
     alignItems: 'center', justifyContent: 'center',
-    borderRadius: RADIUS.md,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.lineStrong,
-    marginTop: SPACE[6],
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.redSoft,
+    marginTop: SPACE[5],
   },
-  cancelText: { fontSize: 15, fontWeight: '700', color: COLORS.red },
+  cancelText: { fontSize: 16, fontWeight: '800', color: COLORS.red, letterSpacing: -0.2 },
 
   accepted: { paddingBottom: SPACE[2] },
   foundRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[3] },
   foundTick: {
-    width: 30, height: 30, borderRadius: 15, backgroundColor: COLORS.primary,
+    width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.lime,
     alignItems: 'center', justifyContent: 'center',
   },
   foundText: { ...TYPE.heading },

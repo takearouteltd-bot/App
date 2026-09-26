@@ -3,18 +3,53 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   TouchableOpacity,
   ScrollView,
-  ActivityIndicator,
 } from "react-native";
 import { Alert } from "../../components/ui/alert";
 import { Ionicons } from "@expo/vector-icons";
 import { auth, db } from "../../config/firebase";
 import { doc, setDoc, serverTimestamp } from "firebase/firestore";
 import { ensureDriverProfile, ensureRiderProfile } from "../../utils/modeSwitch";
-import { COLORS } from '../../components/ui/kit';
+import {
+  COLORS,
+  RADIUS,
+  SHADOW,
+  SPACE,
+  TYPE,
+  Button,
+  Footer,
+  Screen,
+  ScreenHeader,
+} from '../../components/ui/kit';
 import { confirmLeaveSignup } from "../../utils/leaveSignup";
+
+/* One of the two ways to use the app. Selected: pale lime with a midnight
+   edge, and the icon sits in a midnight circle drawn in lime. */
+function RoleCard({ icon, title, subtitle, selected, onPress }) {
+  return (
+    <TouchableOpacity
+      style={[styles.optionCard, selected && styles.selectedCard]}
+      onPress={onPress}
+      activeOpacity={0.85}
+      accessibilityRole="radio"
+      accessibilityState={{ selected: !!selected }}
+    >
+      <View style={[styles.optionIcon, selected && styles.optionIconSelected]}>
+        <Ionicons name={icon} size={28} color={selected ? COLORS.lime : COLORS.midnight} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.optionTitle}>{title}</Text>
+        <Text style={styles.optionSubtitle}>{subtitle}</Text>
+      </View>
+      <Ionicons
+        name={selected ? "checkmark-circle" : "ellipse-outline"}
+        size={26}
+        color={selected ? COLORS.midnight : COLORS.lineStrong}
+      />
+    </TouchableOpacity>
+  );
+}
 
 export default function SelectUserTypeScreen({
   setUserRole,
@@ -83,160 +118,71 @@ const handleContinue = async () => {
 };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <TouchableOpacity
-          onPress={confirmLeaveSignup}
-          style={styles.back}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-          accessibilityRole="button"
-          accessibilityLabel="Leave sign-up"
-        >
-          <Ionicons name="chevron-back" size={24} color={COLORS.navy} />
-        </TouchableOpacity>
+    <Screen scroll={false}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <ScreenHeader
+          title="How would you like to use TakeARoute?"
+          subtitle="You can add the other later from your account."
+          onBack={confirmLeaveSignup}
+        />
 
-        <Text style={styles.title}>
-          How would you like to use TakeARoute?
-        </Text>
-
-        {/* Driver */}
-        <TouchableOpacity
-          style={[
-            styles.optionCard,
-            selected === "driver" && styles.selectedCard,
-          ]}
-          onPress={() => setSelected("driver")}
-        >
-          <View style={styles.optionContent}>
-            <Ionicons
-              name="car-sport"
-              size={28}
-              color={selected === "driver" ? COLORS.white : "#0B0F1A"}
-            />
-            <View style={{ marginLeft: 15 }}>
-              <Text
-                style={[
-                  styles.optionTitle,
-                  selected === "driver" && { color: COLORS.white },
-                ]}
-              >
-                Driver
-              </Text>
-              <Text
-                style={[
-                  styles.optionSubtitle,
-                  selected === "driver" && { color: COLORS.line },
-                ]}
-              >
-                Earn on your schedule
-              </Text>
-            </View>
-          </View>
-        </TouchableOpacity>
-
-        {/* Rider */}
-        <TouchableOpacity
-          style={[
-            styles.optionCard,
-            selected === "rider" && styles.selectedCard,
-          ]}
-          onPress={() => setSelected("rider")}
-        >
-          <View style={styles.optionContent}>
-            <Ionicons
-              name="person"
-              size={28}
-              color={selected === "rider" ? COLORS.white : "#0B0F1A"}
-            />
-            <View style={{ marginLeft: 15 }}>
-              <Text
-                style={[
-                  styles.optionTitle,
-                  selected === "rider" && { color: COLORS.white },
-                ]}
-              >
-                Passenger
-              </Text>
-              <Text
-                style={[
-                  styles.optionSubtitle,
-                  selected === "rider" && { color: COLORS.line },
-                ]}
-              >
-                Book a ride instantly
-              </Text>
-            </View>
-          </View>
-        </TouchableOpacity>
-
-        <View style={{ flex: 1 }} />
-
-        {/* Button */}
-        <TouchableOpacity
-          style={[styles.button, (!selected || loading) && { opacity: 0.6 }]}
-          disabled={!selected || loading}
-          onPress={handleContinue}
-        >
-          {loading ? (
-            <ActivityIndicator color={COLORS.onPrimary} />
-          ) : (
-            <Text style={styles.buttonText}>Continue</Text>
-          )}
-        </TouchableOpacity>
+        <View style={styles.options}>
+          <RoleCard
+            icon="car-sport"
+            title="Driver"
+            subtitle="Earn on your schedule"
+            selected={selected === "driver"}
+            onPress={() => setSelected("driver")}
+          />
+          <RoleCard
+            icon="person"
+            title="Passenger"
+            subtitle="Book a ride instantly"
+            selected={selected === "rider"}
+            onPress={() => setSelected("rider")}
+          />
+        </View>
       </ScrollView>
-    </SafeAreaView>
+
+      <Footer>
+        <Button
+          title="Continue"
+          onPress={handleContinue}
+          disabled={!selected}
+          loading={loading}
+        />
+      </Footer>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  back: { width: 40, height: 40, justifyContent: 'center', marginBottom: 8 },
-  container: { flex: 1, backgroundColor: COLORS.white },
-  content: {
-    flexGrow: 1,
-    paddingHorizontal: 25,
-    paddingTop: 40,
-    justifyContent: "center",
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: "bold",
-    color: COLORS.ink,
-    marginBottom: 40,
-    textAlign: "center",
-  },
+  content: { flexGrow: 1, padding: SPACE[5], paddingBottom: SPACE[8] },
+  options: { marginTop: SPACE[6], gap: SPACE[4] },
   optionCard: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 20,
-  },
-  selectedCard: {
-    backgroundColor: "#0B0F1A",
-  },
-  optionContent: {
     flexDirection: "row",
     alignItems: "center",
+    gap: SPACE[4],
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.lg,
+    borderWidth: 2,
+    borderColor: COLORS.white,
+    padding: SPACE[5],
+    ...SHADOW.card,
   },
-  optionTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: COLORS.ink,
+  selectedCard: {
+    backgroundColor: COLORS.limeSoft,
+    borderColor: COLORS.midnight,
   },
-  optionSubtitle: {
-    fontSize: 14,
-    color: COLORS.muted,
-    marginTop: 4,
-  },
-  button: {
-    backgroundColor: COLORS.primary,
-    paddingVertical: 18,
-    borderRadius: 999,
+  optionIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: COLORS.fill,
     alignItems: "center",
-    marginBottom: 30,
+    justifyContent: "center",
   },
-  buttonText: {
-    color: COLORS.onPrimary,
-    fontSize: 18,
-    fontWeight: "bold",
-  },
+  optionIconSelected: { backgroundColor: COLORS.midnight },
+  optionTitle: { ...TYPE.heading },
+  optionSubtitle: { ...TYPE.small, marginTop: 2 },
 });

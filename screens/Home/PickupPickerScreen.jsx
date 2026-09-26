@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   SafeAreaView,
-  TouchableOpacity,
   ActivityIndicator,
   Keyboard,
 } from 'react-native';
@@ -12,7 +11,6 @@ import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
 import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
 import { GOOGLE_MAPS_API_KEY, PLACES_NEW_PROPS, placeCoords } from '../../config/maps';
 import * as Location from 'expo-location';
-import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import {
   COLORS,
@@ -22,6 +20,7 @@ import {
   SHADOW,
   Button,
   IconButton,
+  Sheet,
   isCoord,
   regionFrom,
 } from '../../components/ui/kit';
@@ -218,7 +217,7 @@ export default function PickupPickerScreen() {
         </View>
       </View>
 
-      <View style={styles.sheet}>
+      <Sheet>
         <Text style={TYPE.label}>Pickup point</Text>
         <View style={styles.addressRow}>
           <View style={styles.addressDot} />
@@ -235,9 +234,9 @@ export default function PickupPickerScreen() {
           title="Confirm pickup"
           onPress={confirm}
           disabled={!isCoord(centre) || locating}
-          style={{ marginTop: SPACE[4] }}
+          style={{ marginTop: SPACE[5] }}
         />
-      </View>
+      </Sheet>
     </SafeAreaView>
   );
 }
@@ -245,7 +244,7 @@ export default function PickupPickerScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.white },
   mapWrap: { flex: 1 },
-  mapLoading: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#E9ECF1' },
+  mapLoading: { alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.fill },
 
   // Sits at the centre of the map area, lifted by half the pin's height so the
   // point of the stem is what the coordinates refer to.
@@ -255,18 +254,18 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   pin: {
-    width: 26, height: 26, borderRadius: 13,
-    backgroundColor: COLORS.primary,
-    borderWidth: 3, borderColor: COLORS.white,
+    width: 28, height: 28, borderRadius: 14,
+    backgroundColor: COLORS.lime,
+    borderWidth: 3, borderColor: COLORS.midnight,
     alignItems: 'center', justifyContent: 'center',
     marginBottom: -2,
     ...SHADOW.float,
   },
-  pinDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: COLORS.white },
-  pinStem: { width: 2, height: 16, backgroundColor: COLORS.primary },
+  pinDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.midnight },
+  pinStem: { width: 3, height: 16, borderRadius: 2, backgroundColor: COLORS.midnight },
   pinShadow: {
     width: 10, height: 4, borderRadius: 2,
-    backgroundColor: 'rgba(15,23,42,0.28)',
+    backgroundColor: COLORS.overlay,
     marginTop: 1,
   },
 
@@ -281,32 +280,26 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   searchInput: {
-    height: 48, marginBottom: 0,
+    height: 52, marginBottom: 0,
     paddingHorizontal: SPACE[4],
     borderRadius: RADIUS.md,
     backgroundColor: COLORS.white,
-    fontSize: 15, color: COLORS.ink,
+    fontSize: 16, color: COLORS.ink,
     ...SHADOW.float,
   },
   searchList: {
     backgroundColor: COLORS.white,
-    borderRadius: RADIUS.md,
+    borderRadius: RADIUS.lg,
     marginTop: SPACE[2],
     paddingHorizontal: SPACE[4],
     ...SHADOW.float,
   },
 
-  sheet: {
-    backgroundColor: COLORS.white,
-    borderTopLeftRadius: RADIUS.xl,
-    borderTopRightRadius: RADIUS.xl,
-    paddingHorizontal: SPACE[5],
-    paddingTop: SPACE[5],
-    paddingBottom: SPACE[8],
-    ...SHADOW.sheet,
-  },
   addressRow: { flexDirection: 'row', alignItems: 'flex-start', gap: SPACE[3], marginTop: SPACE[2] },
-  addressDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.limeDeep, marginTop: 6 },
-  address: { flex: 1, fontSize: 17, fontWeight: '700', color: COLORS.navy, letterSpacing: -0.3 },
+  addressDot: {
+    width: 12, height: 12, borderRadius: 6, marginTop: 6,
+    backgroundColor: COLORS.lime, borderWidth: 2.5, borderColor: COLORS.midnight,
+  },
+  address: { flex: 1, ...TYPE.heading },
   hint: { ...TYPE.small, marginTop: SPACE[3] },
 });

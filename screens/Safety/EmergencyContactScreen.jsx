@@ -13,7 +13,7 @@ import {
 import { Alert } from '../../components/ui/alert';
 import { arrayRemove, deleteField, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
-import { COLORS, TYPE, ScreenHeader, Section, Card, ListRow, Button, Field, Loading } from '../../components/ui/kit';
+import { COLORS, TYPE, SPACE, ScreenHeader, Section, Card, RowGroup, Button, Field, Loading } from '../../components/ui/kit';
 
 export default function EmergencyContactScreen({ navigation, route }) {
   const role = route?.params?.role || 'rider';
@@ -102,7 +102,7 @@ export default function EmergencyContactScreen({ navigation, route }) {
   return (
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <ScreenHeader
             title="Safety"
             subtitle="Who we can contact for you, and quick ways to get help."
@@ -110,32 +110,35 @@ export default function EmergencyContactScreen({ navigation, route }) {
           />
 
           <Section title="Get help now">
-            <Card style={{ paddingVertical: 0 }}>
-              <ListRow
-                icon="alert-circle"
-                iconColor={COLORS.red}
-                title="Call 999"
-                detail="Emergency: danger to life, crime in progress, serious injury"
-                onPress={() => Linking.openURL('tel:999')}
-              />
-              <ListRow
-                icon="call-outline"
-                title="Call 101"
-                detail="Police non-emergency"
-                onPress={() => Linking.openURL('tel:101')}
-                last
-              />
-            </Card>
+            <RowGroup
+              items={[
+                {
+                  icon: 'alert-circle',
+                  iconColor: COLORS.red,
+                  title: 'Call 999',
+                  detail: 'Emergency: danger to life, crime in progress, serious injury',
+                  onPress: () => Linking.openURL('tel:999'),
+                },
+                {
+                  icon: 'call-outline',
+                  iconColor: COLORS.midnight,
+                  title: 'Call 101',
+                  detail: 'Police non-emergency',
+                  onPress: () => Linking.openURL('tel:101'),
+                },
+              ]}
+            />
           </Section>
 
           <Section title="Emergency contact">
             <Card>
-              <Text style={[TYPE.small, { marginBottom: 16 }]}>
+              <Text style={[TYPE.small, { marginBottom: SPACE[4] }]}>
                 Usually next of kin. You can call them from the safety button during a trip, and TakeARoute support may contact them if something serious happens.
               </Text>
-              <Field label="Name" value={name} onChangeText={setName} autoCapitalize="words" error={errors.name} />
+              <Field label="Name" left="person-outline" value={name} onChangeText={setName} autoCapitalize="words" error={errors.name} />
               <Field
                 label="Relationship"
+                left="people-outline"
                 value={relationship}
                 onChangeText={setRelationship}
                 placeholder="For example, wife, brother, friend"
@@ -143,6 +146,7 @@ export default function EmergencyContactScreen({ navigation, route }) {
               />
               <Field
                 label="Phone number"
+                left="call-outline"
                 value={phone}
                 onChangeText={setPhone}
                 keyboardType="phone-pad"
@@ -155,19 +159,15 @@ export default function EmergencyContactScreen({ navigation, route }) {
 
           {role === 'rider' && blocked.length ? (
             <Section title="Drivers you won't be matched with">
-              <Card style={{ paddingVertical: 0 }}>
-                {blocked.map((d, i) => (
-                  <ListRow
-                    key={d.id}
-                    icon="person-remove-outline"
-                    iconColor={COLORS.muted}
-                    title={d.name || 'Driver'}
-                    detail={d.registration || undefined}
-                    right={<Button title="Allow" variant="ghost" style={{ minHeight: 36 }} onPress={() => allowDriver(d.id)} />}
-                    last={i === blocked.length - 1}
-                  />
-                ))}
-              </Card>
+              <RowGroup
+                items={blocked.map((d) => ({
+                  icon: 'person-remove-outline',
+                  iconColor: COLORS.muted,
+                  title: d.name || 'Driver',
+                  detail: d.registration || undefined,
+                  right: <Button title="Allow" variant="secondary" size="small" onPress={() => allowDriver(d.id)} />,
+                }))}
+              />
             </Section>
           ) : null}
         </ScrollView>
@@ -178,5 +178,5 @@ export default function EmergencyContactScreen({ navigation, route }) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.surface },
-  content: { padding: 20, paddingBottom: 48 },
+  content: { padding: SPACE[5], paddingBottom: SPACE[12] },
 });

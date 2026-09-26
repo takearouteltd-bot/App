@@ -7,7 +7,6 @@ import {
   SafeAreaView,
   ActivityIndicator,
   ScrollView,
-  TextInput,
 } from 'react-native';
 import { Alert } from '../../components/ui/alert';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
@@ -38,6 +37,12 @@ import {
   RADIUS,
   SHADOW,
   IconButton,
+  Sheet,
+  Banner,
+  Chip,
+  Segmented,
+  ListRow,
+  Field,
   RouteLine,
   MapUnavailable,
   isCoord,
@@ -378,7 +383,7 @@ export default function FareEstimationScreen({ route }) {
 
           {isCoord(destination) ? (
             <Marker coordinate={destination} anchor={{ x: 0.5, y: 1 }}>
-              <Ionicons name="location" size={30} color={COLORS.navy} />
+              <Ionicons name="location" size={30} color={COLORS.midnight} />
             </Marker>
           ) : null}
 
@@ -426,9 +431,7 @@ export default function FareEstimationScreen({ route }) {
         </View>
       </View>
 
-      <View style={styles.sheet}>
-        <View style={styles.grabber} />
-
+      <Sheet style={styles.sheet}>
         <View style={styles.journey}>
           <RouteLine
             compact
@@ -455,20 +458,24 @@ export default function FareEstimationScreen({ route }) {
             </View>
           ))}
           {stops.length < MAX_STOPS ? (
-            <TouchableOpacity style={styles.addStop} onPress={addStop} accessibilityRole="button">
-              <Ionicons name="add-circle-outline" size={18} color={COLORS.blue} />
-              <Text style={styles.addStopText}>{stops.length ? 'Add another stop' : 'Add a stop'}</Text>
-            </TouchableOpacity>
+            <View style={styles.addStop}>
+              <Chip
+                icon="add"
+                label={stops.length ? 'Add another stop' : 'Add a stop'}
+                onPress={addStop}
+              />
+            </View>
           ) : null}
         </View>
 
         <ScrollView showsVerticalScrollIndicator={false} style={{ flexGrow: 0 }}>
           {fare.surgeMultiplier > 1 ? (
-            <View style={styles.surge}>
-              <Ionicons name="flash" size={16} color={COLORS.amber} />
-              <Text style={styles.surgeText}>
-                Busy right now, so fares are {fare.surgeMultiplier}× the usual price.
-              </Text>
+            <View style={{ marginTop: SPACE[4] }}>
+              <Banner
+                tone="warning"
+                icon="flash"
+                body={`Busy right now, so fares are ${fare.surgeMultiplier}× the usual price.`}
+              />
             </View>
           ) : null}
 
@@ -490,16 +497,18 @@ export default function FareEstimationScreen({ route }) {
                   accessibilityRole="radio"
                   accessibilityState={{ selected: active }}
                 >
-                  <MaterialCommunityIcons
-                    name={item.icon}
-                    size={26}
-                    color={active ? COLORS.primary : COLORS.muted}
-                  />
-                  <Text style={[styles.className, active && { color: COLORS.navy }]}>
+                  <View style={[styles.classIcon, active && styles.classIconActive]}>
+                    <MaterialCommunityIcons
+                      name={item.icon}
+                      size={24}
+                      color={active ? COLORS.lime : COLORS.midnight}
+                    />
+                  </View>
+                  <Text style={[styles.className, active && { color: COLORS.midnight }]}>
                     {item.label}
                   </Text>
                   <Text style={styles.classSeats}>{item.passengers} seats</Text>
-                  <Text style={[styles.classFare, active && { color: COLORS.navy }]}>
+                  <Text style={[styles.classFare, active && { color: COLORS.midnight }]}>
                     {routeCalculated ? money(itemFare.total) : '—'}
                   </Text>
                 </TouchableOpacity>
@@ -518,130 +527,123 @@ export default function FareEstimationScreen({ route }) {
                   Recommended {money(fare.total)}. Drivers can accept or offer more.
                 </Text>
               </View>
-              <TouchableOpacity
-                style={[styles.offerStep, offerValue <= floor && { opacity: 0.35 }]}
-                onPress={() => nudgeOffer(-0.5)}
-                disabled={offerValue <= floor}
-                accessibilityLabel="Lower your offer"
+              <View
+                style={offerValue <= floor && { opacity: 0.35 }}
+                pointerEvents={offerValue <= floor ? 'none' : 'auto'}
               >
-                <Ionicons name="remove" size={22} color={COLORS.navy} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.offerStep}
+                <IconButton
+                  icon="remove"
+                  onPress={() => nudgeOffer(-0.5)}
+                  accessibilityLabel="Lower your offer"
+                />
+              </View>
+              <IconButton
+                icon="add"
+                tone="dark"
                 onPress={() => nudgeOffer(0.5)}
                 accessibilityLabel="Raise your offer"
-              >
-                <Ionicons name="add" size={22} color={COLORS.navy} />
-              </TouchableOpacity>
+              />
             </View>
           ) : null}
 
           {/* Payment. Cash appears only when the dashboard allows it. */}
           {allowCash ? (
-            <View style={styles.payChoice}>
-              {['card', 'cash'].map((method) => {
-                const on = paymentMethod === method;
-                return (
-                  <TouchableOpacity
-                    key={method}
-                    style={[styles.payOption, on && styles.payOptionOn]}
-                    onPress={() => setPaymentMethod(method)}
-                    activeOpacity={0.85}
-                    accessibilityRole="radio"
-                    accessibilityState={{ selected: on }}
-                  >
-                    <Ionicons
-                      name={method === 'card' ? 'card-outline' : 'cash-outline'}
-                      size={18}
-                      color={on ? COLORS.navy : COLORS.muted}
-                    />
-                    <Text style={[styles.payOptionText, on && { color: COLORS.navy }]}>
-                      {method === 'card' ? 'Card' : 'Cash'}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+            <Segmented
+              style={styles.payChoice}
+              value={paymentMethod}
+              onChange={setPaymentMethod}
+              options={[
+                { value: 'card', label: 'Card' },
+                { value: 'cash', label: 'Cash' },
+              ]}
+            />
           ) : null}
 
-          {paymentMethod === 'cash' ? (
-            <View style={styles.payRow}>
-              <Ionicons name="cash-outline" size={20} color={COLORS.navy} />
-              <Text style={[styles.payLabel, { flex: 1 }]}>Pay your driver in cash at the end</Text>
-            </View>
-          ) : (
-            <TouchableOpacity
-              style={styles.payRow}
-              onPress={() => navigation.navigate('AddPayment')}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="card-outline" size={20} color={COLORS.navy} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.payLabel}>
-                  {defaultCard
-                    ? `${(defaultCard.brand || 'Card').toUpperCase()} ···· ${defaultCard.last4}`
-                    : 'No card added'}
-                </Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color={COLORS.lineStrong} />
-            </TouchableOpacity>
-          )}
-
-          {allowFemaleOnly ? (
-            <TouchableOpacity
-              style={styles.payRow}
-              onPress={() => setFemaleOnly((v) => !v)}
-              activeOpacity={0.7}
-              accessibilityRole="switch"
-              accessibilityState={{ checked: femaleOnly }}
-            >
-              <Ionicons name="woman-outline" size={20} color={COLORS.navy} />
-              <Text style={[styles.payLabel, { flex: 1 }]}>Female driver only</Text>
-              <Ionicons
-                name={femaleOnly ? 'checkbox' : 'square-outline'}
-                size={22}
-                color={femaleOnly ? COLORS.primary : COLORS.lineStrong}
+          <View style={styles.options}>
+            {paymentMethod === 'cash' ? (
+              <ListRow
+                icon="cash-outline"
+                iconColor={COLORS.midnight}
+                title="Pay your driver in cash at the end"
+                right={null}
+                last={!allowFemaleOnly}
               />
-            </TouchableOpacity>
-          ) : null}
+            ) : (
+              <ListRow
+                icon="card-outline"
+                iconColor={COLORS.midnight}
+                title={
+                  defaultCard
+                    ? `${(defaultCard.brand || 'Card').toUpperCase()} ···· ${defaultCard.last4}`
+                    : 'No card added'
+                }
+                onPress={() => navigation.navigate('AddPayment')}
+                last={!allowFemaleOnly}
+              />
+            )}
+
+            {allowFemaleOnly ? (
+              <TouchableOpacity
+                style={styles.optionRow}
+                onPress={() => setFemaleOnly((v) => !v)}
+                activeOpacity={0.7}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: femaleOnly }}
+              >
+                <View style={styles.optionIcon}>
+                  <Ionicons name="woman-outline" size={20} color={COLORS.midnight} />
+                </View>
+                <Text style={styles.optionLabel}>Female driver only</Text>
+                <Ionicons
+                  name={femaleOnly ? 'checkbox' : 'square-outline'}
+                  size={22}
+                  color={femaleOnly ? COLORS.midnight : COLORS.lineStrong}
+                />
+              </TouchableOpacity>
+            ) : null}
+          </View>
 
           {/* Promo */}
           {promoApplied ? (
-            <View style={styles.promoRow}>
-              <Ionicons name="pricetag" size={18} color={COLORS.primary} />
-              <Text style={styles.promoApplied}>
+            <View style={styles.promoApplied}>
+              <Ionicons name="pricetag" size={18} color={COLORS.limeInk} />
+              <Text style={styles.promoAppliedText}>
                 {promoCode} · {Math.round(discount * 100)}% off
               </Text>
-              <TouchableOpacity onPress={removePromo}>
+              <TouchableOpacity onPress={removePromo} accessibilityRole="button">
                 <Text style={styles.promoRemove}>Remove</Text>
               </TouchableOpacity>
             </View>
           ) : (
-            <View style={styles.promoRow}>
-              <Ionicons name="pricetag-outline" size={18} color={COLORS.muted} />
-              <TextInput
-                style={styles.promoInput}
-                placeholder="Promo code"
-                placeholderTextColor={COLORS.faint}
-                autoCapitalize="characters"
-                autoCorrect={false}
-                value={promoInput}
-                onChangeText={setPromoInput}
-                onSubmitEditing={applyPromo}
-                returnKeyType="done"
-              />
-              <TouchableOpacity onPress={applyPromo} disabled={promoChecking || !promoInput.trim()}>
-                {promoChecking ? (
-                  <ActivityIndicator size="small" color={COLORS.primary} />
-                ) : (
-                  <Text
-                    style={[styles.promoApply, !promoInput.trim() && { color: COLORS.faint }]}
-                  >
-                    Apply
-                  </Text>
-                )}
-              </TouchableOpacity>
-            </View>
+            <Field
+              left="pricetag-outline"
+              placeholder="Promo code"
+              autoCapitalize="characters"
+              autoCorrect={false}
+              value={promoInput}
+              onChangeText={setPromoInput}
+              onSubmitEditing={applyPromo}
+              returnKeyType="done"
+              style={styles.promoField}
+              right={
+                <TouchableOpacity
+                  onPress={applyPromo}
+                  disabled={promoChecking || !promoInput.trim()}
+                  accessibilityRole="button"
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  {promoChecking ? (
+                    <ActivityIndicator size="small" color={COLORS.midnight} />
+                  ) : (
+                    <Text
+                      style={[styles.promoApply, !promoInput.trim() && { color: COLORS.faint }]}
+                    >
+                      Apply
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              }
+            />
           )}
 
           {/* Breakdown, folded away until asked for. */}
@@ -649,6 +651,7 @@ export default function FareEstimationScreen({ route }) {
             style={styles.breakdownToggle}
             onPress={() => setShowBreakdown((v) => !v)}
             activeOpacity={0.7}
+            accessibilityRole="button"
           >
             <Text style={styles.breakdownToggleText}>
               {showBreakdown ? 'Hide fare breakdown' : 'Fare breakdown'}
@@ -656,7 +659,7 @@ export default function FareEstimationScreen({ route }) {
             <Ionicons
               name={showBreakdown ? 'chevron-up' : 'chevron-down'}
               size={16}
-              color={COLORS.blue}
+              color={COLORS.midnight}
             />
           </TouchableOpacity>
 
@@ -672,7 +675,7 @@ export default function FareEstimationScreen({ route }) {
                 <Row
                   label={`Promo ${promoCode}`}
                   value={`-${money(fare.discountAmount)}`}
-                  tone={COLORS.primary}
+                  tone={COLORS.success}
                 />
               ) : null}
               <View style={styles.breakdownLine} />
@@ -708,7 +711,7 @@ export default function FareEstimationScreen({ route }) {
             </>
           )}
         </TouchableOpacity>
-      </View>
+      </Sheet>
     </SafeAreaView>
   );
 }
@@ -744,115 +747,100 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE[4], borderRadius: RADIUS.pill,
     ...SHADOW.float,
   },
-  tripPillText: { fontSize: 13, fontWeight: '700', color: COLORS.navy },
+  tripPillText: { fontSize: 13, fontWeight: '700', color: COLORS.midnight },
   pillDivider: { width: StyleSheet.hairlineWidth, height: 16, backgroundColor: COLORS.line },
 
-  sheet: {
-    backgroundColor: COLORS.white,
-    borderTopLeftRadius: RADIUS.xl,
-    borderTopRightRadius: RADIUS.xl,
-    paddingHorizontal: SPACE[5],
-    paddingTop: SPACE[3],
-    paddingBottom: SPACE[6],
-    maxHeight: '62%',
-    ...SHADOW.sheet,
-  },
-  grabber: {
-    width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.line,
-    alignSelf: 'center', marginBottom: SPACE[4],
-  },
+  sheet: { maxHeight: '64%', paddingBottom: SPACE[6] },
   journey: { paddingBottom: SPACE[4], borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.line },
 
   classRow: { gap: SPACE[3], paddingVertical: SPACE[4], paddingRight: SPACE[4] },
   classCard: {
-    width: 108, padding: SPACE[3], borderRadius: RADIUS.md,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.line,
+    width: 118, padding: SPACE[3], borderRadius: RADIUS.lg,
+    borderWidth: 2, borderColor: COLORS.white,
     backgroundColor: COLORS.white, gap: 2,
+    ...SHADOW.card,
   },
-  classCardActive: { borderColor: COLORS.midnight, borderWidth: 2, backgroundColor: COLORS.limeSoft },
-  className: { fontSize: 15, fontWeight: '700', color: COLORS.inkSoft, marginTop: SPACE[2] },
-  classSeats: { ...TYPE.caption },
-  classFare: { fontSize: 17, fontWeight: '800', color: COLORS.inkSoft, marginTop: SPACE[1], letterSpacing: -0.3 },
-  classDescription: { ...TYPE.small, marginBottom: SPACE[4] },
-
-  payRow: {
-    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
-    paddingVertical: SPACE[3],
-    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
-  },
-  payLabel: { ...TYPE.callout },
-  payChoice: { flexDirection: 'row', gap: SPACE[3], paddingTop: SPACE[3] },
-  stopRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[3], marginTop: SPACE[3] },
-  stopDot: {
-    width: 20, height: 20, borderRadius: 10, backgroundColor: COLORS.navy,
+  classCardActive: { borderColor: COLORS.midnight, backgroundColor: COLORS.limeSoft },
+  classIcon: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: COLORS.fill,
     alignItems: 'center', justifyContent: 'center',
   },
-  stopDotText: { fontSize: 11, fontWeight: '800', color: COLORS.white },
+  classIconActive: { backgroundColor: COLORS.midnight },
+  className: { fontSize: 15, fontWeight: '700', color: COLORS.inkSoft, marginTop: SPACE[2] },
+  classSeats: { ...TYPE.caption },
+  classFare: { ...TYPE.figure, fontSize: 20, color: COLORS.inkSoft, marginTop: SPACE[1] },
+  classDescription: { ...TYPE.small, marginBottom: SPACE[4] },
+
+  payChoice: { marginBottom: SPACE[3] },
+  options: {
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.lg,
+    borderWidth: 1, borderColor: COLORS.line,
+    paddingHorizontal: SPACE[4],
+    marginBottom: SPACE[3],
+  },
+  optionRow: { flexDirection: 'row', alignItems: 'center', minHeight: 56, paddingVertical: SPACE[3], gap: SPACE[3] },
+  optionIcon: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: COLORS.fill,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  optionLabel: { flex: 1, fontSize: 16, fontWeight: '600', color: COLORS.ink, letterSpacing: -0.2 },
+
+  stopRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[3], marginTop: SPACE[3] },
+  stopDot: {
+    width: 20, height: 20, borderRadius: 10, backgroundColor: COLORS.midnight,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  stopDotText: { fontSize: 11, fontWeight: '800', color: COLORS.lime },
   stopText: { flex: 1, ...TYPE.small, color: COLORS.ink },
-  addStop: { flexDirection: 'row', alignItems: 'center', gap: SPACE[2], marginTop: SPACE[3] },
-  addStopText: { fontSize: 14, fontWeight: '700', color: COLORS.blue },
+  addStop: { flexDirection: 'row', marginTop: SPACE[3] },
   stopMarker: {
-    width: 24, height: 24, borderRadius: 12, backgroundColor: COLORS.navy,
+    width: 24, height: 24, borderRadius: 12, backgroundColor: COLORS.midnight,
     borderWidth: 2, borderColor: COLORS.white, alignItems: 'center', justifyContent: 'center',
   },
-  stopMarkerText: { fontSize: 11, fontWeight: '800', color: COLORS.white },
+  stopMarkerText: { fontSize: 11, fontWeight: '800', color: COLORS.lime },
+
   offerBox: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
     padding: SPACE[4], marginBottom: SPACE[4],
-    borderRadius: RADIUS.md, backgroundColor: COLORS.limeSoft,
+    borderRadius: RADIUS.lg, backgroundColor: COLORS.limeSoft,
+    borderWidth: 1, borderColor: COLORS.limeLine,
   },
-  offerValue: { fontSize: 26, fontWeight: '800', color: COLORS.navy, letterSpacing: -0.6, marginVertical: 2 },
-  offerStep: {
-    width: 44, height: 44, borderRadius: 22, backgroundColor: COLORS.white,
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.lineStrong,
-  },
-  payOption: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACE[2],
-    height: 44, borderRadius: RADIUS.md,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.line,
-  },
-  payOptionOn: { borderColor: COLORS.midnight, borderWidth: 2, backgroundColor: COLORS.limeSoft },
-  payOptionText: { fontSize: 15, fontWeight: '700', color: COLORS.muted },
+  offerValue: { ...TYPE.figure, fontSize: 28, marginVertical: 2 },
 
-  surge: {
-    flexDirection: 'row', alignItems: 'center', gap: SPACE[2],
-    backgroundColor: COLORS.amberSoft, borderRadius: RADIUS.sm,
-    paddingHorizontal: SPACE[3], paddingVertical: SPACE[2], marginTop: SPACE[3],
-  },
-  surgeText: { ...TYPE.small, color: COLORS.amber, fontWeight: '600', flex: 1 },
-
-  promoRow: {
+  promoField: { marginBottom: SPACE[3] },
+  promoApply: { fontSize: 14, fontWeight: '800', color: COLORS.midnight },
+  promoApplied: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
-    paddingVertical: SPACE[3],
-    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
+    paddingHorizontal: SPACE[4], minHeight: 54, marginBottom: SPACE[3],
+    borderRadius: RADIUS.md, backgroundColor: COLORS.limeSoft,
+    borderWidth: 1, borderColor: COLORS.limeLine,
   },
-  promoInput: { flex: 1, fontSize: 15, color: COLORS.ink, paddingVertical: 0 },
-  promoApplied: { flex: 1, ...TYPE.callout, color: COLORS.success },
-  promoApply: { fontSize: 14, fontWeight: '700', color: COLORS.blue },
+  promoAppliedText: { flex: 1, ...TYPE.callout, color: COLORS.success },
   promoRemove: { fontSize: 14, fontWeight: '700', color: COLORS.red },
 
   breakdownToggle: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[2],
-    paddingVertical: SPACE[4],
-    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
+    paddingVertical: SPACE[3],
   },
-  breakdownToggleText: { fontSize: 14, fontWeight: '700', color: COLORS.blue },
+  breakdownToggleText: { fontSize: 14, fontWeight: '700', color: COLORS.midnight },
   breakdown: { paddingBottom: SPACE[4] },
   breakdownLine: { height: StyleSheet.hairlineWidth, backgroundColor: COLORS.line, marginVertical: SPACE[2] },
 
   row: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: SPACE[1] },
   rowLabel: { ...TYPE.body, color: COLORS.inkSoft },
   rowValue: { ...TYPE.body, color: COLORS.ink },
-  rowStrong: { fontWeight: '800', color: COLORS.navy },
+  rowStrong: { fontWeight: '800', color: COLORS.midnight },
 
   confirm: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: COLORS.primary,
-    borderRadius: 999,
+    borderRadius: RADIUS.pill,
     minHeight: 56, paddingHorizontal: SPACE[5],
-    marginTop: SPACE[4],
+    marginTop: SPACE[3],
   },
-  confirmText: { fontSize: 16, fontWeight: '700', color: COLORS.onPrimary, letterSpacing: -0.2 },
+  confirmText: { fontSize: 16, fontWeight: '800', color: COLORS.onPrimary, letterSpacing: -0.2 },
   confirmPrice: { fontSize: 17, fontWeight: '800', color: COLORS.white, letterSpacing: -0.3 },
 });

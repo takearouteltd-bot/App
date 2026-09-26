@@ -4,7 +4,6 @@ import {
   Text,
   StyleSheet,
   SafeAreaView,
-  ActivityIndicator,
   Animated,
   TouchableOpacity,
 } from 'react-native';
@@ -26,10 +25,15 @@ import {
   TYPE,
   SPACE,
   RADIUS,
-  SHADOW,
+  Screen,
+  Sheet,
+  Card,
+  Button,
   Avatar,
+  PresenceDot,
   IconButton,
   RouteLine,
+  Loading,
   MapUnavailable,
   isCoord,
   validCoords,
@@ -195,10 +199,9 @@ export default function RideInProgressScreen() {
 
   if (!ride) {
     return (
-      <SafeAreaView style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={[TYPE.small, { marginTop: SPACE[4] }]}>Loading your ride…</Text>
-      </SafeAreaView>
+      <Screen scroll={false}>
+        <Loading label="Loading your ride…" />
+      </Screen>
     );
   }
 
@@ -230,7 +233,7 @@ export default function RideInProgressScreen() {
 
         {isCoord(dropoffLocation) ? (
           <Marker coordinate={dropoffLocation} anchor={{ x: 0.5, y: 1 }}>
-            <Ionicons name="location" size={30} color={COLORS.navy} />
+            <Ionicons name="location" size={30} color={COLORS.midnight} />
           </Marker>
         ) : null}
 
@@ -267,11 +270,10 @@ export default function RideInProgressScreen() {
         </View>
       </View>
 
-      <View style={styles.sheet}>
-        <View style={styles.grabber} />
-
+      <Sheet style={styles.sheet}>
         <View style={styles.headRow}>
           <View style={{ flex: 1 }}>
+            <Text style={TYPE.label}>Your ride</Text>
             <Text style={TYPE.title}>On your way</Text>
             <Text style={[TYPE.small, { marginTop: SPACE[1] }]}>
               Your driver is taking you to the dropoff.
@@ -289,23 +291,51 @@ export default function RideInProgressScreen() {
         </View>
 
         {driverData ? (
-          <View style={styles.driverCard}>
-            <Avatar uri={driverData.selfieUrl} name={driverData.fullName} size={52} />
+          <Card style={styles.driverCard}>
+            <Avatar
+              uri={driverData.selfieUrl}
+              name={driverData.fullName}
+              size={52}
+              badge={<PresenceDot online />}
+            />
 
             <View style={{ flex: 1 }}>
               <Text style={styles.driverName} numberOfLines={1}>
                 {driverData.fullName || 'Your driver'}
               </Text>
-              <Text style={TYPE.small} numberOfLines={1}>
-                {[driverData.vehicleColor, driverData.makeModel].filter(Boolean).join(' ') || 'Vehicle'}
-                {rating ? ` · ★ ${rating}` : ''}
-              </Text>
+              <View style={styles.vehicleRow}>
+                <Text style={[TYPE.small, { flexShrink: 1 }]} numberOfLines={1}>
+                  {[driverData.vehicleColor, driverData.makeModel].filter(Boolean).join(' ') || 'Vehicle'}
+                </Text>
+                {rating ? (
+                  <View style={styles.rating}>
+                    <Ionicons name="star" size={13} color={COLORS.star} />
+                    <Text style={styles.ratingText}>{rating}</Text>
+                  </View>
+                ) : null}
+              </View>
             </View>
+          </Card>
+        ) : null}
 
-            <View style={styles.contact}>
-              <IconButton icon="chatbubble-ellipses" onPress={handleChat} size={42} accessibilityLabel="Message your driver" />
-              <IconButton icon="call" onPress={handleCall} size={42} tone="dark" accessibilityLabel="Call your driver" />
-            </View>
+        {driverData ? (
+          <View style={styles.contact}>
+            <Button
+              title="Message"
+              icon="chatbubble-ellipses-outline"
+              variant="secondary"
+              size="small"
+              style={{ flex: 1 }}
+              onPress={handleChat}
+            />
+            <Button
+              title="Call"
+              icon="call-outline"
+              variant="secondary"
+              size="small"
+              style={{ flex: 1 }}
+              onPress={handleCall}
+            />
           </View>
         ) : null}
 
@@ -328,29 +358,17 @@ export default function RideInProgressScreen() {
             {ending ? 'Ending…' : 'End trip early'}
           </Text>
         </TouchableOpacity>
-      </View>
+      </Sheet>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.white },
-  centered: { alignItems: 'center', justifyContent: 'center' },
+  container: { flex: 1, backgroundColor: COLORS.surface },
 
   pickupMarker: {
     width: 14, height: 14, borderRadius: 7,
     backgroundColor: COLORS.lime, borderWidth: 3, borderColor: COLORS.midnight,
-  },
-  driverMarkerWrap: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center' },
-  driverPulse: {
-    position: 'absolute', width: 46, height: 46, borderRadius: 23,
-    backgroundColor: COLORS.navy, opacity: 0.18,
-  },
-  driverMarker: {
-    width: 32, height: 32, borderRadius: 16,
-    backgroundColor: COLORS.navy,
-    alignItems: 'center', justifyContent: 'center',
-    borderWidth: 2, borderColor: COLORS.white,
   },
 
   topBar: {
@@ -359,17 +377,7 @@ const styles = StyleSheet.create({
   },
   topRight: { flexDirection: 'row', gap: SPACE[2] },
 
-  sheet: {
-    position: 'absolute', left: 0, right: 0, bottom: 0,
-    backgroundColor: COLORS.white,
-    borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl,
-    paddingHorizontal: SPACE[5], paddingTop: SPACE[3], paddingBottom: SPACE[8],
-    ...SHADOW.sheet,
-  },
-  grabber: {
-    width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.line,
-    alignSelf: 'center', marginBottom: SPACE[5],
-  },
+  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0 },
 
   headRow: { flexDirection: 'row', alignItems: 'flex-start', gap: SPACE[4] },
   fareBox: { alignItems: 'flex-end' },
@@ -377,22 +385,25 @@ const styles = StyleSheet.create({
 
   driverCard: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
-    marginTop: SPACE[5], paddingTop: SPACE[5],
-    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
+    marginTop: SPACE[4], padding: SPACE[4],
   },
-  driverName: { fontSize: 17, fontWeight: '700', color: COLORS.navy, letterSpacing: -0.3 },
-  contact: { flexDirection: 'row', gap: SPACE[2] },
+  driverName: { ...TYPE.subhead, fontSize: 17, color: COLORS.midnight },
+  vehicleRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[2], marginTop: 2 },
+  rating: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  ratingText: { ...TYPE.caption, color: COLORS.inkSoft, fontWeight: '700' },
+  contact: { flexDirection: 'row', gap: SPACE[2], marginTop: SPACE[3] },
 
   journey: {
-    marginTop: SPACE[5], paddingTop: SPACE[5],
+    marginTop: SPACE[4], paddingTop: SPACE[4],
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
   },
 
+  // A quiet red pill: destructive, but not the screen's main action.
   endEarly: {
-    minHeight: 50, marginTop: SPACE[5],
+    minHeight: 52, marginTop: SPACE[4],
     alignItems: 'center', justifyContent: 'center',
-    borderRadius: RADIUS.md,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.lineStrong,
+    borderRadius: RADIUS.pill,
+    backgroundColor: COLORS.redSoft,
   },
-  endEarlyText: { fontSize: 15, fontWeight: '700', color: COLORS.red },
+  endEarlyText: { fontSize: 16, fontWeight: '800', color: COLORS.red, letterSpacing: -0.2 },
 });

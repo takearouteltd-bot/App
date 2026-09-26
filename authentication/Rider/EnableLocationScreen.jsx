@@ -1,12 +1,21 @@
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, Linking, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, Linking } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { Alert } from '../../components/ui/alert';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import { auth, db } from '../../config/firebase';
 import { doc, updateDoc } from 'firebase/firestore';
-import { COLORS, TYPE, SPACE, Button, Banner } from '../../components/ui/kit';
+import {
+  COLORS,
+  TYPE,
+  SPACE,
+  Button,
+  Banner,
+  Footer,
+  Screen,
+  ScreenHeader,
+} from '../../components/ui/kit';
 import { confirmLeaveSignup } from '../../utils/leaveSignup';
 
 export default function EnableLocationScreen({ setOnboardingStatus }) {
@@ -62,20 +71,18 @@ export default function EnableLocationScreen({ setOnboardingStatus }) {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <TouchableOpacity
-        onPress={() => (navigation.canGoBack() ? navigation.goBack() : confirmLeaveSignup())}
-        style={styles.back}
-        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        accessibilityRole="button"
-        accessibilityLabel="Go back"
-      >
-        <Ionicons name="chevron-back" size={24} color={COLORS.navy} />
-      </TouchableOpacity>
+    <Screen scroll={false}>
+      <View style={styles.top}>
+        <ScreenHeader
+          compact
+          title=""
+          onBack={() => (navigation.canGoBack() ? navigation.goBack() : confirmLeaveSignup())}
+        />
+      </View>
 
       <View style={styles.body}>
         <View style={styles.icon}>
-          <Ionicons name="location" size={40} color={COLORS.primary} />
+          <Ionicons name="location" size={40} color={COLORS.midnight} />
         </View>
 
         <Text style={styles.title}>Turn on location</Text>
@@ -101,31 +108,27 @@ export default function EnableLocationScreen({ setOnboardingStatus }) {
         ) : null}
       </View>
 
-      <View style={styles.actions}>
+      <Footer>
         <Button
           title={denied ? 'Try again' : 'Allow location'}
+          icon="navigate-outline"
           onPress={enableLocation}
           loading={busy}
         />
-      </View>
-    </SafeAreaView>
+      </Footer>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.white, justifyContent: 'space-between' },
-  back: {
-    width: 44, height: 44, justifyContent: 'center',
-    marginLeft: SPACE[4], marginTop: SPACE[2],
-  },
+  top: { paddingHorizontal: SPACE[5] },
   body: { flex: 1, justifyContent: 'center', paddingHorizontal: SPACE[6] },
   icon: {
-    width: 80, height: 80, borderRadius: 26,
-    backgroundColor: COLORS.limeSoft,
+    width: 88, height: 88, borderRadius: 44,
+    backgroundColor: COLORS.lime,
     alignItems: 'center', justifyContent: 'center',
     marginBottom: SPACE[6],
   },
-  title: { ...TYPE.title, fontSize: 30 },
+  title: { ...TYPE.title },
   subtitle: { ...TYPE.body, color: COLORS.muted, marginTop: SPACE[3], marginBottom: SPACE[5] },
-  actions: { paddingHorizontal: SPACE[6], paddingBottom: SPACE[8] },
 });

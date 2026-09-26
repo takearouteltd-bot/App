@@ -36,7 +36,10 @@ import { canServe, classLabel } from '../../../constants/vehicleClasses';
 import { servesCity } from '../../../utils/cities';
 import { biddingEnabled, counterSteps, offerSeconds, sendCounterOffer } from '../../../utils/bidding';
 import { clearJobAlerts } from '../../../utils/notifications';
-import { COLORS, TYPE, SPACE, RADIUS, SHADOW } from '../../../components/ui/kit';
+import {
+  COLORS, TYPE, SPACE, RADIUS, SHADOW,
+  Button, Chip, Banner, RouteLine, Loading, Sheet,
+} from '../../../components/ui/kit';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Remembered between launches, so a driver who hides their earnings from
@@ -644,18 +647,16 @@ export default function DriverHomeScreen() {
   /* ================= RENDER ================= */
   if (checkingRide) {
     return (
-      <SafeAreaView style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>Checking for an active job…</Text>
+      <SafeAreaView style={styles.container}>
+        <Loading label="Checking for an active job…" />
       </SafeAreaView>
     );
   }
 
   if (loading || !location) {
     return (
-      <SafeAreaView style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>Finding your location…</Text>
+      <SafeAreaView style={styles.container}>
+        <Loading label="Finding your location…" />
       </SafeAreaView>
     );
   }
@@ -681,7 +682,7 @@ export default function DriverHomeScreen() {
       >
         <Marker coordinate={location} anchor={{ x: 0.5, y: 0.5 }} flat>
           <View style={styles.carMarker}>
-            <Ionicons name="car-sport" size={18} color={COLORS.white} />
+            <Ionicons name="car-sport" size={18} color={COLORS.lime} />
           </View>
         </Marker>
       </MapView>
@@ -697,7 +698,7 @@ export default function DriverHomeScreen() {
           </View>
 
           <View style={{ flex: 1 }}>
-            <Text style={styles.presenceTitle}>{isOnline ? 'Online' : 'Offline'}</Text>
+            <Text style={TYPE.subhead}>{isOnline ? 'Online' : 'Offline'}</Text>
             <Text style={TYPE.small} numberOfLines={1}>
               {isOnline
                 ? shiftLabel(shiftStartedAt, maxShiftHours) || 'Waiting for jobs'
@@ -723,18 +724,17 @@ export default function DriverHomeScreen() {
           <TouchableOpacity
             activeOpacity={0.85}
             onPress={() => navigation.navigate('DriverDocuments')}
-            style={[styles.docAlert, alert.status === 'expired' ? styles.docExpired : styles.docExpiring]}
+            style={styles.docAlert}
+            accessibilityRole="button"
           >
-            <Ionicons
-              name={alert.status === 'expired' ? 'alert-circle' : 'time-outline'}
-              size={20}
-              color={alert.status === 'expired' ? COLORS.red : COLORS.amber}
+            <Banner
+              tone={alert.status === 'expired' ? 'danger' : 'warning'}
+              icon={alert.status === 'expired' ? 'alert-circle' : 'time-outline'}
+              title={`${alert.label}: ${describeExpiry(alert).toLowerCase()}${
+                documentAlerts.length > 1 ? ` and ${documentAlerts.length - 1} more` : ''
+              }`}
+              body="Tap to see your documents"
             />
-            <Text style={styles.docText} numberOfLines={2}>
-              {alert.label}: {describeExpiry(alert).toLowerCase()}
-              {documentAlerts.length > 1 ? ` and ${documentAlerts.length - 1} more` : ''}
-            </Text>
-            <Ionicons name="chevron-forward" size={16} color={COLORS.muted} />
           </TouchableOpacity>
         ) : null}
       </SafeAreaView>
@@ -759,7 +759,7 @@ export default function DriverHomeScreen() {
                   <Ionicons
                     name={hideEarnings ? 'eye-off-outline' : 'eye-outline'}
                     size={18}
-                    color={COLORS.onDark}
+                    color={COLORS.lime}
                   />
                 </TouchableOpacity>
               </View>
@@ -778,12 +778,12 @@ export default function DriverHomeScreen() {
               </Text>
             </View>
 
-            <Ionicons name="chevron-forward" size={18} color={COLORS.onDark} />
+            <Ionicons name="chevron-forward" size={18} color={COLORS.lime} />
           </TouchableOpacity>
 
           {isOnline ? (
             <View style={styles.waiting}>
-              <ActivityIndicator size="small" color={COLORS.primary} />
+              <ActivityIndicator size="small" color={COLORS.midnight} />
               <Text style={styles.waitingText}>Waiting for jobs nearby</Text>
             </View>
           ) : null}
@@ -792,102 +792,87 @@ export default function DriverHomeScreen() {
 
       {/* A job offer. */}
       {currentRide ? (
-        <Animated.View style={[styles.offer, { transform: [{ translateX: slideAnim }] }]}>
-          <View style={styles.offerTop}>
-            <View style={{ flexDirection: 'row', gap: SPACE[2] }}>
-              <View style={styles.classTag}>
-                <Text style={styles.classTagText}>{classLabel(currentRide.rideType)}</Text>
+        <Animated.View style={[styles.offerWrap, { transform: [{ translateX: slideAnim }] }]}>
+          <Sheet style={styles.offer} grabber={false}>
+            <View style={styles.offerTop}>
+              <View style={styles.tags}>
+                <Chip label={classLabel(currentRide.rideType)} active />
+                {currentRide.paymentMethod === 'cash' ? <Chip label="Cash" icon="cash-outline" /> : null}
+                {currentRide.stops?.length ? (
+                  <Chip
+                    label={`${currentRide.stops.length} stop${currentRide.stops.length === 1 ? '' : 's'}`}
+                    icon="flag-outline"
+                  />
+                ) : null}
+                {currentRide.femaleDriverOnly ? <Chip label="Female driver" icon="female-outline" /> : null}
               </View>
-              {currentRide.paymentMethod === 'cash' ? (
-                <View style={[styles.classTag, { backgroundColor: COLORS.amberSoft }]}>
-                  <Text style={[styles.classTagText, { color: COLORS.amber }]}>Cash</Text>
-                </View>
-              ) : null}
-            </View>
-            <Text style={styles.offerFare}>
-              {currencySymbol()}
-              {Number(currentRide.fareEstimate || 0).toFixed(2)}
-            </Text>
-          </View>
-
-          <View style={styles.offerRoute}>
-            <View style={styles.gutter}>
-              <View style={styles.dotGreen} />
-              <View style={styles.stem} />
-              <View style={styles.square} />
-            </View>
-            <View style={{ flex: 1, gap: SPACE[4] }}>
-              <View>
-                <Text style={TYPE.label}>Pickup</Text>
-                <Text style={styles.addr} numberOfLines={2}>
-                  {currentRide.pickupLocation?.address}
-                </Text>
-                <Text style={styles.away}>
-                  {currentRide.pickupDistanceKm.toFixed(1)} km away
-                </Text>
-              </View>
-              <View>
-                <Text style={TYPE.label}>Dropoff</Text>
-                <Text style={styles.addr} numberOfLines={2}>
-                  {currentRide.dropoffLocation?.address}
-                </Text>
-                <Text style={styles.away}>
-                  {currentRide.route?.distanceKm || 0} km ·{' '}
-                  {Math.ceil(currentRide.route?.durationMinutes || 0)} min trip
-                  {currentRide.stops?.length
-                    ? ` · ${currentRide.stops.length} stop${currentRide.stops.length === 1 ? '' : 's'}`
-                    : ''}
-                </Text>
-              </View>
-            </View>
-          </View>
-
-          <TouchableOpacity
-            style={[styles.accept, isAccepting && { opacity: 0.6 }]}
-            disabled={isAccepting}
-            onPress={() => handleAcceptRide(currentRide)}
-            activeOpacity={0.9}
-            accessibilityRole="button"
-          >
-            <Text style={styles.acceptText}>
-              {isAccepting
-                ? 'Accepting…'
-                : currentRide.bidding
-                ? `Accept ${currencySymbol()}${Number(currentRide.fareEstimate || 0).toFixed(2)} · ${timer}s`
-                : `Accept · ${timer}s`}
-            </Text>
-          </TouchableOpacity>
-
-          {/* Bidding: counter with a higher price instead. */}
-          {currentRide.bidding && biddingEnabled(appConfig) ? (
-            sentOffers[currentRide.id] ? (
-              <Text style={styles.counterSent}>
-                You offered {currencySymbol()}
-                {Number(sentOffers[currentRide.id]).toFixed(2)}. Waiting for the passenger…
+              <Text style={TYPE.figure}>
+                {currencySymbol()}
+                {Number(currentRide.fareEstimate || 0).toFixed(2)}
               </Text>
-            ) : (
-              <View style={styles.counterRow}>
-                {counterSteps(Number(currentRide.fareEstimate || 0), appConfig).map((price) => (
-                  <TouchableOpacity
-                    key={price}
-                    style={[styles.counterChip, sending && { opacity: 0.6 }]}
-                    onPress={() => handleCounter(currentRide, price)}
-                    disabled={sending}
-                    accessibilityLabel={`Offer ${price.toFixed(2)}`}
-                  >
-                    <Text style={styles.counterChipText}>
-                      {currencySymbol()}
-                      {price.toFixed(2)}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )
-          ) : null}
+            </View>
 
-          <TouchableOpacity style={styles.decline} onPress={advanceQueue} activeOpacity={0.7}>
-            <Text style={styles.declineText}>Decline</Text>
-          </TouchableOpacity>
+            <View style={styles.offerRoute}>
+              <RouteLine
+                compact
+                pickup={currentRide.pickupLocation?.address}
+                dropoff={currentRide.dropoffLocation?.address}
+              />
+            </View>
+
+            <View style={styles.facts}>
+              <View style={styles.fact}>
+                <Ionicons name="navigate-outline" size={16} color={COLORS.muted} />
+                <Text style={styles.factText}>{currentRide.pickupDistanceKm.toFixed(1)} km away</Text>
+              </View>
+              <View style={styles.fact}>
+                <Ionicons name="time-outline" size={16} color={COLORS.muted} />
+                <Text style={styles.factText}>
+                  {currentRide.route?.distanceKm || 0} km · {Math.ceil(currentRide.route?.durationMinutes || 0)} min trip
+                </Text>
+              </View>
+            </View>
+
+            <Button
+              title={
+                isAccepting
+                  ? 'Accepting…'
+                  : currentRide.bidding
+                  ? `Accept ${currencySymbol()}${Number(currentRide.fareEstimate || 0).toFixed(2)} · ${timer}s`
+                  : `Accept · ${timer}s`
+              }
+              onPress={() => handleAcceptRide(currentRide)}
+              disabled={isAccepting}
+              loading={isAccepting}
+            />
+
+            {/* Bidding: counter with a higher price instead. */}
+            {currentRide.bidding && biddingEnabled(appConfig) ? (
+              sentOffers[currentRide.id] ? (
+                <Text style={styles.counterSent}>
+                  You offered {currencySymbol()}
+                  {Number(sentOffers[currentRide.id]).toFixed(2)}. Waiting for the passenger…
+                </Text>
+              ) : (
+                <View style={styles.counterRow}>
+                  {counterSteps(Number(currentRide.fareEstimate || 0), appConfig).map((price) => (
+                    <Button
+                      key={price}
+                      size="small"
+                      variant="secondary"
+                      title={`${currencySymbol()}${price.toFixed(2)}`}
+                      onPress={() => handleCounter(currentRide, price)}
+                      disabled={sending}
+                      style={styles.counterChip}
+                      accessibilityLabel={`Offer ${price.toFixed(2)}`}
+                    />
+                  ))}
+                </View>
+              )
+            ) : null}
+
+            <Button title="Decline" variant="ghost" onPress={advanceQueue} style={styles.decline} />
+          </Sheet>
         </Animated.View>
       ) : null}
     </View>
@@ -895,22 +880,21 @@ export default function DriverHomeScreen() {
 }
 
 const mapStyle = [
-  { elementType: 'geometry', stylers: [{ color: '#F5F7FA' }] },
+  { elementType: 'geometry', stylers: [{ color: COLORS.surface }] },
   { elementType: 'labels.text.fill', stylers: [{ color: COLORS.muted }] },
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
   { featureType: 'road', elementType: 'geometry', stylers: [{ color: COLORS.white }] },
   { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: COLORS.line }] },
   { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#DCE6F2' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: COLORS.fill }] },
 ];
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.surface },
-  centered: { alignItems: 'center', justifyContent: 'center' },
 
   carMarker: {
     width: 42, height: 42, borderRadius: 21,
-    backgroundColor: COLORS.navy,
+    backgroundColor: COLORS.midnight,
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 3, borderColor: COLORS.white,
     ...SHADOW.float,
@@ -931,42 +915,34 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.lime, opacity: 0.45,
   },
   presenceDot: { width: 11, height: 11, borderRadius: 6 },
-  presenceTitle: { fontSize: 16, fontWeight: '800', color: COLORS.navy, letterSpacing: -0.3 },
 
+  // Go is the one solid lime button in the app: the moment a shift starts.
   goBtn: {
     minWidth: 76, height: 44, borderRadius: RADIUS.pill,
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1.5,
   },
   goBtnOn: { backgroundColor: COLORS.lime, borderColor: COLORS.lime },
-  goBtnOff: { backgroundColor: COLORS.white, borderColor: COLORS.lineStrong },
+  goBtnOff: { backgroundColor: COLORS.white, borderColor: COLORS.redSoft },
   goBtnText: { fontSize: 15, fontWeight: '800', color: COLORS.midnight, letterSpacing: -0.2 },
 
-  docAlert: {
-    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
-    borderRadius: RADIUS.md, borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: SPACE[4], paddingVertical: SPACE[3],
-    marginTop: SPACE[2],
-  },
-  docExpired: { backgroundColor: COLORS.redSoft, borderColor: '#FCA5A5' },
-  docExpiring: { backgroundColor: COLORS.amberSoft, borderColor: '#FCD34D' },
-  docText: { flex: 1, ...TYPE.small, color: COLORS.ink, fontWeight: '600' },
+  docAlert: { marginTop: SPACE[2] },
 
   bottom: { position: 'absolute', left: SPACE[4], right: SPACE[4], bottom: SPACE[5], gap: SPACE[3] },
   earnings: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[4],
-    backgroundColor: COLORS.navy,
+    backgroundColor: COLORS.midnight,
     borderRadius: RADIUS.lg,
     padding: SPACE[5],
     ...SHADOW.float,
   },
   earningsHead: { flexDirection: 'row', alignItems: 'center', gap: SPACE[2] },
-  earningsLabel: { ...TYPE.small, color: COLORS.onDark },
+  earningsLabel: { ...TYPE.label, color: COLORS.lime },
   earningsValue: { fontSize: 32, fontWeight: '800', color: COLORS.white, letterSpacing: -1, marginTop: 2 },
   earningsSub: { ...TYPE.small, color: COLORS.onDark, marginTop: 2 },
   walletBox: {
     alignItems: 'flex-end', paddingLeft: SPACE[4],
-    borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: COLORS.navyLine,
+    borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: COLORS.midnightLine,
   },
   walletLabel: { ...TYPE.small, color: COLORS.onDark },
   walletValue: { fontSize: 17, fontWeight: '800', color: COLORS.white, marginTop: 2 },
@@ -974,53 +950,25 @@ const styles = StyleSheet.create({
   waiting: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACE[2],
     backgroundColor: COLORS.white,
-    borderRadius: RADIUS.md, paddingVertical: SPACE[3],
+    borderRadius: RADIUS.pill, paddingVertical: SPACE[3],
     ...SHADOW.float,
   },
   waitingText: { ...TYPE.small, fontWeight: '600', color: COLORS.inkSoft },
 
-  offer: {
-    position: 'absolute', left: SPACE[4], right: SPACE[4], bottom: SPACE[5],
-    backgroundColor: COLORS.white,
-    borderRadius: RADIUS.xl,
-    padding: SPACE[5],
-    ...SHADOW.sheet,
-  },
+  offerWrap: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  offer: { paddingTop: SPACE[5] },
   offerTop: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingBottom: SPACE[4],
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.line,
+    flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: SPACE[3],
   },
-  offerFare: { fontSize: 28, fontWeight: '800', color: COLORS.navy, letterSpacing: -0.8 },
-  classTag: {
-    backgroundColor: COLORS.navy,
-    borderRadius: RADIUS.pill,
-    paddingHorizontal: SPACE[3], paddingVertical: 5,
-  },
-  classTagText: { fontSize: 12, fontWeight: '800', color: COLORS.white, letterSpacing: 0.3 },
+  tags: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: SPACE[2] },
 
-  offerRoute: { flexDirection: 'row', gap: SPACE[3], paddingVertical: SPACE[5] },
-  gutter: { width: 12, alignItems: 'center', paddingTop: 20 },
-  dotGreen: { width: 11, height: 11, borderRadius: 6, backgroundColor: COLORS.limeDeep },
-  stem: { flex: 1, width: 2, backgroundColor: COLORS.line, marginVertical: 4, minHeight: 34 },
-  square: { width: 11, height: 11, borderRadius: 3, backgroundColor: COLORS.navy },
-  addr: { ...TYPE.callout, marginTop: 2 },
-  away: { ...TYPE.small, marginTop: 2 },
+  offerRoute: { marginTop: SPACE[5] },
+  facts: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACE[4], marginTop: SPACE[4], marginBottom: SPACE[5] },
+  fact: { flexDirection: 'row', alignItems: 'center', gap: SPACE[1] },
+  factText: { ...TYPE.small, fontWeight: '600', color: COLORS.inkSoft },
 
-  accept: {
-    minHeight: 54, borderRadius: 999,
-    backgroundColor: COLORS.primary,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  acceptText: { fontSize: 16, fontWeight: '800', color: COLORS.onPrimary, letterSpacing: -0.2 },
-  decline: { alignItems: 'center', paddingVertical: SPACE[4] },
   counterRow: { flexDirection: 'row', gap: SPACE[2], marginTop: SPACE[3] },
-  counterChip: {
-    flex: 1, height: 44, borderRadius: RADIUS.sm,
-    borderWidth: 2, borderColor: COLORS.midnight, backgroundColor: COLORS.limeSoft,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  counterChipText: { fontSize: 15, fontWeight: '800', color: COLORS.navy },
-  counterSent: { ...TYPE.small, textAlign: 'center', marginTop: SPACE[3], color: COLORS.navy, fontWeight: '600' },
-  declineText: { fontSize: 15, fontWeight: '700', color: COLORS.muted },
+  counterChip: { flex: 1, backgroundColor: COLORS.limeSoft, borderColor: COLORS.midnight, borderWidth: 2 },
+  counterSent: { ...TYPE.small, textAlign: 'center', marginTop: SPACE[3], color: COLORS.midnight, fontWeight: '600' },
+  decline: { marginTop: SPACE[2] },
 });

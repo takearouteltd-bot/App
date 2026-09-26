@@ -1,11 +1,11 @@
 // "Email receipt" for a completed trip. Sends to the passenger's own address,
 // or to another one they type in (for example an employer or accountant).
 import React, { useState } from 'react';
-import { Modal, View, Text, Pressable, StyleSheet } from 'react-native';
+import { Modal, Text, Pressable, StyleSheet } from 'react-native';
 import { Alert, AlertHost } from './ui/alert';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../config/firebase';
-import { COLORS, TYPE, Button, Field } from './ui/kit';
+import { COLORS, TYPE, SPACE, Button, Field, Sheet } from './ui/kit';
 
 export default function EmailReceiptButton({ rideId, style, variant = 'secondary', title = 'Email receipt' }) {
   const [open, setOpen] = useState(false);
@@ -34,19 +34,19 @@ export default function EmailReceiptButton({ rideId, style, variant = 'secondary
 
       <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setOpen(false)} />
-        <View style={styles.sheet}>
-          <View style={styles.handle} />
+        <Sheet>
           <Text style={TYPE.title}>Email receipt</Text>
-          <Text style={[TYPE.small, { marginTop: 4, marginBottom: 18 }]}>
+          <Text style={[TYPE.small, { marginTop: SPACE[1], marginBottom: SPACE[5] }]}>
             We will send it to the email on your account, or to another address if you prefer.
           </Text>
 
-          <Button title="Send to my email" loading={sending} onPress={() => send(null)} />
+          <Button title="Send to my email" icon="mail-outline" loading={sending} onPress={() => send(null)} />
 
-          <Text style={[TYPE.small, { textAlign: 'center', marginVertical: 14 }]}>or</Text>
+          <Text style={[TYPE.small, { textAlign: 'center', marginVertical: SPACE[4] }]}>or</Text>
 
           <Field
             label="Another email address"
+            left="at-outline"
             placeholder="name@company.com"
             keyboardType="email-address"
             autoCapitalize="none"
@@ -61,8 +61,8 @@ export default function EmailReceiptButton({ rideId, style, variant = 'secondary
             loading={sending}
             onPress={() => send(email.trim())}
           />
-          <Button title="Close" variant="ghost" style={{ marginTop: 6 }} onPress={() => setOpen(false)} />
-        </View>
+          <Button title="Close" variant="ghost" style={{ marginTop: SPACE[2] }} onPress={() => setOpen(false)} />
+        </Sheet>
         <AlertHost />
       </Modal>
     </>
@@ -70,13 +70,5 @@ export default function EmailReceiptButton({ rideId, style, variant = 'secondary
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(15,23,42,0.45)' },
-  sheet: {
-    backgroundColor: COLORS.white,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    paddingBottom: 34,
-  },
-  handle: { alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.line, marginBottom: 16 },
+  backdrop: { flex: 1, backgroundColor: COLORS.overlay },
 });

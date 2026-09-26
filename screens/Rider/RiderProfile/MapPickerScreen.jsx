@@ -9,26 +9,33 @@ import {
   FlatList,
   KeyboardAvoidingView,
   Platform,
+  SafeAreaView,
 } from "react-native";
 import { Alert } from "../../../components/ui/alert";
-import MapView, { Marker, PROVIDER_GOOGLE } from "react-native-maps";
+import MapView, { Marker } from "react-native-maps";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useRoute } from "@react-navigation/native";
 import * as Location from "expo-location";
 import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { auth, db } from "../../../config/firebase";
-import { COLORS } from '../../../components/ui/kit';
+import {
+  COLORS,
+  TYPE,
+  SPACE,
+  RADIUS,
+  SHADOW,
+  Sheet,
+  IconButton,
+  Chip,
+  Field,
+  Button,
+} from '../../../components/ui/kit';
 import { GOOGLE_MAPS_API_KEY, PLACES_NEW_PROPS, placeCoords } from '../../../config/maps';
 
-const PRIMARY = COLORS.primary;
-const SECONDARY = COLORS.blue;
-const BG = COLORS.surface;
-
-
 const PLACE_TYPES = {
-  home: { icon: "home", label: "Home", color: "#EEF0F4", iconColor: SECONDARY },
-  work: { icon: "briefcase", label: "Work", color: "#FFF3E0", iconColor: "#F57C00" },
-  other: { icon: "location", label: "Saved", color: "#F2FADF", iconColor: PRIMARY },
+  home: { icon: "home", label: "Home" },
+  work: { icon: "briefcase", label: "Work" },
+  other: { icon: "location", label: "Saved" },
 };
 
 export default function MapPickerScreen() {
@@ -129,7 +136,7 @@ export default function MapPickerScreen() {
     }
   };
 
-  const searchPlaces = async (text) => { 
+  const searchPlaces = async (text) => {
     setSearchQuery(text);
     if (text.length < 2) {
       setPredictions([]);
@@ -268,60 +275,27 @@ export default function MapPickerScreen() {
     <TouchableOpacity
       style={styles.predictionItem}
       onPress={() => selectPrediction(item)}
+      accessibilityRole="button"
     >
-      <Ionicons name="location-outline" size={18} color={PRIMARY} />
-      <View style={styles.predictionText}>
-        <Text style={styles.predictionMain} numberOfLines={1}>
+      <View style={styles.predictionIcon}>
+        <Ionicons name="location-outline" size={18} color={COLORS.midnight} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={TYPE.callout} numberOfLines={1}>
           {item.structured_formatting?.main_text || item.description}
         </Text>
-        <Text style={styles.predictionSecondary} numberOfLines={1}>
+        <Text style={TYPE.small} numberOfLines={1}>
           {item.structured_formatting?.secondary_text || ""}
         </Text>
       </View>
     </TouchableOpacity>
   );
 
-  const getTypeConfig = (type) => PLACE_TYPES[type] || PLACE_TYPES.other;
-
   return (
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
-      {/* Search Header */}
-      <View style={styles.searchHeader}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={24} color={COLORS.white} />
-        </TouchableOpacity>
-        <View style={styles.searchInputContainer}>
-          <Ionicons name="search" size={18} color={COLORS.faint} />
-          <TextInput
-            style={styles.searchInput}
-            value={searchQuery}
-            onChangeText={searchPlaces}
-            placeholder="Search address, postcode..."
-            placeholderTextColor={COLORS.faint}
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => { setSearchQuery(""); setPredictions([]); }}>
-              <Ionicons name="close-circle" size={18} color={COLORS.faint} />
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
-
-      {/* Predictions */}
-      {showPredictions && predictions.length > 0 && (
-        <View style={styles.predictionsContainer}>
-          <FlatList
-            data={predictions}
-            keyExtractor={(item) => item.place_id}
-            renderItem={renderPrediction}
-            keyboardShouldPersistTaps="handled"
-          />
-        </View>
-      )}
-
       {/* Map */}
       <MapView
         ref={mapRef}
@@ -340,105 +314,112 @@ export default function MapPickerScreen() {
               const { latitude, longitude } = e.nativeEvent.coordinate;
               reverseGeocode(latitude, longitude);
             }}
+            anchor={{ x: 0.5, y: 1 }}
           >
             <View style={styles.markerContainer}>
-              <View style={styles.markerPin}>
-                <Ionicons name="location" size={28} color={PRIMARY} />
-              </View>
-              <View style={styles.markerShadow} />
+              <View style={styles.markerPin} />
+              <View style={styles.markerStem} />
             </View>
           </Marker>
         )}
       </MapView>
 
-      {/* GPS Button */}
-      <TouchableOpacity
-        style={styles.gpsButton}
-        onPress={getCurrentLocation}
-        disabled={gettingGPS}
-      >
-        {gettingGPS ? (
-          <ActivityIndicator size="small" color={SECONDARY} />
-        ) : (
-          <Ionicons name="locate" size={24} color={SECONDARY} />
+      {/* Search, floating over the map */}
+      <SafeAreaView style={styles.topLayer} pointerEvents="box-none">
+        <View style={styles.searchRow}>
+          <IconButton icon="chevron-back" onPress={() => navigation.goBack()} accessibilityLabel="Go back" />
+          <View style={styles.searchBox}>
+            <Ionicons name="search" size={18} color={COLORS.muted} />
+            <TextInput
+              style={styles.searchInput}
+              value={searchQuery}
+              onChangeText={searchPlaces}
+              placeholder="Search address, postcode..."
+              placeholderTextColor={COLORS.faint}
+              selectionColor={COLORS.midnight}
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity
+                onPress={() => { setSearchQuery(""); setPredictions([]); }}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel="Clear search"
+              >
+                <Ionicons name="close-circle" size={18} color={COLORS.faint} />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+
+        {/* Predictions */}
+        {showPredictions && predictions.length > 0 && (
+          <View style={styles.predictions}>
+            <FlatList
+              data={predictions}
+              keyExtractor={(item) => item.place_id}
+              renderItem={renderPrediction}
+              keyboardShouldPersistTaps="handled"
+            />
+          </View>
         )}
-      </TouchableOpacity>
+      </SafeAreaView>
+
+      {/* GPS Button */}
+      <View style={styles.gps}>
+        {gettingGPS ? (
+          <View style={styles.gpsBusy}>
+            <ActivityIndicator size="small" color={COLORS.midnight} />
+          </View>
+        ) : (
+          <IconButton icon="locate" onPress={getCurrentLocation} accessibilityLabel="Use my current location" />
+        )}
+      </View>
 
       {/* Bottom Sheet with Save Form */}
-      <View style={styles.bottomSheet}>
-        <View style={styles.dragHandle} />
-
+      <Sheet style={styles.sheet}>
         {/* Type Selector */}
         <View style={styles.typeSelector}>
           {Object.entries(PLACE_TYPES).map(([key, config]) => (
-            <TouchableOpacity
+            <Chip
               key={key}
-              style={[
-                styles.typeOption,
-                selectedType === key && {
-                  borderColor: config.iconColor,
-                  backgroundColor: config.color,
-                },
-              ]}
+              label={config.label}
+              icon={config.icon}
+              active={selectedType === key}
               onPress={() => setSelectedType(key)}
-            >
-              <Ionicons
-                name={config.icon}
-                size={18}
-                color={selectedType === key ? config.iconColor : COLORS.faint}
-              />
-              <Text
-                style={[
-                  styles.typeLabel,
-                  selectedType === key && { color: config.iconColor, fontWeight: "600" },
-                ]}
-              >
-                {config.label}
-              </Text>
-            </TouchableOpacity>
+            />
           ))}
         </View>
 
         {/* Name Input */}
-        <TextInput
-          style={styles.nameInput}
+        <Field
+          left="bookmark-outline"
           value={placeName}
           onChangeText={setPlaceName}
           placeholder="Place name (e.g., Home, Office)"
-          placeholderTextColor={COLORS.faint}
+          style={{ marginBottom: SPACE[3] }}
         />
 
         {/* Address */}
         {loadingAddress ? (
-          <ActivityIndicator size="small" color={PRIMARY} style={styles.addressLoader} />
+          <ActivityIndicator size="small" color={COLORS.midnight} style={styles.addressLoader} />
         ) : (
-          <View style={styles.addressContainer}>
-            <Ionicons name="location" size={18} color={PRIMARY} />
-            <Text style={styles.addressText} numberOfLines={2}>
+          <View style={styles.addressRow}>
+            <Ionicons name="location" size={18} color={COLORS.limeInk} />
+            <Text style={[TYPE.callout, { flex: 1 }]} numberOfLines={2}>
               {address || "Tap on the map or search to select a location"}
             </Text>
           </View>
         )}
 
         {/* Save Button */}
-        <TouchableOpacity
-          style={[
-            styles.confirmButton,
-            (!selectedLocation || !placeName.trim()) && styles.confirmButtonDisabled,
-          ]}
+        <Button
+          title="Save Place"
+          icon="checkmark"
           onPress={handleSave}
+          loading={saving}
           disabled={!selectedLocation || !placeName.trim() || saving}
-        >
-          {saving ? (
-            <ActivityIndicator size="small" color={COLORS.white} />
-          ) : (
-            <>
-              <Text style={styles.confirmButtonText}>Save Place</Text>
-              <Ionicons name="checkmark" size={18} color={COLORS.white} />
-            </>
-          )}
-        </TouchableOpacity>
-      </View>
+        />
+      </Sheet>
     </KeyboardAvoidingView>
   );
 }
@@ -446,220 +427,103 @@ export default function MapPickerScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: BG,
+    backgroundColor: COLORS.surface,
   },
+  map: { flex: 1 },
 
-  searchHeader: {
+  topLayer: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     zIndex: 10,
+  },
+  searchRow: {
     flexDirection: "row",
     alignItems: "center",
-    paddingTop: 50,
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-    backgroundColor: SECONDARY,
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
+    gap: SPACE[3],
+    paddingHorizontal: SPACE[4],
+    paddingTop: SPACE[2],
   },
-  backBtn: {
-    width: 40,
-    height: 40,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  searchInputContainer: {
+  searchBox: {
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
+    gap: SPACE[2],
+    minHeight: 48,
+    paddingHorizontal: SPACE[4],
+    borderRadius: RADIUS.pill,
     backgroundColor: COLORS.white,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginLeft: 10,
-    gap: 8,
+    ...SHADOW.float,
   },
   searchInput: {
     flex: 1,
-    fontSize: 15,
+    fontSize: 16,
     color: COLORS.ink,
+    paddingVertical: SPACE[2],
   },
 
-  predictionsContainer: {
-    position: "absolute",
-    top: 110,
-    left: 16,
-    right: 16,
-    zIndex: 20,
+  predictions: {
+    marginHorizontal: SPACE[4],
+    marginTop: SPACE[2],
     backgroundColor: COLORS.white,
-    borderRadius: 12,
-    maxHeight: 250,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
-    elevation: 8,
+    borderRadius: RADIUS.lg,
+    maxHeight: 260,
+    overflow: "hidden",
+    ...SHADOW.float,
   },
   predictionItem: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
-    gap: 12,
+    gap: SPACE[3],
+    paddingHorizontal: SPACE[4],
+    paddingVertical: SPACE[3],
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.line,
   },
-  predictionText: {
-    flex: 1,
-  },
-  predictionMain: {
-    fontSize: 14,
-    fontWeight: "500",
-    color: COLORS.ink,
-  },
-  predictionSecondary: {
-    fontSize: 12,
-    color: COLORS.muted,
-    marginTop: 2,
+  predictionIcon: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: COLORS.fill,
+    alignItems: "center", justifyContent: "center",
   },
 
-  map: {
-    flex: 1,
-    marginTop: 60,
-  },
-
-  markerContainer: {
-    alignItems: "center",
-  },
+  markerContainer: { alignItems: "center" },
   markerPin: {
-    backgroundColor: COLORS.white,
-    borderRadius: 20,
-    padding: 4,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 4,
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: COLORS.lime,
+    borderWidth: 4, borderColor: COLORS.midnight,
   },
-  markerShadow: {
-    width: 12,
-    height: 4,
-    backgroundColor: "rgba(0,0,0,0.2)",
-    borderRadius: 6,
-    marginTop: 2,
-  },
+  markerStem: { width: 3, height: 12, backgroundColor: COLORS.midnight, borderRadius: 2 },
 
-  gpsButton: {
+  gps: {
     position: "absolute",
-    right: 16,
-    bottom: 320,
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    right: SPACE[4],
+    bottom: 330,
+  },
+  gpsBusy: {
+    width: 44, height: 44, borderRadius: 22,
     backgroundColor: COLORS.white,
-    justifyContent: "center",
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    elevation: 4,
+    alignItems: "center", justifyContent: "center",
+    ...SHADOW.float,
   },
 
-  bottomSheet: {
+  sheet: {
     position: "absolute",
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: COLORS.white,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 30,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 10,
   },
-  dragHandle: {
-    width: 40,
-    height: 4,
-    backgroundColor: "#ddd",
-    borderRadius: 2,
-    alignSelf: "center",
-    marginBottom: 12,
-  },
-
   typeSelector: {
     flexDirection: "row",
-    gap: 8,
-    marginBottom: 12,
+    gap: SPACE[2],
+    marginBottom: SPACE[4],
   },
-  typeOption: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: COLORS.line,
-    backgroundColor: COLORS.white,
-    gap: 4,
-  },
-  typeLabel: {
-    fontSize: 11,
-    color: COLORS.muted,
-  },
-
-  nameInput: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 15,
-    color: COLORS.ink,
-    marginBottom: 10,
-  },
-
-  addressLoader: {
-    marginVertical: 12,
-  },
-  addressContainer: {
+  addressLoader: { marginVertical: SPACE[3] },
+  addressRow: {
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 8,
-    marginBottom: 14,
-    paddingHorizontal: 4,
-  },
-  addressText: {
-    flex: 1,
-    fontSize: 13,
-    color: COLORS.muted,
-    lineHeight: 18,
-  },
-
-  confirmButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: PRIMARY,
-    paddingVertical: 14,
-    borderRadius: 14,
-    gap: 8,
-  },
-  confirmButtonDisabled: {
-    backgroundColor: COLORS.lineStrong,
-  },
-  confirmButtonText: {
-    color: COLORS.white,
-    fontSize: 16,
-    fontWeight: "700",
+    gap: SPACE[2],
+    marginBottom: SPACE[4],
+    paddingHorizontal: SPACE[1],
   },
 });

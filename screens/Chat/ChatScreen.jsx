@@ -8,11 +8,8 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
-  ActivityIndicator,
-  Image,
-  StatusBar,
+  SafeAreaView,
   KeyboardAvoidingView,
-  Modal,
 } from 'react-native';
 import { Alert } from '../../components/ui/alert';
 import { Ionicons } from '@expo/vector-icons';
@@ -29,10 +26,10 @@ import {
   deleteDoc,
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
-import { COLORS } from '../../components/ui/kit';
-
-const PRIMARY = COLORS.primary;
-const SECONDARY = COLORS.blue;
+import {
+  COLORS, TYPE, SPACE, RADIUS, SHADOW,
+  ScreenHeader, Avatar, Chip, Loading,
+} from '../../components/ui/kit';
 
 // Predefined quick messages for safer driving
 const QUICK_MESSAGES = [
@@ -45,12 +42,12 @@ const QUICK_MESSAGES = [
 
 const ChatScreen = ({ route }) => {
   const navigation = useNavigation();
-  const { 
-    rideId, 
-    currentUser, 
-    userType, 
-    otherUserName, 
-    otherUserPhoto 
+  const {
+    rideId,
+    currentUser,
+    userType,
+    otherUserName,
+    otherUserPhoto
   } = route.params;
 
   const [messages, setMessages] = useState([]);
@@ -117,7 +114,7 @@ const ChatScreen = ({ route }) => {
 
   const handleLongPress = (message) => {
     const isMyMessage = message.senderId === currentUser.uid;
-    
+
     const options = ['Report'];
     if (isMyMessage) options.push('Delete');
     options.push('Cancel');
@@ -190,277 +187,231 @@ const ChatScreen = ({ route }) => {
     );
   };
 
-  const renderQuickMessage = (msg) => (
-    <TouchableOpacity
-      key={msg}
-      style={styles.quickMessageChip}
-      onPress={() => sendMessage(msg)}
-    >
-      <Text style={styles.quickMessageText}>{msg}</Text>
-    </TouchableOpacity>
-  );
+  const otherName = otherUserName || (userType === 'rider' ? 'Driver' : 'Rider');
 
-  const renderMessage = ({ item }) => {
+  // Messages from different days get a small pill between them.
+  const dayLabel = (ts) => {
+    const d = ts?.toDate?.();
+    if (!d) return null;
+    const now = new Date();
+    if (d.toDateString() === now.toDateString()) return 'Today';
+    const y = new Date(now);
+    y.setDate(now.getDate() - 1);
+    if (d.toDateString() === y.toDateString()) return 'Yesterday';
+    return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  };
+
+  const renderMessage = ({ item, index }) => {
     const isMe = item.senderId === currentUser.uid;
+    const label = dayLabel(item.timestamp);
+    const prevLabel = index > 0 ? dayLabel(messages[index - 1].timestamp) : null;
+    const showDay = label && label !== prevLabel;
 
     return (
-      <TouchableOpacity
-        activeOpacity={0.8}
-        onLongPress={() => handleLongPress(item)}
-        style={[
-          styles.messageRow,
-          isMe ? styles.myRow : styles.theirRow
-        ]}
-      >
-        {!isMe && otherUserPhoto && (
-          <Image source={{ uri: otherUserPhoto }} style={styles.messageAvatar} />
-        )}
-
-        <View style={[
-          styles.bubble,
-          isMe ? styles.myBubble : styles.theirBubble
-        ]}>
-          <Text style={[
-            styles.messageText,
-            isMe ? styles.myMessageText : styles.theirMessageText
-          ]}>
-            {item.text}
-          </Text>
-          <View style={styles.messageMeta}>
-            <Text style={styles.timestamp}>
-              {item.timestamp?.toDate?.() 
-                ? item.timestamp.toDate().toLocaleTimeString([], { 
-                    hour: '2-digit', 
-                    minute: '2-digit' 
-                  })
-                : 'Sending...'}
-            </Text>
-            {isMe && (
-              <Ionicons 
-                name={item.read ? "checkmark-done" : "checkmark"} 
-                size={14} 
-                color={item.read ? PRIMARY : COLORS.faint} 
-                style={styles.readIcon}
-              />
-            )}
+      <>
+        {showDay ? (
+          <View style={styles.dayWrap}>
+            <Text style={styles.dayPill}>{label}</Text>
           </View>
-        </View>
-      </TouchableOpacity>
+        ) : null}
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onLongPress={() => handleLongPress(item)}
+          style={[
+            styles.messageRow,
+            isMe ? styles.myRow : styles.theirRow
+          ]}
+        >
+          {!isMe && (
+            <Avatar uri={otherUserPhoto} name={otherName} size={28} style={styles.messageAvatar} />
+          )}
+
+          <View style={[
+            styles.bubble,
+            isMe ? styles.myBubble : styles.theirBubble
+          ]}>
+            <Text style={[
+              styles.messageText,
+              isMe ? styles.myMessageText : styles.theirMessageText
+            ]}>
+              {item.text}
+            </Text>
+            <View style={styles.messageMeta}>
+              <Text style={[styles.timestamp, isMe && { color: COLORS.onDark }]}>
+                {item.timestamp?.toDate?.()
+                  ? item.timestamp.toDate().toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })
+                  : 'Sending...'}
+              </Text>
+              {isMe && (
+                <Ionicons
+                  name={item.read ? "checkmark-done" : "checkmark"}
+                  size={14}
+                  color={item.read ? COLORS.lime : COLORS.onDark}
+                  style={styles.readIcon}
+                />
+              )}
+            </View>
+          </View>
+        </TouchableOpacity>
+      </>
     );
   };
 
   if (loading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color={PRIMARY} />
-      </View>
+      <SafeAreaView style={styles.container}>
+        <Loading />
+      </SafeAreaView>
     );
   }
 
   return (
-    <KeyboardAvoidingView 
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={0}
-    >
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.navy} />
+    <SafeAreaView style={styles.container}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={0}
+      >
+        {/* ========== HEADER ========== */}
+        <View style={styles.header}>
+          <ScreenHeader
+            compact
+            onBack={() => navigation.goBack()}
+            title={otherName}
+            subtitle={userType === 'rider' ? 'Your driver' : 'Your passenger'}
+            right={<Avatar uri={otherUserPhoto} name={otherName} size={40} />}
+          />
+        </View>
 
-      {/* ========== HEADER ========== */}
-      <View style={styles.header}>
-        <TouchableOpacity 
-          style={styles.backBtn} 
-          onPress={() => navigation.goBack()}
-        >
-          <Ionicons name="arrow-back" size={24} color={COLORS.white} />
-        </TouchableOpacity>
-
-        {otherUserPhoto ? (
-          <Image source={{ uri: otherUserPhoto }} style={styles.headerAvatar} />
-        ) : (
-          <View style={[styles.headerAvatar, styles.headerAvatarPlaceholder]}>
-            <Ionicons name="person" size={20} color={COLORS.white} />
+        {/* ========== QUICK MESSAGES ========== */}
+        {showQuickMessages && (
+          <View style={styles.quickMessagesContainer}>
+            <Text style={TYPE.label}>Quick Replies</Text>
+            <View style={styles.quickMessagesRow}>
+              {QUICK_MESSAGES.map((msg) => (
+                <Chip key={msg} label={msg} onPress={() => sendMessage(msg)} />
+              ))}
+            </View>
           </View>
         )}
 
-        <View style={styles.headerInfo}>
-          <Text style={styles.headerName} numberOfLines={1}>
-            {otherUserName || (userType === 'rider' ? 'Driver' : 'Rider')}
-          </Text>
-          <Text style={styles.headerStatus}>
-            {userType === 'rider' ? 'Your driver' : 'Your passenger'}
-          </Text>
-        </View>
-      </View>
+        {/* ========== MESSAGES ========== */}
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          renderItem={renderMessage}
+          keyExtractor={item => item.id}
+          contentContainerStyle={styles.messagesList}
+          onContentSizeChange={() =>
+            flatListRef.current?.scrollToEnd({ animated: false })
+          }
+          showsVerticalScrollIndicator={false}
+        />
 
-      {/* ========== QUICK MESSAGES ========== */}
-      {showQuickMessages && (
-        <View style={styles.quickMessagesContainer}>
-          <Text style={styles.quickMessagesLabel}>Quick Replies</Text>
-          <View style={styles.quickMessagesRow}>
-            {QUICK_MESSAGES.map(renderQuickMessage)}
+        {/* ========== INPUT ========== */}
+        <View style={styles.inputWrapper}>
+          <TouchableOpacity
+            style={[styles.quickToggleBtn, showQuickMessages && styles.quickToggleBtnOn]}
+            onPress={() => setShowQuickMessages(!showQuickMessages)}
+            accessibilityRole="button"
+            accessibilityLabel={showQuickMessages ? 'Hide quick replies' : 'Show quick replies'}
+          >
+            <Ionicons
+              name={showQuickMessages ? "close" : "flash"}
+              size={20}
+              color={showQuickMessages ? COLORS.lime : COLORS.midnight}
+            />
+          </TouchableOpacity>
+
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={styles.input}
+              value={inputText}
+              onChangeText={setInputText}
+              placeholder="Type a message..."
+              placeholderTextColor={COLORS.faint}
+              selectionColor={COLORS.midnight}
+              multiline
+              maxLength={500}
+              returnKeyType="send"
+              onSubmitEditing={() => sendMessage()}
+            />
           </View>
-        </View>
-      )}
 
-      {/* ========== MESSAGES ========== */}
-      <FlatList
-        ref={flatListRef}
-        data={messages}
-        renderItem={renderMessage}
-        keyExtractor={item => item.id}
-        contentContainerStyle={styles.messagesList}
-        onContentSizeChange={() => 
-          flatListRef.current?.scrollToEnd({ animated: false })
-        }
-        showsVerticalScrollIndicator={false}
-      />
-
-      {/* ========== INPUT ========== */}
-      <View style={styles.inputWrapper}>
-        <TouchableOpacity
-          style={styles.quickToggleBtn}
-          onPress={() => setShowQuickMessages(!showQuickMessages)}
-        >
-          <Ionicons 
-            name={showQuickMessages ? "close" : "flash"} 
-            size={20} 
-            color={SECONDARY} 
-          />
-        </TouchableOpacity>
-
-        <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.input}
-            value={inputText}
-            onChangeText={setInputText}
-            placeholder="Type a message..."
-            placeholderTextColor={COLORS.faint}
-            multiline
-            maxLength={500}
-            returnKeyType="send"
-            onSubmitEditing={() => sendMessage()}
-          />
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[
-              styles.sendBtn, 
+              styles.sendBtn,
               !inputText.trim() && styles.sendBtnDisabled
             ]}
             onPress={() => sendMessage()}
             disabled={!inputText.trim()}
+            accessibilityRole="button"
+            accessibilityLabel="Send"
           >
-            <Ionicons 
-              name="send" 
-              size={20} 
-              color={inputText.trim() ? COLORS.white : COLORS.lineStrong} 
+            <Ionicons
+              name="send"
+              size={20}
+              color={inputText.trim() ? COLORS.lime : COLORS.faint}
             />
           </TouchableOpacity>
         </View>
-      </View>
-    </KeyboardAvoidingView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F7FA',
-  },
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#F5F7FA',
+    backgroundColor: COLORS.surface,
   },
 
   /* ========== HEADER ========== */
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.navy,
-    paddingTop: Platform.OS === 'ios' ? 50 : StatusBar.currentHeight + 10,
-    paddingBottom: 14,
-    paddingHorizontal: 16,
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-  },
-  backBtn: {
-    padding: 4,
-  },
-  headerAvatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    marginLeft: 12,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.3)',
-  },
-  headerAvatarPlaceholder: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerInfo: {
-    marginLeft: 12,
-    flex: 1,
-  },
-  headerName: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: COLORS.white,
-  },
-  headerStatus: {
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.8)',
-    marginTop: 2,
+    backgroundColor: COLORS.white,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.line,
   },
 
   /* ========== QUICK MESSAGES ========== */
   quickMessagesContainer: {
     backgroundColor: COLORS.white,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E8E8E8',
-  },
-  quickMessagesLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: COLORS.muted,
-    marginBottom: 8,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    paddingHorizontal: SPACE[4],
+    paddingVertical: SPACE[3],
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.line,
   },
   quickMessagesRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
-  },
-  quickMessageChip: {
-    backgroundColor: '#EEF0F4',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#C7D2FE',
-    marginBottom: 6,
-    marginRight: 6,
-  },
-  quickMessageText: {
-    fontSize: 13,
-    color: SECONDARY,
-    fontWeight: '500',
+    gap: SPACE[2],
+    marginTop: SPACE[2],
   },
 
   /* ========== MESSAGES ========== */
   messagesList: {
-    paddingHorizontal: 12,
-    paddingVertical: 16,
+    paddingHorizontal: SPACE[4],
+    paddingVertical: SPACE[4],
     flexGrow: 1,
+  },
+  dayWrap: { alignItems: 'center', marginVertical: SPACE[3] },
+  dayPill: {
+    ...TYPE.caption,
+    fontWeight: '700',
+    color: COLORS.muted,
+    backgroundColor: COLORS.fill,
+    paddingHorizontal: SPACE[3],
+    paddingVertical: SPACE[1],
+    borderRadius: RADIUS.pill,
+    overflow: 'hidden',
   },
   messageRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    marginVertical: 6,
+    marginVertical: SPACE[1],
     maxWidth: '85%',
   },
   myRow: {
@@ -470,31 +421,27 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   messageAvatar: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    marginRight: 8,
-    marginBottom: 4,
+    marginRight: SPACE[2],
+    marginBottom: SPACE[1],
   },
   bubble: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 18,
+    paddingHorizontal: SPACE[4],
+    paddingVertical: SPACE[3],
+    borderRadius: RADIUS.lg,
     maxWidth: '100%',
   },
   myBubble: {
-    backgroundColor: SECONDARY,
-    borderBottomRightRadius: 4,
+    backgroundColor: COLORS.midnight,
+    borderBottomRightRadius: RADIUS.sm,
   },
   theirBubble: {
     backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: COLORS.line,
-    borderBottomLeftRadius: 4,
+    borderBottomLeftRadius: RADIUS.sm,
+    ...SHADOW.card,
   },
   messageText: {
     fontSize: 15,
-    lineHeight: 20,
+    lineHeight: 21,
   },
   myMessageText: {
     color: COLORS.white,
@@ -505,65 +452,65 @@ const styles = StyleSheet.create({
   messageMeta: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 4,
+    marginTop: SPACE[1],
     alignSelf: 'flex-end',
   },
   timestamp: {
-    fontSize: 11,
-    opacity: 0.7,
+    ...TYPE.caption,
     color: COLORS.muted,
   },
   readIcon: {
-    marginLeft: 4,
+    marginLeft: SPACE[1],
   },
 
   /* ========== INPUT ========== */
   inputWrapper: {
-    backgroundColor: COLORS.white,
-    borderTopWidth: 1,
-    borderTopColor: '#E8E8E8',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    paddingBottom: Platform.OS === 'ios' ? 30 : 16,
-  },
-  quickToggleBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#F1F3F4',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  inputContainer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
+    gap: SPACE[2],
+    backgroundColor: COLORS.white,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.line,
+    paddingHorizontal: SPACE[3],
+    paddingVertical: SPACE[3],
+  },
+  quickToggleBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.fill,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  quickToggleBtnOn: {
+    backgroundColor: COLORS.midnight,
+  },
+  inputContainer: {
+    flex: 1,
+    backgroundColor: COLORS.fill,
+    borderRadius: RADIUS.pill,
+    minHeight: 48,
+    justifyContent: 'center',
   },
   input: {
-    flex: 1,
     maxHeight: 120,
-    minHeight: 44,
-    paddingHorizontal: 14,
-    paddingTop: 11,
-    paddingBottom: 11,
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: COLORS.line,
-    borderRadius: 14,
-    fontSize: 15,
-    color: '#1F2937',
-    marginRight: 10,
+    minHeight: 48,
+    paddingHorizontal: SPACE[4],
+    paddingTop: Platform.OS === 'ios' ? 14 : 12,
+    paddingBottom: Platform.OS === 'ios' ? 14 : 12,
+    fontSize: 16,
+    color: COLORS.ink,
   },
   sendBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: PRIMARY,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.midnight,
     justifyContent: 'center',
     alignItems: 'center',
   },
   sendBtnDisabled: {
-    backgroundColor: COLORS.line,
+    backgroundColor: COLORS.fill,
   },
 });
 

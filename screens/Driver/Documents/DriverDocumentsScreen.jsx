@@ -3,7 +3,6 @@
 // live until an admin accepts the new one.
 import React, { useEffect, useState } from 'react';
 import {
-  SafeAreaView,
   ScrollView,
   View,
   Text,
@@ -19,7 +18,7 @@ import { selectUploadAsset } from '../../../helpers/uploadPicker';
 import { DRIVER_DOCUMENTS, expiryStatus, describeExpiry, expiryAlertsFor } from '../../../constants/driverDocuments';
 import { submitChangeRequest, uploadPendingDocument, useChangeRequests } from '../../../utils/changeRequests';
 import {
-  COLORS, TYPE, ScreenHeader, Section, Card, StatusPill, Button, Field, Loading,
+  COLORS, TYPE, SPACE, Screen, ScreenHeader, Section, Card, StatusPill, Button, Field, Loading,
 } from '../../../components/ui/kit';
 
 // "31/12/2027" -> "2027-12-31", or null if not a real date.
@@ -95,16 +94,19 @@ export default function DriverDocumentsScreen({ navigation }) {
 
   if (!driver) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <Screen scroll={false}>
         <Loading />
-      </SafeAreaView>
+      </Screen>
     );
   }
 
   const alerts = expiryAlertsFor(driver);
+  const uploaded = DRIVER_DOCUMENTS.filter(
+    (item) => driver[item.urlField] || (item.urlField.startsWith('driverLicense') ? driver.driverLicenseUrl : null)
+  ).length;
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen scroll={false}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <ScreenHeader
@@ -113,8 +115,22 @@ export default function DriverDocumentsScreen({ navigation }) {
             onBack={() => navigation.goBack()}
           />
 
+          <Card tone="dark" style={styles.hero}>
+            <Text style={styles.heroLabel}>Uploaded</Text>
+            <Text style={styles.heroValue}>
+              {uploaded} of {DRIVER_DOCUMENTS.length}
+            </Text>
+            <View style={styles.heroPill}>
+              <StatusPill
+                status={alerts.length ? (alerts[0].status === 'expired' ? 'expired' : 'expiring') : 'valid'}
+                label={alerts.length ? `${alerts.length} to update` : 'All in date'}
+                dot
+              />
+            </View>
+          </Card>
+
           {alerts.length ? (
-            <Card tone={alerts[0].status === 'expired' ? 'danger' : 'warning'} style={{ marginTop: 20 }}>
+            <Card tone={alerts[0].status === 'expired' ? 'danger' : 'warning'} style={{ marginTop: SPACE[4] }}>
               <Text style={[TYPE.heading, { color: alerts[0].status === 'expired' ? COLORS.red : COLORS.amber }]}>
                 {alerts.length === 1 ? '1 document needs updating' : `${alerts.length} documents need updating`}
               </Text>
@@ -133,9 +149,9 @@ export default function DriverDocumentsScreen({ navigation }) {
               const url = driver[item.urlField] || (item.urlField.startsWith('driverLicense') ? driver.driverLicenseUrl : null);
               const isActive = active === item.id;
               return (
-                <Card key={item.id} style={{ marginBottom: 12 }}>
+                <Card key={item.id} style={{ marginBottom: SPACE[3] }}>
                   <View style={styles.docHead}>
-                    <View style={{ flex: 1, paddingRight: 10 }}>
+                    <View style={{ flex: 1, paddingRight: SPACE[3] }}>
                       <Text style={styles.docTitle}>{item.label}</Text>
                       <Text style={TYPE.small}>
                         {e ? describeExpiry(e) : 'No expiry date'}
@@ -146,7 +162,7 @@ export default function DriverDocumentsScreen({ navigation }) {
                   </View>
 
                   {isActive ? (
-                    <View style={{ marginTop: 14 }}>
+                    <View style={{ marginTop: SPACE[4] }}>
                       <Button
                         title={asset ? `Chosen: ${asset.name || 'document'}` : 'Choose file or photo'}
                         variant="secondary"
@@ -155,15 +171,15 @@ export default function DriverDocumentsScreen({ navigation }) {
                       />
                       {item.expiryKey ? (
                         <Field
-                          style={{ marginTop: 14 }}
+                          style={{ marginTop: SPACE[4] }}
                           label="New expiry date"
                           placeholder="DD/MM/YYYY"
                           keyboardType="numbers-and-punctuation"
                           value={expiryText}
                           onChangeText={setExpiryText}
                         />
-                      ) : <View style={{ height: 14 }} />}
-                      <View style={{ flexDirection: 'row', gap: 10 }}>
+                      ) : <View style={{ height: SPACE[4] }} />}
+                      <View style={{ flexDirection: 'row', gap: SPACE[3] }}>
                         <Button title="Cancel" variant="secondary" style={{ flex: 1 }} onPress={() => { setActive(null); setAsset(null); }} />
                         <Button title="Send for approval" style={{ flex: 1.5 }} loading={sending} onPress={() => send(item)} />
                       </View>
@@ -187,15 +203,18 @@ export default function DriverDocumentsScreen({ navigation }) {
           </Section>
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.surface },
-  content: { padding: 20, paddingBottom: 48 },
+  content: { padding: SPACE[5], paddingBottom: SPACE[12] },
+  hero: { marginTop: SPACE[4] },
+  heroLabel: { ...TYPE.label, color: COLORS.onDark },
+  heroValue: { ...TYPE.display, color: COLORS.white, marginTop: SPACE[1] },
+  heroPill: { marginTop: SPACE[3], flexDirection: 'row' },
   docHead: { flexDirection: 'row', alignItems: 'flex-start' },
-  docTitle: { fontSize: 15, fontWeight: '700', color: COLORS.ink, marginBottom: 2 },
-  docActions: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 6, marginRight: -10 },
-  smallBtn: { minHeight: 36, paddingHorizontal: 10 },
+  docTitle: { ...TYPE.subhead, marginBottom: 2 },
+  docActions: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: SPACE[2], marginRight: -SPACE[3] },
+  smallBtn: { minHeight: 36, paddingHorizontal: SPACE[3] },
 });

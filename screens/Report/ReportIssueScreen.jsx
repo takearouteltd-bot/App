@@ -5,15 +5,13 @@ import {
   StyleSheet,
   SafeAreaView,
   TouchableOpacity,
-  TextInput,
   ScrollView,
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Linking,
 } from 'react-native';
 import { Alert } from '../../components/ui/alert';
-import { Ionicons, MaterialIcons, FontAwesome5 } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
 import {
@@ -22,10 +20,11 @@ import {
   addDoc,
   serverTimestamp,
 } from 'firebase/firestore';
-import { COLORS } from '../../components/ui/kit';
+import {
+  COLORS, TYPE, SPACE, RADIUS, SHADOW,
+  ScreenHeader, Card, Field, Button, Footer,
+} from '../../components/ui/kit';
 
-const PRIMARY = COLORS.primary;
-const SECONDARY = COLORS.blue;
 const DANGER = COLORS.red;
 const WARNING = COLORS.amber;
 
@@ -35,7 +34,6 @@ const DRIVER_CATEGORIES = [
     label: 'Rider Issue',
     icon: 'person-outline',
     iconSet: 'Ionicons',
-    color: SECONDARY,
     subCategories: [
       { id: 'rude_behavior', label: 'Rude Behavior', severity: 'medium' },
       { id: 'wrong_pickup', label: 'Wrong Pickup Location', severity: 'low' },
@@ -50,7 +48,6 @@ const DRIVER_CATEGORIES = [
     label: 'Payment Issue',
     icon: 'cash-outline',
     iconSet: 'Ionicons',
-    color: PRIMARY,
     subCategories: [
       { id: 'fare_dispute', label: 'Fare Dispute', severity: 'medium' },
       { id: 'missing_earnings', label: 'Missing Earnings', severity: 'high' },
@@ -64,7 +61,6 @@ const DRIVER_CATEGORIES = [
     label: 'App / Technical',
     icon: 'bug-report',
     iconSet: 'MaterialIcons',
-    color: COLORS.muted,
     subCategories: [
       { id: 'gps_bug', label: 'GPS / Navigation Wrong', severity: 'medium' },
       { id: 'app_crash', label: 'App Crashed', severity: 'medium' },
@@ -78,7 +74,7 @@ const DRIVER_CATEGORIES = [
     label: 'Safety',
     icon: 'shield-alert',
     iconSet: 'MaterialIcons',
-    color: DANGER,
+    danger: true,
     subCategories: [
       { id: 'emergency', label: '🚨 EMERGENCY', severity: 'critical' },
       { id: 'accident', label: 'Accident', severity: 'critical' },
@@ -95,7 +91,6 @@ const DRIVER_ISSUE = {
   label: 'Driver Issue',
   icon: 'person-outline',
   iconSet: 'Ionicons',
-  color: SECONDARY,
   subCategories: [
     { id: 'rude_behavior', label: 'Rude Behaviour', severity: 'medium' },
     { id: 'unsafe_driving', label: 'Unsafe Driving', severity: 'high' },
@@ -112,7 +107,6 @@ const LOST_FOUND = {
   label: 'Lost & Found',
   icon: 'briefcase-outline',
   iconSet: 'Ionicons',
-  color: '#8B5CF6',
   subCategories: [
     { id: 'lost_item', label: 'I Left Something Behind', severity: 'medium' },
     { id: 'found_item', label: 'I Found an Item', severity: 'medium' },
@@ -139,12 +133,12 @@ export default function ReportIssueScreen() {
 
   const isEmergency = selectedSubCategory?.severity === 'critical';
 
-  const getSeverityColor = (severity) => {
+  // Only the two severities that need attention get a colour; the rest are grey.
+  const severityTone = (severity) => {
     switch (severity) {
-      case 'critical': return DANGER;
-      case 'high': return WARNING;
-      case 'medium': return SECONDARY;
-      default: return COLORS.muted;
+      case 'critical': return { fg: DANGER, bg: COLORS.redSoft };
+      case 'high': return { fg: WARNING, bg: COLORS.amberSoft };
+      default: return { fg: COLORS.muted, bg: COLORS.fill };
     }
   };
 
@@ -244,40 +238,36 @@ export default function ReportIssueScreen() {
       <SafeAreaView style={styles.container}>
         <View style={styles.successContainer}>
           <View style={styles.successIcon}>
-            <Ionicons name="checkmark-circle" size={64} color={PRIMARY} />
+            <Ionicons name="checkmark" size={44} color={COLORS.midnight} />
           </View>
-          <Text style={styles.successTitle}>Report Submitted</Text>
+          <Text style={[TYPE.title, { textAlign: 'center' }]}>Report Submitted</Text>
           <Text style={styles.successText}>
             Thank you for reporting this issue. Our team will review it and get back to you within 24 hours.
           </Text>
           {isEmergency && (
-            <View style={styles.emergencyNote}>
+            <Card tone="danger" style={styles.emergencyNote}>
               <Ionicons name="warning" size={20} color={DANGER} />
               <Text style={styles.emergencyNoteText}>
                 This is marked as urgent. A support agent will contact you shortly.
               </Text>
-            </View>
+            </Card>
           )}
           {isEmergency && (
-            <TouchableOpacity
-              style={[styles.doneButton, { backgroundColor: DANGER, marginBottom: 12 }]}
+            <Button
+              title="Call 999 now"
+              variant="danger"
+              icon="call"
+              style={styles.successButton}
               onPress={() => Linking.openURL('tel:999')}
-            >
-              <Text style={styles.doneButtonText}>Call 999 now</Text>
-            </TouchableOpacity>
+            />
           )}
-          <TouchableOpacity
-            style={styles.doneButton}
-            onPress={() => navigation.goBack()}
-          >
-            <Text style={styles.doneButtonText}>Done</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={{ marginTop: 14, padding: 8 }}
+          <Button title="Done" style={styles.successButton} onPress={() => navigation.goBack()} />
+          <Button
+            title="Track it in My reports"
+            variant="ghost"
+            style={{ marginTop: SPACE[2] }}
             onPress={() => navigation.navigate('MyReports', { role: reporterType })}
-          >
-            <Text style={{ color: SECONDARY, fontWeight: '700', fontSize: 15 }}>Track it in My reports</Text>
-          </TouchableOpacity>
+          />
         </View>
       </SafeAreaView>
     );
@@ -285,25 +275,25 @@ export default function ReportIssueScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={26} color={SECONDARY} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Report an Issue</Text>
-        <View style={{ width: 26 }} />
-      </View>
-
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
       >
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          {/* Header */}
+          <ScreenHeader
+            title="Report an Issue"
+            subtitle="Tell us what happened and support will get back to you."
+            onBack={() => navigation.goBack()}
+          />
+
           {/* Emergency Banner */}
           {isEmergency && (
             <TouchableOpacity
               style={styles.emergencyBanner}
               onPress={handleEmergencyCall}
+              activeOpacity={0.85}
+              accessibilityRole="button"
             >
               <Ionicons name="call" size={20} color={COLORS.white} />
               <Text style={styles.emergencyBannerText}>
@@ -315,8 +305,10 @@ export default function ReportIssueScreen() {
           {/* Trip Context */}
           {trip && (
             <View style={styles.tripContext}>
-              <Ionicons name="car-outline" size={18} color={SECONDARY} />
-              <Text style={styles.tripContextText}>
+              <View style={styles.tripIcon}>
+                <Ionicons name="car-outline" size={18} color={COLORS.midnight} />
+              </View>
+              <Text style={styles.tripContextText} numberOfLines={1}>
                 Reporting for trip: {trip.pickupLocation?.address?.substring(0, 30)}...
               </Text>
             </View>
@@ -325,34 +317,38 @@ export default function ReportIssueScreen() {
           {/* Step 1: Category */}
           <Text style={styles.sectionTitle}>1. Select Category</Text>
           <View style={styles.categoriesGrid}>
-            {CATEGORIES.map((cat) => (
-              <TouchableOpacity
-                key={cat.id}
-                style={[
-                  styles.categoryCard,
-                  selectedCategory?.id === cat.id && {
-                    borderColor: cat.color,
-                    borderWidth: 2,
-                    backgroundColor: cat.color + '10',
-                  },
-                ]}
-                onPress={() => {
-                  setSelectedCategory(cat);
-                  setSelectedSubCategory(null);
-                }}
-              >
-                <View style={[styles.categoryIcon, { backgroundColor: cat.color + '15' }]}>
-                  {cat.iconSet === 'Ionicons' ? (
-                    <Ionicons name={cat.icon} size={22} color={cat.color} />
-                  ) : (
-                    <MaterialIcons name={cat.icon} size={22} color={cat.color} />
-                  )}
-                </View>
-                <Text style={[styles.categoryLabel, { color: cat.color }]}>
-                  {cat.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
+            {CATEGORIES.map((cat) => {
+              const on = selectedCategory?.id === cat.id;
+              const iconColor = cat.danger ? DANGER : COLORS.midnight;
+              return (
+                <TouchableOpacity
+                  key={cat.id}
+                  style={[
+                    styles.categoryCard,
+                    on && styles.categoryCardOn,
+                    on && cat.danger && styles.categoryCardDanger,
+                  ]}
+                  onPress={() => {
+                    setSelectedCategory(cat);
+                    setSelectedSubCategory(null);
+                  }}
+                  activeOpacity={0.85}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: on }}
+                >
+                  <View style={[styles.categoryIcon, on && styles.categoryIconOn, cat.danger && styles.categoryIconDanger]}>
+                    {cat.iconSet === 'Ionicons' ? (
+                      <Ionicons name={cat.icon} size={22} color={on && !cat.danger ? COLORS.lime : iconColor} />
+                    ) : (
+                      <MaterialIcons name={cat.icon} size={22} color={on && !cat.danger ? COLORS.lime : iconColor} />
+                    )}
+                  </View>
+                  <Text style={[styles.categoryLabel, cat.danger && { color: DANGER }]}>
+                    {cat.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
 
           {/* Step 2: Sub-Category */}
@@ -360,45 +356,40 @@ export default function ReportIssueScreen() {
             <>
               <Text style={styles.sectionTitle}>2. What happened?</Text>
               <View style={styles.subCategoriesList}>
-                {selectedCategory.subCategories.map((sub) => (
-                  <TouchableOpacity
-                    key={sub.id}
-                    style={[
-                      styles.subCategoryCard,
-                      selectedSubCategory?.id === sub.id && {
-                        borderColor: getSeverityColor(sub.severity),
-                        borderWidth: 2,
-                        backgroundColor: getSeverityColor(sub.severity) + '08',
-                      },
-                      sub.severity === 'critical' && styles.criticalSubCategory,
-                    ]}
-                    onPress={() => setSelectedSubCategory(sub)}
-                  >
-                    <Text
+                {selectedCategory.subCategories.map((sub) => {
+                  const on = selectedSubCategory?.id === sub.id;
+                  const critical = sub.severity === 'critical';
+                  const tone = severityTone(sub.severity);
+                  return (
+                    <TouchableOpacity
+                      key={sub.id}
                       style={[
-                        styles.subCategoryLabel,
-                        sub.severity === 'critical' && { color: DANGER, fontWeight: '800' },
+                        styles.subCategoryCard,
+                        critical && styles.criticalSubCategory,
+                        on && styles.subCategoryCardOn,
+                        on && critical && styles.subCategoryCardCritical,
                       ]}
-                    >
-                      {sub.label}
-                    </Text>
-                    <View
-                      style={[
-                        styles.severityBadge,
-                        { backgroundColor: getSeverityColor(sub.severity) + '15' },
-                      ]}
+                      onPress={() => setSelectedSubCategory(sub)}
+                      activeOpacity={0.85}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: on }}
                     >
                       <Text
                         style={[
-                          styles.severityText,
-                          { color: getSeverityColor(sub.severity) },
+                          styles.subCategoryLabel,
+                          critical && { color: DANGER, fontWeight: '800' },
                         ]}
                       >
-                        {sub.severity}
+                        {sub.label}
                       </Text>
-                    </View>
-                  </TouchableOpacity>
-                ))}
+                      <View style={[styles.severityBadge, { backgroundColor: tone.bg }]}>
+                        <Text style={[styles.severityText, { color: tone.fg }]}>
+                          {sub.severity}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             </>
           )}
@@ -407,48 +398,32 @@ export default function ReportIssueScreen() {
           {selectedSubCategory && (
             <>
               <Text style={styles.sectionTitle}>3. Describe the issue</Text>
-              <TextInput
-                style={styles.descriptionInput}
+              <Field
                 multiline
                 numberOfLines={5}
                 placeholder="Please provide as much detail as possible..."
-                placeholderTextColor={COLORS.faint}
                 value={description}
                 onChangeText={setDescription}
-                textAlignVertical="top"
+                maxLength={500}
+                hint={`${description.length}/500`}
+                style={{ marginBottom: 0 }}
               />
-              <Text style={styles.charCount}>{description.length}/500</Text>
             </>
           )}
-
-          {/* Submit Button */}
-          {selectedSubCategory && (
-            <TouchableOpacity
-              style={[
-                styles.submitButton,
-                isEmergency && { backgroundColor: DANGER },
-                submitting && { opacity: 0.6 },
-              ]}
-              onPress={handleSubmit}
-              disabled={submitting}
-            >
-              {submitting ? (
-                <ActivityIndicator color={COLORS.white} />
-              ) : (
-                <>
-                  <Ionicons
-                    name={isEmergency ? 'warning' : 'send'}
-                    size={18}
-                    color={COLORS.white}
-                  />
-                  <Text style={styles.submitButtonText}>
-                    {isEmergency ? 'Submit Urgent Report' : 'Submit Report'}
-                  </Text>
-                </>
-              )}
-            </TouchableOpacity>
-          )}
         </ScrollView>
+
+        {/* Submit Button */}
+        {selectedSubCategory && (
+          <Footer>
+            <Button
+              title={isEmergency ? 'Submit Urgent Report' : 'Submit Report'}
+              icon={isEmergency ? 'warning' : 'send'}
+              variant={isEmergency ? 'danger' : 'primary'}
+              loading={submitting}
+              onPress={handleSubmit}
+            />
+          </Footer>
+        )}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -457,25 +432,11 @@ export default function ReportIssueScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.white,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F2F2F7',
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: SECONDARY,
+    backgroundColor: COLORS.surface,
   },
   content: {
-    padding: 16,
-    paddingBottom: 40,
+    padding: SPACE[5],
+    paddingBottom: SPACE[10],
   },
 
   // Emergency Banner
@@ -484,10 +445,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: DANGER,
-    paddingVertical: 14,
-    borderRadius: 14,
-    gap: 10,
-    marginBottom: 16,
+    paddingVertical: SPACE[4],
+    borderRadius: RADIUS.pill,
+    gap: SPACE[3],
+    marginTop: SPACE[4],
   },
   emergencyBannerText: {
     color: COLORS.white,
@@ -499,129 +460,125 @@ const styles = StyleSheet.create({
   tripContext: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surface,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 12,
-    marginBottom: 16,
-    gap: 10,
+    backgroundColor: COLORS.white,
+    paddingHorizontal: SPACE[3],
+    paddingVertical: SPACE[3],
+    borderRadius: RADIUS.lg,
+    marginTop: SPACE[4],
+    gap: SPACE[3],
+    ...SHADOW.card,
+  },
+  tripIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.fill,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   tripContextText: {
-    fontSize: 13,
-    color: COLORS.muted,
-    fontWeight: '500',
+    ...TYPE.small,
+    color: COLORS.inkSoft,
+    fontWeight: '600',
     flex: 1,
   },
 
   // Section Title
   sectionTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: COLORS.ink,
-    marginBottom: 12,
-    marginTop: 8,
+    ...TYPE.heading,
+    marginBottom: SPACE[3],
+    marginTop: SPACE[6],
   },
 
   // Categories
   categoriesGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 8,
+    gap: SPACE[3],
   },
   categoryCard: {
     width: '47%',
-    backgroundColor: COLORS.surface,
-    borderRadius: 16,
-    padding: 16,
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.lg,
+    padding: SPACE[4],
     alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#E5E5EA',
+    borderWidth: 2,
+    borderColor: COLORS.white,
+    ...SHADOW.card,
+  },
+  categoryCardOn: {
+    borderColor: COLORS.midnight,
+    backgroundColor: COLORS.limeSoft,
+  },
+  categoryCardDanger: {
+    borderColor: DANGER,
+    backgroundColor: COLORS.redSoft,
   },
   categoryIcon: {
     width: 48,
     height: 48,
-    borderRadius: 14,
+    borderRadius: 24,
+    backgroundColor: COLORS.fill,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: SPACE[3],
+  },
+  categoryIconOn: {
+    backgroundColor: COLORS.midnight,
+  },
+  categoryIconDanger: {
+    backgroundColor: COLORS.redSoft,
   },
   categoryLabel: {
     fontSize: 13,
     fontWeight: '700',
+    color: COLORS.midnight,
     textAlign: 'center',
   },
 
   // Sub-Categories
   subCategoriesList: {
-    gap: 8,
-    marginBottom: 8,
+    gap: SPACE[2],
   },
   subCategoryCard: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderWidth: 1.5,
-    borderColor: '#E5E5EA',
+    gap: SPACE[3],
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.md,
+    paddingHorizontal: SPACE[4],
+    paddingVertical: SPACE[4],
+    borderWidth: 2,
+    borderColor: COLORS.white,
+    ...SHADOW.card,
+  },
+  subCategoryCardOn: {
+    borderColor: COLORS.midnight,
+    backgroundColor: COLORS.limeSoft,
   },
   criticalSubCategory: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FECACA',
+    backgroundColor: COLORS.redSoft,
+    borderColor: COLORS.redSoft,
+  },
+  subCategoryCardCritical: {
+    borderColor: DANGER,
+    backgroundColor: COLORS.redSoft,
   },
   subCategoryLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.ink,
+    ...TYPE.callout,
+    flex: 1,
   },
   severityBadge: {
-    paddingHorizontal: 10,
+    paddingHorizontal: SPACE[3],
     paddingVertical: 4,
-    borderRadius: 10,
+    borderRadius: RADIUS.pill,
   },
   severityText: {
     fontSize: 11,
     fontWeight: '700',
     textTransform: 'uppercase',
-  },
-
-  // Description
-  descriptionInput: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 16,
-    padding: 16,
-    fontSize: 15,
-    color: COLORS.ink,
-    minHeight: 120,
-    borderWidth: 1.5,
-    borderColor: '#E5E5EA',
-  },
-  charCount: {
-    fontSize: 12,
-    color: COLORS.muted,
-    textAlign: 'right',
-    marginTop: 6,
-    fontWeight: '500',
-  },
-
-  // Submit
-  submitButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: PRIMARY,
-    paddingVertical: 16,
-    borderRadius: 16,
-    gap: 8,
-    marginTop: 20,
-  },
-  submitButtonText: {
-    color: COLORS.white,
-    fontWeight: '800',
-    fontSize: 16,
+    letterSpacing: 0.3,
   },
 
   // Success Screen
@@ -629,55 +586,39 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 32,
+    padding: SPACE[8],
   },
   successIcon: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: PRIMARY + '15',
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: COLORS.lime,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 24,
-  },
-  successTitle: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: COLORS.ink,
-    marginBottom: 12,
+    marginBottom: SPACE[6],
   },
   successText: {
-    fontSize: 15,
+    ...TYPE.body,
     color: COLORS.muted,
     textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 24,
+    marginTop: SPACE[3],
+    marginBottom: SPACE[6],
+  },
+  successButton: {
+    alignSelf: 'stretch',
+    marginTop: SPACE[3],
   },
   emergencyNote: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEF2F2',
-    padding: 16,
-    borderRadius: 12,
-    gap: 10,
-    marginBottom: 24,
+    gap: SPACE[3],
+    alignSelf: 'stretch',
+    marginBottom: SPACE[3],
   },
   emergencyNoteText: {
-    fontSize: 13,
+    ...TYPE.small,
     color: DANGER,
     fontWeight: '600',
     flex: 1,
-    lineHeight: 18,
-  },
-  doneButton: {
-    backgroundColor: PRIMARY,
-    paddingHorizontal: 48,
-    paddingVertical: 16,
-    borderRadius: 16,
-  },
-  doneButtonText: {
-    color: COLORS.white,
-    fontWeight: '800',
-    fontSize: 16,
   },
 });

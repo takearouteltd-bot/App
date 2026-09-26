@@ -1,14 +1,10 @@
 import React, { useState } from "react";
 import {
-  View,
   Text,
   StyleSheet,
-  SafeAreaView,
-  TextInput,
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
-  ActivityIndicator,
   ScrollView,
 } from "react-native";
 import { Alert } from "../../components/ui/alert";
@@ -19,7 +15,16 @@ import {
 } from "firebase/auth";
 import { auth, db } from "../../config/firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
-import { COLORS } from '../../components/ui/kit';
+import {
+  COLORS,
+  SPACE,
+  TYPE,
+  Button,
+  Field,
+  Screen,
+  ScreenHeader,
+  Segmented,
+} from '../../components/ui/kit';
 
 export default function EmailAuthScreen({
   navigation,
@@ -83,7 +88,7 @@ export default function EmailAuthScreen({
         }
 
         setUserRole(role);
-      
+
 
 
         // ✅ RIDER FLOW
@@ -171,8 +176,20 @@ export default function EmailAuthScreen({
     setConfirmPassword("");
   };
 
+  // The eye that shows or hides a password, inside its field.
+  const eye = (shown, toggle) => (
+    <TouchableOpacity
+      onPress={toggle}
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      accessibilityRole="button"
+      accessibilityLabel={shown ? "Hide password" : "Show password"}
+    >
+      <Ionicons name={shown ? "eye-off-outline" : "eye-outline"} size={20} color={COLORS.muted} />
+    </TouchableOpacity>
+  );
+
   return (
-    <SafeAreaView style={styles.container}>
+    <Screen scroll={false}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={{ flex: 1 }}
@@ -182,151 +199,66 @@ export default function EmailAuthScreen({
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          <TouchableOpacity
-            style={styles.backBtn}
-            onPress={() => navigation.goBack()}
-          >
-            <Ionicons name="arrow-back" size={28} color={COLORS.ink} />
-          </TouchableOpacity>
+          <ScreenHeader
+            title={isLogin ? "Welcome back" : "Create account"}
+            subtitle={isLogin ? "Sign in to continue" : "Sign up to get started"}
+            onBack={() => navigation.goBack()}
+          />
 
-          <Text style={styles.title}>
-            {isLogin ? "Welcome back" : "Create account"}
-          </Text>
-          <Text style={styles.subtitle}>
-            {isLogin ? "Sign in to continue" : "Sign up to get started"}
-          </Text>
+          <Segmented
+            style={styles.toggle}
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: "login", label: "Login" },
+              { value: "signup", label: "Sign Up" },
+            ]}
+          />
 
-          {/* Toggle */}
-          <View style={styles.toggleContainer}>
-            <TouchableOpacity
-              style={[styles.toggleBtn, isLogin && styles.toggleBtnActive]}
-              onPress={() => setMode("login")}
-            >
-              <Text
-                style={[styles.toggleText, isLogin && styles.toggleTextActive]}
-              >
-                Login
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.toggleBtn, !isLogin && styles.toggleBtnActive]}
-              onPress={() => setMode("signup")}
-            >
-              <Text
-                style={[
-                  styles.toggleText,
-                  !isLogin && styles.toggleTextActive,
-                ]}
-              >
-                Sign Up
-              </Text>
-            </TouchableOpacity>
-          </View>
+          <Field
+            label="Email Address"
+            left="mail-outline"
+            placeholder="Enter your email"
+            value={email}
+            onChangeText={setEmail}
+            keyboardType="email-address"
+            autoCapitalize="none"
+          />
 
-          {/* Email */}
-          <View style={styles.inputWrapper}>
-            <Text style={styles.label}>Email Address</Text>
-            <View style={styles.inputContainer}>
-              <Ionicons
-                name="mail-outline"
-                size={20}
-                color={COLORS.faint}
-                style={styles.inputIcon}
-              />
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your email"
-                placeholderTextColor={COLORS.faint}
-                value={email}
-                onChangeText={setEmail}
-                keyboardType="email-address"
-                autoCapitalize="none"
-              />
-            </View>
-          </View>
-
-          {/* Password */}
-          <View style={styles.inputWrapper}>
-            <Text style={styles.label}>Password</Text>
-            <View style={styles.inputContainer}>
-              <Ionicons
-                name="lock-closed-outline"
-                size={20}
-                color={COLORS.faint}
-                style={styles.inputIcon}
-              />
-              <TextInput
-                style={styles.input}
-                placeholder="Enter your password"
-                placeholderTextColor={COLORS.faint}
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry={!showPassword}
-              />
-              <TouchableOpacity
-                onPress={() => setShowPassword(!showPassword)}
-              >
-                <Ionicons
-                  name={showPassword ? "eye-off-outline" : "eye-outline"}
-                  size={20}
-                  color={COLORS.faint}
-                />
-              </TouchableOpacity>
-            </View>
-          </View>
+          <Field
+            label="Password"
+            left="lock-closed-outline"
+            placeholder="Enter your password"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry={!showPassword}
+            right={eye(showPassword, () => setShowPassword(!showPassword))}
+          />
 
           {!isLogin && (
-            <View style={styles.inputWrapper}>
-              <Text style={styles.label}>Confirm Password</Text>
-              <View style={styles.inputContainer}>
-                <Ionicons
-                  name="lock-closed-outline"
-                  size={20}
-                  color={COLORS.faint}
-                  style={styles.inputIcon}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Re-enter your password"
-                  placeholderTextColor={COLORS.faint}
-                  value={confirmPassword}
-                  onChangeText={setConfirmPassword}
-                  secureTextEntry={!showConfirmPassword}
-                />
-                <TouchableOpacity
-                  onPress={() =>
-                    setShowConfirmPassword(!showConfirmPassword)
-                  }
-                >
-                  <Ionicons
-                    name={
-                      showConfirmPassword
-                        ? "eye-off-outline"
-                        : "eye-outline"
-                    }
-                    size={20}
-                    color={COLORS.faint}
-                  />
-                </TouchableOpacity>
-              </View>
-            </View>
+            <Field
+              label="Confirm Password"
+              left="lock-closed-outline"
+              placeholder="Re-enter your password"
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              secureTextEntry={!showConfirmPassword}
+              right={eye(showConfirmPassword, () => setShowConfirmPassword(!showConfirmPassword))}
+            />
           )}
 
-          <TouchableOpacity
-            style={[styles.button, loading && { opacity: 0.7 }]}
+          <Button
+            title={isLogin ? "Login" : "Create Account"}
             onPress={handleSubmit}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator color={COLORS.onPrimary} />
-            ) : (
-              <Text style={styles.buttonText}>
-                {isLogin ? "Login" : "Create Account"}
-              </Text>
-            )}
-          </TouchableOpacity>
+            loading={loading}
+            style={{ marginTop: SPACE[2] }}
+          />
 
-          <TouchableOpacity style={styles.switchBtn} onPress={switchMode}>
+          <TouchableOpacity
+            style={styles.switchBtn}
+            onPress={switchMode}
+            accessibilityRole="button"
+          >
             <Text style={styles.switchText}>
               {isLogin
                 ? "Don't have an account? "
@@ -338,67 +270,15 @@ export default function EmailAuthScreen({
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.white },
-  content: { flexGrow: 1, paddingHorizontal: 25, paddingTop: 20, paddingBottom: 40 },
-  backBtn: { marginBottom: 30 },
-  title: { fontSize: 34, fontWeight: "bold", color: COLORS.ink, marginBottom: 8 },
-  subtitle: { fontSize: 15, color: COLORS.muted, marginBottom: 30 },
-
-  toggleContainer: {
-    flexDirection: "row",
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    padding: 4,
-    marginBottom: 30,
-  },
-  toggleBtn: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 10,
-    alignItems: "center",
-  },
-  toggleBtnActive: {
-    backgroundColor: COLORS.white,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  toggleText: { fontSize: 15, fontWeight: "600", color: COLORS.faint },
-  toggleTextActive: { color: COLORS.primary },
-
-  inputWrapper: { marginBottom: 18 },
-  label: { fontSize: 14, fontWeight: "600", color: COLORS.inkSoft, marginBottom: 8 },
-  inputContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: COLORS.lineStrong,
-    borderRadius: 12,
-    paddingHorizontal: 15,
-    height: 56,
-    backgroundColor: "#fafafa",
-  },
-  inputIcon: { marginRight: 10 },
-  input: { flex: 1, fontSize: 15, color: COLORS.ink },
-
-  button: {
-    backgroundColor: COLORS.primary,
-    paddingVertical: 18,
-    borderRadius: 999,
-    alignItems: "center",
-    marginBottom: 20,
-  },
-  buttonText: { color: COLORS.onPrimary, fontSize: 17, fontWeight: "bold" },
-
-  switchBtn: { alignItems: "center" },
-  switchText: { color: COLORS.muted, fontSize: 14 },
-  switchTextBold: { color: COLORS.primary, fontWeight: "bold" },
+  content: { flexGrow: 1, padding: SPACE[5], paddingBottom: SPACE[10] },
+  toggle: { marginTop: SPACE[5], marginBottom: SPACE[6] },
+  switchBtn: { alignItems: "center", paddingVertical: SPACE[5] },
+  switchText: { ...TYPE.small, color: COLORS.muted },
+  switchTextBold: { color: COLORS.midnight, fontWeight: "800" },
 });

@@ -19,7 +19,9 @@ import {
   addDoc, collection, doc, onSnapshot, orderBy, query, serverTimestamp, updateDoc,
 } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
-import { COLORS, TYPE, ScreenHeader, Card, Loading, formatWhen } from '../../components/ui/kit';
+import {
+  COLORS, TYPE, SPACE, RADIUS, SHADOW, ScreenHeader, Card, Loading, formatWhen,
+} from '../../components/ui/kit';
 
 const STEPS = [
   { key: 'open', label: 'Received' },
@@ -100,36 +102,45 @@ export default function ReportDetailScreen({ navigation, route }) {
           />
 
           {/* Progress: a real sequence, so the steps are shown in order. */}
-          <View style={styles.steps}>
-            {STEPS.map((s, i) => {
-              const done = i <= stepIndex;
-              return (
-                <View key={s.key} style={styles.step}>
-                  <View style={[styles.stepBar, done && { backgroundColor: closed ? COLORS.primary : COLORS.blue }]} />
-                  <Text style={[styles.stepLabel, done && { color: COLORS.navy, fontWeight: '700' }]}>{s.label}</Text>
-                </View>
-              );
-            })}
-          </View>
+          <Card style={{ marginTop: SPACE[5] }}>
+            <View style={styles.steps}>
+              {STEPS.map((s, i) => {
+                const done = i <= stepIndex;
+                const current = i === stepIndex;
+                const last = i === STEPS.length - 1;
+                return (
+                  <View key={s.key} style={styles.step}>
+                    <View style={styles.stepTrack}>
+                      <View style={[styles.stepDot, done && styles.stepDotDone, current && styles.stepDotCurrent]}>
+                        {done && !current ? <Ionicons name="checkmark" size={12} color={COLORS.midnight} /> : null}
+                      </View>
+                      {!last ? <View style={[styles.stepLine, i < stepIndex && styles.stepLineDone]} /> : null}
+                    </View>
+                    <Text style={[styles.stepLabel, done && styles.stepLabelDone]} numberOfLines={1}>{s.label}</Text>
+                  </View>
+                );
+              })}
+            </View>
+          </Card>
 
           {report.outcome ? (
-            <Card tone="success" style={{ marginTop: 20 }}>
-              <Text style={[TYPE.heading, { color: COLORS.success, marginBottom: 4 }]}>Outcome</Text>
+            <Card tone="success" style={{ marginTop: SPACE[4] }}>
+              <Text style={[TYPE.heading, { color: COLORS.success, marginBottom: SPACE[1] }]}>Outcome</Text>
               <Text style={TYPE.body}>{report.outcome}</Text>
             </Card>
           ) : null}
 
-          <Card style={{ marginTop: 16 }}>
-            <Text style={styles.metaLabel}>What you reported</Text>
+          <Card style={{ marginTop: SPACE[4] }}>
+            <Text style={[TYPE.label, { marginBottom: SPACE[2] }]}>What you reported</Text>
             <Text style={TYPE.body}>{report.description}</Text>
             {report.tripSnapshot?.pickup ? (
-              <Text style={[TYPE.small, { marginTop: 10 }]}>
+              <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>
                 Trip from {report.tripSnapshot.pickup} to {report.tripSnapshot.dropoff}
               </Text>
             ) : null}
           </Card>
 
-          <Text style={[TYPE.heading, { marginTop: 24, marginBottom: 10 }]}>Messages</Text>
+          <Text style={[TYPE.heading, { marginTop: SPACE[6], marginBottom: SPACE[3] }]}>Messages</Text>
           {messages.length === 0 ? (
             <Text style={TYPE.small}>
               {closed ? 'This case was closed without messages.' : 'Support will reply here. You can add more detail below.'}
@@ -154,20 +165,33 @@ export default function ReportDetailScreen({ navigation, route }) {
         {closed ? (
           <View style={styles.closedBar}>
             <Ionicons name="lock-closed-outline" size={16} color={COLORS.muted} />
-            <Text style={[TYPE.small, { marginLeft: 6 }]}>This case is closed. Report a new issue if you need more help.</Text>
+            <Text style={[TYPE.small, { marginLeft: SPACE[2], flex: 1 }]}>This case is closed. Report a new issue if you need more help.</Text>
           </View>
         ) : (
           <View style={styles.composer}>
-            <TextInput
-              style={styles.input}
-              placeholder="Write a message to support"
-              placeholderTextColor={COLORS.faint}
-              value={text}
-              onChangeText={setText}
-              multiline
-            />
-            <TouchableOpacity style={[styles.sendBtn, !text.trim() && { opacity: 0.4 }]} onPress={send} disabled={!text.trim() || sending}>
-              {sending ? <ActivityIndicator color={COLORS.white} /> : <Ionicons name="send" size={18} color={COLORS.white} />}
+            <View style={styles.inputWrap}>
+              <TextInput
+                style={styles.input}
+                placeholder="Write a message to support"
+                placeholderTextColor={COLORS.faint}
+                selectionColor={COLORS.midnight}
+                value={text}
+                onChangeText={setText}
+                multiline
+              />
+            </View>
+            <TouchableOpacity
+              style={[styles.sendBtn, !text.trim() && styles.sendBtnDisabled]}
+              onPress={send}
+              disabled={!text.trim() || sending}
+              accessibilityRole="button"
+              accessibilityLabel="Send"
+            >
+              {sending ? (
+                <ActivityIndicator color={COLORS.lime} />
+              ) : (
+                <Ionicons name="send" size={18} color={text.trim() ? COLORS.lime : COLORS.faint} />
+              )}
             </TouchableOpacity>
           </View>
         )}
@@ -178,28 +202,50 @@ export default function ReportDetailScreen({ navigation, route }) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.surface },
-  content: { padding: 20, paddingBottom: 24 },
-  steps: { flexDirection: 'row', gap: 6, marginTop: 20 },
+  content: { padding: SPACE[5], paddingBottom: SPACE[6] },
+
+  steps: { flexDirection: 'row' },
   step: { flex: 1 },
-  stepBar: { height: 6, borderRadius: 3, backgroundColor: COLORS.line, marginBottom: 6 },
-  stepLabel: { fontSize: 12, color: COLORS.muted },
-  metaLabel: { fontSize: 12, fontWeight: '700', color: COLORS.muted, marginBottom: 6 },
-  bubbleWrap: { marginBottom: 12 },
-  bubble: { maxWidth: '85%', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 16 },
-  mine: { backgroundColor: COLORS.blue, borderBottomRightRadius: 4 },
-  theirs: { backgroundColor: COLORS.white, borderWidth: 1, borderColor: COLORS.line, borderBottomLeftRadius: 4 },
-  bubbleMeta: { fontSize: 11, color: COLORS.muted, marginTop: 4 },
+  stepTrack: { flexDirection: 'row', alignItems: 'center', marginBottom: SPACE[2] },
+  stepDot: {
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: COLORS.fill,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  stepDotDone: { backgroundColor: COLORS.lime },
+  stepDotCurrent: { backgroundColor: COLORS.lime, borderWidth: 3, borderColor: COLORS.midnight },
+  stepLine: { flex: 1, height: 3, borderRadius: 2, backgroundColor: COLORS.fill, marginHorizontal: SPACE[1] },
+  stepLineDone: { backgroundColor: COLORS.midnight },
+  stepLabel: { ...TYPE.caption, color: COLORS.muted },
+  stepLabelDone: { color: COLORS.midnight, fontWeight: '700' },
+
+  bubbleWrap: { marginBottom: SPACE[3] },
+  bubble: { maxWidth: '85%', paddingHorizontal: SPACE[4], paddingVertical: SPACE[3], borderRadius: RADIUS.lg },
+  mine: { backgroundColor: COLORS.midnight, borderBottomRightRadius: RADIUS.sm },
+  theirs: { backgroundColor: COLORS.white, borderBottomLeftRadius: RADIUS.sm, ...SHADOW.card },
+  bubbleMeta: { ...TYPE.caption, marginTop: SPACE[1] },
+
   composer: {
-    flexDirection: 'row', alignItems: 'flex-end', gap: 10, padding: 12,
+    flexDirection: 'row', alignItems: 'flex-end', gap: SPACE[2],
+    paddingHorizontal: SPACE[3], paddingVertical: SPACE[3],
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line, backgroundColor: COLORS.white,
   },
-  input: {
-    flex: 1, maxHeight: 120, minHeight: 44, borderWidth: 1, borderColor: COLORS.line, borderRadius: 14,
-    paddingHorizontal: 14, paddingTop: 11, paddingBottom: 11, fontSize: 15, color: COLORS.ink,
+  inputWrap: {
+    flex: 1, backgroundColor: COLORS.fill, borderRadius: RADIUS.pill, minHeight: 48, justifyContent: 'center',
   },
-  sendBtn: { width: 44, height: 44, borderRadius: 14, backgroundColor: COLORS.primary, alignItems: 'center', justifyContent: 'center' },
+  input: {
+    maxHeight: 120, minHeight: 48,
+    paddingHorizontal: SPACE[4],
+    paddingTop: Platform.OS === 'ios' ? 14 : 12, paddingBottom: Platform.OS === 'ios' ? 14 : 12,
+    fontSize: 16, color: COLORS.ink,
+  },
+  sendBtn: {
+    width: 48, height: 48, borderRadius: 24, backgroundColor: COLORS.midnight,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  sendBtnDisabled: { backgroundColor: COLORS.fill },
   closedBar: {
-    flexDirection: 'row', alignItems: 'center', padding: 16,
+    flexDirection: 'row', alignItems: 'center', padding: SPACE[4],
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line, backgroundColor: COLORS.white,
   },
 });

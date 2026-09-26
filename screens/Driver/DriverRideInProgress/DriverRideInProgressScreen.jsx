@@ -5,7 +5,6 @@ import {
   StyleSheet,
   SafeAreaView,
   TouchableOpacity,
-  ActivityIndicator,
   Animated,
   Dimensions,
   StatusBar,
@@ -23,7 +22,10 @@ import { currencySymbol } from '../../../utils/appConfig';
 import SafetyButton from '../../../components/SafetyButton';
 import { confirmMaskedCall } from '../../../utils/calling';
 import { useWaitingClock } from '../../../utils/useWaitingClock';
-import { COLORS, TYPE, SPACE, RADIUS, SHADOW, Avatar, IconButton, RouteLine, isCoord, validCoords } from '../../../components/ui/kit';
+import {
+  COLORS, TYPE, SPACE, RADIUS, SHADOW,
+  Avatar, Button, IconButton, RouteLine, Loading, StatRow, isCoord, validCoords,
+} from '../../../components/ui/kit';
 
 const { height } = Dimensions.get('window');
 
@@ -273,9 +275,8 @@ export default function DriverRideInProgressScreen() {
 
   if (!ride || !driverLocation) {
     return (
-      <SafeAreaView style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-        <Text style={[TYPE.small, { marginTop: SPACE[4] }]}>Loading the job…</Text>
+      <SafeAreaView style={styles.container}>
+        <Loading label="Loading the job…" />
       </SafeAreaView>
     );
   }
@@ -312,14 +313,14 @@ export default function DriverRideInProgressScreen() {
           <View style={styles.markerWrap}>
             <Animated.View style={[styles.markerPulse, { transform: [{ scale: pulseAnim }] }]} />
             <View style={styles.driverMarker}>
-              <Ionicons name="car-sport" size={16} color={COLORS.white} />
+              <Ionicons name="car-sport" size={16} color={COLORS.lime} />
             </View>
           </View>
         </Marker>
 
         {isCoord(pickupLocation) ? (
           <Marker coordinate={pickupLocation} anchor={{ x: 0.5, y: 1 }}>
-            <Ionicons name="location" size={32} color={COLORS.primary} />
+            <Ionicons name="location" size={32} color={COLORS.midnight} />
           </Marker>
         ) : null}
 
@@ -328,7 +329,7 @@ export default function DriverRideInProgressScreen() {
           origin={driverLocation}
           destination={pickupLocation}
           strokeWidth={4}
-          strokeColor={COLORS.primary}
+          strokeColor={COLORS.midnight}
           onReady={(result) => {
             setEta(Math.ceil(result.duration));
             setDistance(result.distance.toFixed(1));
@@ -339,19 +340,7 @@ export default function DriverRideInProgressScreen() {
 
       <SafeAreaView style={styles.topBar} pointerEvents="box-none">
         <IconButton icon="chevron-back" onPress={goHome} accessibilityLabel="Back to home" />
-        {eta ? (
-          <View style={styles.etaPill}>
-            <Text style={styles.etaText}>{eta} min</Text>
-            {distance ? (
-              <>
-                <View style={styles.pillDivider} />
-                <Text style={styles.etaText}>{distance} km</Text>
-              </>
-            ) : null}
-          </View>
-        ) : (
-          <View />
-        )}
+        <View />
         <SafetyButton role="driver" rideId={rideId} />
       </SafeAreaView>
 
@@ -371,7 +360,7 @@ export default function DriverRideInProgressScreen() {
             <Text style={TYPE.heading}>{arrived ? 'At the pickup' : 'Heading to pickup'}</Text>
             {waiting ? (
               <Text
-                style={[styles.waiting, { color: waiting.inFreeTime ? COLORS.blue : COLORS.amber }]}
+                style={[styles.waiting, { color: waiting.inFreeTime ? COLORS.limeInk : COLORS.amber }]}
               >
                 {waiting.label}
               </Text>
@@ -381,26 +370,19 @@ export default function DriverRideInProgressScreen() {
               </Text>
             )}
           </View>
-          <Text style={styles.fare}>
+          <Text style={TYPE.figure}>
             {currencySymbol()}
             {Number(fare?.total || 0).toFixed(2)}
           </Text>
         </View>
 
         {/* Stays reachable even with the sheet collapsed. */}
-        <TouchableOpacity
-          style={[styles.action, loadingAction && { opacity: 0.6 }]}
+        <Button
+          title={action.label}
           onPress={action.onPress}
           disabled={loadingAction}
-          activeOpacity={0.9}
-          accessibilityRole="button"
-        >
-          {loadingAction ? (
-            <ActivityIndicator color={COLORS.onPrimary} />
-          ) : (
-            <Text style={styles.actionText}>{action.label}</Text>
-          )}
-        </TouchableOpacity>
+          loading={loadingAction}
+        />
 
         {!isMinimized ? (
           <ScrollView
@@ -408,26 +390,41 @@ export default function DriverRideInProgressScreen() {
             contentContainerStyle={{ paddingBottom: SPACE[5] }}
             showsVerticalScrollIndicator={false}
           >
+            {eta ? (
+              <StatRow
+                style={styles.stats}
+                items={[
+                  { value: `${eta} min`, label: 'To pickup' },
+                  distance ? { value: `${distance} km`, label: 'Distance' } : null,
+                ]}
+              />
+            ) : null}
+
             {riderData ? (
               <View style={styles.riderCard}>
-                <Avatar
-                  uri={riderData.profileImage || riderData.photoURL}
-                  name={riderData.fullName || riderData.name}
-                  size={48}
-                />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.riderName} numberOfLines={1}>
-                    {riderData.fullName || riderData.name || 'Passenger'}
-                  </Text>
-                  <Text style={TYPE.small}>
-                    {riderRating ? `★ ${riderRating}` : 'No rating yet'}
-                  </Text>
+                <View style={styles.riderRow}>
+                  <Avatar
+                    uri={riderData.profileImage || riderData.photoURL}
+                    name={riderData.fullName || riderData.name}
+                    size={48}
+                  />
+                  <View style={{ flex: 1 }}>
+                    <Text style={TYPE.subhead} numberOfLines={1}>
+                      {riderData.fullName || riderData.name || 'Passenger'}
+                    </Text>
+                    <View style={styles.ratingRow}>
+                      {riderRating ? <Ionicons name="star" size={13} color={COLORS.star} /> : null}
+                      <Text style={TYPE.small}>{riderRating ? riderRating : 'No rating yet'}</Text>
+                    </View>
+                  </View>
                 </View>
                 <View style={styles.contact}>
-                  <IconButton
-                    icon="chatbubble-ellipses"
-                    size={42}
-                    accessibilityLabel="Message your passenger"
+                  <Button
+                    size="small"
+                    variant="secondary"
+                    icon="chatbubble-ellipses-outline"
+                    title="Message"
+                    style={{ flex: 1 }}
                     onPress={() =>
                       navigation.navigate('ChatScreen', {
                         rideId,
@@ -438,11 +435,12 @@ export default function DriverRideInProgressScreen() {
                       })
                     }
                   />
-                  <IconButton
-                    icon="call"
-                    size={42}
-                    tone="dark"
-                    accessibilityLabel="Call your passenger"
+                  <Button
+                    size="small"
+                    variant="secondary"
+                    icon="call-outline"
+                    title="Call"
+                    style={{ flex: 1 }}
                     onPress={() => confirmMaskedCall(rideId, 'your passenger')}
                   />
                 </View>
@@ -458,16 +456,20 @@ export default function DriverRideInProgressScreen() {
             </View>
 
             {!arrived ? (
-              <TouchableOpacity style={styles.secondary} onPress={handleNavigate} activeOpacity={0.8}>
-                <Ionicons name="navigate" size={18} color={COLORS.navy} />
-                <Text style={styles.secondaryText}>Open in Maps</Text>
-              </TouchableOpacity>
+              <Button
+                title="Open in Maps"
+                icon="navigate"
+                variant="dark"
+                onPress={handleNavigate}
+                style={styles.secondary}
+              />
             ) : null}
 
             <TouchableOpacity
               style={styles.giveBack}
               onPress={arrived ? handleNoShow : handleCancel}
               activeOpacity={0.7}
+              accessibilityRole="button"
             >
               <Text style={styles.giveBackText}>
                 {arrived ? 'Passenger has not turned up' : 'Give this job back'}
@@ -481,27 +483,26 @@ export default function DriverRideInProgressScreen() {
 }
 
 const customMapStyle = [
-  { elementType: 'geometry', stylers: [{ color: '#F5F7FA' }] },
+  { elementType: 'geometry', stylers: [{ color: COLORS.surface }] },
   { elementType: 'labels.text.fill', stylers: [{ color: COLORS.muted }] },
   { featureType: 'poi', stylers: [{ visibility: 'off' }] },
   { featureType: 'road', elementType: 'geometry', stylers: [{ color: COLORS.white }] },
   { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: COLORS.line }] },
   { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#DCE6F2' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: COLORS.fill }] },
 ];
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.surface },
-  centered: { alignItems: 'center', justifyContent: 'center' },
 
   markerWrap: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center' },
   markerPulse: {
     position: 'absolute', width: 46, height: 46, borderRadius: 23,
-    backgroundColor: COLORS.navy, opacity: 0.18,
+    backgroundColor: COLORS.lime, opacity: 0.45,
   },
   driverMarker: {
     width: 32, height: 32, borderRadius: 16,
-    backgroundColor: COLORS.navy,
+    backgroundColor: COLORS.midnight,
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 2, borderColor: COLORS.white,
   },
@@ -511,14 +512,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingTop: SPACE[3],
   },
-  etaPill: {
-    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
-    backgroundColor: COLORS.white, height: 40,
-    paddingHorizontal: SPACE[4], borderRadius: RADIUS.pill,
-    ...SHADOW.float,
-  },
-  etaText: { fontSize: 13, fontWeight: '700', color: COLORS.navy },
-  pillDivider: { width: StyleSheet.hairlineWidth, height: 16, backgroundColor: COLORS.line },
 
   sheet: {
     position: 'absolute', left: 0, right: 0, bottom: 0,
@@ -528,25 +521,20 @@ const styles = StyleSheet.create({
     ...SHADOW.sheet,
   },
   handle: { alignItems: 'center', paddingVertical: SPACE[3] },
-  handleBar: { width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.line },
+  handleBar: { width: 44, height: 5, borderRadius: 3, backgroundColor: COLORS.lineStrong },
 
   headRow: { flexDirection: 'row', alignItems: 'flex-start', gap: SPACE[4], marginBottom: SPACE[4] },
   waiting: { fontSize: 13, fontWeight: '700', marginTop: 2 },
-  fare: { fontSize: 24, fontWeight: '800', color: COLORS.navy, letterSpacing: -0.6 },
 
-  action: {
-    minHeight: 54, borderRadius: 999,
-    backgroundColor: COLORS.primary,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  actionText: { fontSize: 16, fontWeight: '800', color: COLORS.onPrimary, letterSpacing: -0.2 },
+  stats: { marginTop: SPACE[5] },
 
   riderCard: {
-    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
     marginTop: SPACE[5], paddingTop: SPACE[5],
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
+    gap: SPACE[4],
   },
-  riderName: { fontSize: 16, fontWeight: '700', color: COLORS.navy },
+  riderRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[3] },
+  ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
   contact: { flexDirection: 'row', gap: SPACE[2] },
 
   journey: {
@@ -554,13 +542,7 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
   },
 
-  secondary: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACE[2],
-    minHeight: 50, marginTop: SPACE[5],
-    borderRadius: RADIUS.md,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.lineStrong,
-  },
-  secondaryText: { fontSize: 15, fontWeight: '700', color: COLORS.navy },
+  secondary: { marginTop: SPACE[5] },
 
   giveBack: { alignItems: 'center', paddingVertical: SPACE[5] },
   giveBackText: { fontSize: 14, fontWeight: '700', color: COLORS.red },

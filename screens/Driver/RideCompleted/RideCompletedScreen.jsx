@@ -2,12 +2,13 @@
 // the passenger, and back to the road.
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, SafeAreaView, ScrollView, Animated, Easing } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { doc, onSnapshot, getDoc } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 import { money } from '../../../utils/appConfig';
 import StarRating from '../../../components/StarRating';
-import { COLORS, TYPE, Card, Button, Loading } from '../../../components/ui/kit';
+import { COLORS, TYPE, SPACE, SHADOW, Card, Button, Loading, RouteLine, StatRow } from '../../../components/ui/kit';
 
 export default function RideCompletedScreen() {
   const route = useRoute();
@@ -66,38 +67,42 @@ export default function RideCompletedScreen() {
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Animated.View style={[styles.hero, { opacity: fade, transform: [{ translateY: rise }] }]}>
-          <Text style={styles.heroLabel}>Trip complete</Text>
-          <Text style={styles.heroAmount}>{money(earned, currency)}</Text>
-          <Text style={styles.heroSub}>
-            {settled ? 'Added to your wallet' : 'Final amount confirming, including any waiting time'}
-          </Text>
+        <Animated.View style={{ opacity: fade, transform: [{ translateY: rise }] }}>
+          <Card tone="dark" style={styles.hero}>
+            <View style={styles.heroBadge}>
+              <Ionicons name="checkmark" size={22} color={COLORS.midnight} />
+            </View>
+            <Text style={styles.heroLabel}>Trip complete</Text>
+            <Text style={styles.heroAmount}>{money(earned, currency)}</Text>
+            <Text style={styles.heroSub}>
+              {settled ? 'Added to your wallet' : 'Final amount confirming, including any waiting time'}
+            </Text>
+          </Card>
         </Animated.View>
 
-        <Card style={{ marginTop: 16 }}>
-          <View style={styles.route}>
-            <View style={styles.rail}>
-              <View style={[styles.dot, { backgroundColor: COLORS.lime }]} />
-              <View style={styles.line} />
-              <View style={[styles.dot, styles.square]} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.place} numberOfLines={2}>{ride.pickupLocation?.address || 'Pickup'}</Text>
-              <View style={{ height: 16 }} />
-              <Text style={styles.place} numberOfLines={2}>{ride.dropoffLocation?.address || 'Drop-off'}</Text>
-            </View>
-          </View>
+        <Card style={{ marginTop: SPACE[4] }}>
+          <RouteLine
+            compact
+            pickup={ride.pickupLocation?.address || 'Pickup'}
+            dropoff={ride.dropoffLocation?.address || 'Drop-off'}
+          />
           {distance || duration ? (
-            <Text style={[TYPE.small, { marginTop: 14 }]}>{[distance, duration].filter(Boolean).join(', ')}</Text>
+            <StatRow
+              style={styles.stats}
+              items={[
+                distance ? { value: distance, label: 'Distance' } : null,
+                duration ? { value: duration, label: 'Duration' } : null,
+              ]}
+            />
           ) : null}
         </Card>
 
         {lines.length ? (
-          <Card style={{ marginTop: 12 }}>
+          <Card style={{ marginTop: SPACE[3] }}>
             {lines.map(([label, value]) => (
               <View key={label} style={styles.lineRow}>
-                <Text style={TYPE.body}>{label}</Text>
-                <Text style={TYPE.body}>{money(Number(value) || 0, currency)}</Text>
+                <Text style={[TYPE.body, { color: COLORS.inkSoft }]}>{label}</Text>
+                <Text style={TYPE.callout}>{money(Number(value) || 0, currency)}</Text>
               </View>
             ))}
             <View style={[styles.lineRow, styles.totalRow]}>
@@ -108,7 +113,7 @@ export default function RideCompletedScreen() {
         ) : null}
 
         {ride.riderId ? (
-          <Card style={{ marginTop: 12 }}>
+          <Card style={{ marginTop: SPACE[3] }}>
             <StarRating rideId={rideId} who="driver" existing={ride.riderRating} prompt={`How was ${riderName}?`} />
           </Card>
         ) : null}
@@ -116,7 +121,7 @@ export default function RideCompletedScreen() {
         <Button
           title="Ready for the next trip"
           icon="arrow-forward"
-          style={{ marginTop: 20 }}
+          style={{ marginTop: SPACE[5] }}
           onPress={() => navigation.reset({ index: 0, routes: [{ name: 'DriverHome' }] })}
         />
       </ScrollView>
@@ -126,18 +131,23 @@ export default function RideCompletedScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.surface },
-  content: { padding: 20, paddingBottom: 40 },
-  hero: { backgroundColor: COLORS.navy, borderRadius: 24, padding: 26, marginTop: 8 },
-  heroLabel: { fontSize: 15, fontWeight: '600', color: COLORS.onDark },
-  heroAmount: { fontSize: 48, fontWeight: '800', color: COLORS.white, letterSpacing: -1.5, marginTop: 6 },
-  heroSub: { fontSize: 13, color: COLORS.onDark, marginTop: 6, lineHeight: 18 },
-  route: { flexDirection: 'row', gap: 12 },
-  rail: { alignItems: 'center', paddingTop: 5 },
-  dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.navy },
-  square: { borderRadius: 2 },
-  line: { width: 2, flex: 1, minHeight: 20, backgroundColor: COLORS.line, marginVertical: 3 },
-  place: { fontSize: 15, fontWeight: '600', color: COLORS.ink, lineHeight: 20 },
-  lineRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 },
-  totalRow: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line, marginTop: 6, paddingTop: 12 },
-  totalLabel: { fontSize: 17, fontWeight: '800', color: COLORS.navy },
+  content: { padding: SPACE[5], paddingBottom: SPACE[10] },
+  hero: { marginTop: SPACE[2], padding: SPACE[6], ...SHADOW.float },
+  heroBadge: {
+    width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.lime,
+    alignItems: 'center', justifyContent: 'center', marginBottom: SPACE[4],
+  },
+  heroLabel: { ...TYPE.label, color: COLORS.lime },
+  heroAmount: { ...TYPE.display, fontSize: 48, color: COLORS.white, marginTop: SPACE[2] },
+  heroSub: { ...TYPE.small, color: COLORS.onDark, marginTop: SPACE[2] },
+  stats: {
+    marginTop: SPACE[4], paddingTop: SPACE[4],
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
+  },
+  lineRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: SPACE[2] },
+  totalRow: {
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
+    marginTop: SPACE[2], paddingTop: SPACE[3],
+  },
+  totalLabel: { ...TYPE.subhead, fontSize: 17, fontWeight: '800', color: COLORS.midnight },
 });

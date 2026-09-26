@@ -1,14 +1,14 @@
 // Passenger's end-of-trip screen: the amount paid, the journey, a rating for
 // the driver, the receipt and the way back home.
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, Animated, Easing } from 'react-native';
+import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { doc, onSnapshot, getDoc } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { money } from '../../utils/appConfig';
 import EmailReceiptButton from '../../components/EmailReceiptButton';
 import StarRating from '../../components/StarRating';
-import { COLORS, TYPE, Card, Button, Loading } from '../../components/ui/kit';
+import { COLORS, TYPE, SPACE, Screen, Card, Button, Loading, RouteLine } from '../../components/ui/kit';
 
 export default function RiderRideCompletedScreen() {
   const route = useRoute();
@@ -49,9 +49,9 @@ export default function RiderRideCompletedScreen() {
 
   if (!ride) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <Screen scroll={false}>
         <Loading />
-      </SafeAreaView>
+      </Screen>
     );
   }
 
@@ -77,9 +77,9 @@ export default function RiderRideCompletedScreen() {
   const driverName = driver?.fullName || driver?.firstName || 'your driver';
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Animated.View style={[styles.hero, { opacity: fade, transform: [{ translateY: rise }] }]}>
+    <Screen>
+      <Animated.View style={{ opacity: fade, transform: [{ translateY: rise }] }}>
+        <Card tone="dark" style={styles.hero}>
           <Text style={styles.heroLabel}>
             {isCash || isPaid ? 'Trip complete' : isFailed ? 'Payment did not go through' : 'Finishing up'}
           </Text>
@@ -98,83 +98,65 @@ export default function RiderRideCompletedScreen() {
               : 'Confirming your payment. You can book your next ride while we finish.'}
           </Text>
           {isPending && !isCash && !slow ? <View style={styles.pendingBar} /> : null}
-        </Animated.View>
-
-        {/* Journey */}
-        <Card style={{ marginTop: 16 }}>
-          <View style={styles.route}>
-            <View style={styles.rail}>
-              <View style={[styles.dot, { backgroundColor: COLORS.lime }]} />
-              <View style={styles.line} />
-              <View style={[styles.dot, styles.square]} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.place} numberOfLines={2}>{ride.pickupLocation?.address || 'Pickup'}</Text>
-              <View style={{ height: 16 }} />
-              <Text style={styles.place} numberOfLines={2}>{ride.dropoffLocation?.address || 'Drop-off'}</Text>
-            </View>
-          </View>
-          {distance || duration ? (
-            <Text style={[TYPE.small, { marginTop: 14 }]}>{[distance, duration].filter(Boolean).join(', ')}</Text>
-          ) : null}
         </Card>
+      </Animated.View>
 
-        {/* Breakdown */}
-        {lines.length ? (
-          <Card style={{ marginTop: 12 }}>
-            {lines.map(([label, value]) => (
-              <View key={label} style={styles.lineRow}>
-                <Text style={TYPE.body}>{label}</Text>
-                <Text style={[TYPE.body, value < 0 && { color: COLORS.success }]}>
-                  {value < 0 ? '-' : ''}{money(Math.abs(Number(value) || 0), currency)}
-                </Text>
-              </View>
-            ))}
-            <View style={[styles.lineRow, styles.totalRow]}>
-              <Text style={styles.totalLabel}>Total</Text>
-              <Text style={styles.totalLabel}>{money(total, currency)}</Text>
+      {/* Journey */}
+      <Card style={{ marginTop: SPACE[4] }}>
+        <RouteLine pickup={ride.pickupLocation?.address || 'Pickup'} dropoff={ride.dropoffLocation?.address || 'Drop-off'} />
+        {distance || duration ? (
+          <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>{[distance, duration].filter(Boolean).join(', ')}</Text>
+        ) : null}
+      </Card>
+
+      {/* Breakdown */}
+      {lines.length ? (
+        <Card style={{ marginTop: SPACE[3] }}>
+          {lines.map(([label, value]) => (
+            <View key={label} style={styles.lineRow}>
+              <Text style={TYPE.small}>{label}</Text>
+              <Text style={[TYPE.callout, value < 0 && { color: COLORS.success }]}>
+                {value < 0 ? '-' : ''}{money(Math.abs(Number(value) || 0), currency)}
+              </Text>
             </View>
-          </Card>
-        ) : null}
+          ))}
+          <View style={[styles.lineRow, styles.totalRow]}>
+            <Text style={styles.totalLabel}>Total</Text>
+            <Text style={styles.totalValue}>{money(total, currency)}</Text>
+          </View>
+        </Card>
+      ) : null}
 
-        {/* Rating */}
-        {ride.driverId ? (
-          <Card style={{ marginTop: 12 }}>
-            <StarRating rideId={rideId} who="rider" existing={ride.driverRating} prompt={`How was ${driverName}?`} />
-          </Card>
-        ) : null}
+      {/* Rating */}
+      {ride.driverId ? (
+        <Card style={{ marginTop: SPACE[3] }}>
+          <StarRating rideId={rideId} who="rider" existing={ride.driverRating} prompt={`How was ${driverName}?`} />
+        </Card>
+      ) : null}
 
-        <View style={{ marginTop: 20, gap: 10 }}>
-          <EmailReceiptButton rideId={rideId} />
-          {/* Never locked: payment finishes on the server whether or not the
-              passenger waits here. It used to stay disabled until payment
-              confirmed, which froze the app for good if it never did. */}
-          <Button
-            title="Book another ride"
-            icon="arrow-forward"
-            onPress={() => navigation.reset({ index: 0, routes: [{ name: 'HomeScreen' }] })}
-          />
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+      <View style={{ marginTop: SPACE[5], gap: SPACE[3] }}>
+        <EmailReceiptButton rideId={rideId} />
+        {/* Never locked: payment finishes on the server whether or not the
+            passenger waits here. It used to stay disabled until payment
+            confirmed, which froze the app for good if it never did. */}
+        <Button
+          title="Book another ride"
+          icon="arrow-forward"
+          onPress={() => navigation.reset({ index: 0, routes: [{ name: 'HomeScreen' }] })}
+        />
+      </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.surface },
-  content: { padding: 20, paddingBottom: 40 },
-  hero: { backgroundColor: COLORS.navy, borderRadius: 24, padding: 26, marginTop: 8, overflow: 'hidden' },
-  heroLabel: { fontSize: 15, fontWeight: '600', color: COLORS.onDark },
-  heroAmount: { fontSize: 48, fontWeight: '800', color: COLORS.white, letterSpacing: -1.5, marginTop: 6 },
-  heroSub: { fontSize: 13, color: COLORS.onDark, marginTop: 6, lineHeight: 18 },
-  pendingBar: { height: 3, borderRadius: 2, backgroundColor: COLORS.limeDeep, opacity: 0.7, marginTop: 18, width: '40%' },
-  route: { flexDirection: 'row', gap: 12 },
-  rail: { alignItems: 'center', paddingTop: 5 },
-  dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.navy },
-  square: { borderRadius: 2 },
-  line: { width: 2, flex: 1, minHeight: 20, backgroundColor: COLORS.line, marginVertical: 3 },
-  place: { fontSize: 15, fontWeight: '600', color: COLORS.ink, lineHeight: 20 },
-  lineRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 6 },
-  totalRow: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line, marginTop: 6, paddingTop: 12 },
-  totalLabel: { fontSize: 17, fontWeight: '800', color: COLORS.navy },
+  hero: { padding: SPACE[6], marginTop: SPACE[2], overflow: 'hidden' },
+  heroLabel: { ...TYPE.label, color: COLORS.lime },
+  heroAmount: { ...TYPE.display, color: COLORS.white, fontSize: 48, letterSpacing: -1.6, marginTop: SPACE[2] },
+  heroSub: { ...TYPE.small, color: COLORS.onDark, marginTop: SPACE[2] },
+  pendingBar: { height: 4, borderRadius: 2, backgroundColor: COLORS.lime, opacity: 0.8, marginTop: SPACE[5], width: '40%' },
+  lineRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: SPACE[2] },
+  totalRow: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line, marginTop: SPACE[2], paddingTop: SPACE[3] },
+  totalLabel: { ...TYPE.subhead, color: COLORS.midnight },
+  totalValue: { ...TYPE.figure, fontSize: 20 },
 });

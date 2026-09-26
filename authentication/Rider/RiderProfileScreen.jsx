@@ -2,10 +2,8 @@ import React, { useState } from "react";
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
@@ -19,11 +17,19 @@ import { auth, db, storage } from "../../config/firebase";
 import { doc, updateDoc } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { uriToBlob } from "../../helpers/uploadPicker";
-import { COLORS, RADIUS } from '../../components/ui/kit';
+import {
+  COLORS,
+  SPACE,
+  TYPE,
+  Button,
+  Field,
+  Footer,
+  Screen,
+  ScreenHeader,
+} from '../../components/ui/kit';
 
 import { confirmLeaveSignup } from "../../utils/leaveSignup";
 const TOTAL_STEPS = 3;
-const PRIMARY = COLORS.primary;
 
 export default function RiderProfileScreen({ navigation }) {
   const [currentStep] = useState(1);
@@ -113,7 +119,7 @@ export default function RiderProfileScreen({ navigation }) {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen scroll={false}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -121,131 +127,91 @@ export default function RiderProfileScreen({ navigation }) {
         <ScrollView
           contentContainerStyle={styles.container}
           keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          {/* Header */}
-          <View style={styles.header}>
-            <TouchableOpacity
-              onPress={() => (navigation.canGoBack() ? navigation.goBack() : confirmLeaveSignup())}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              accessibilityRole="button"
-              accessibilityLabel="Go back"
-            >
-              <Ionicons name="arrow-back" size={24} color="black" />
-            </TouchableOpacity>
-            <Text style={styles.stepText}>
-              Step {currentStep} of {TOTAL_STEPS}
-            </Text>
-            <View style={{ width: 24 }} />
-          </View>
+          <ScreenHeader
+            title="Create Your Profile"
+            subtitle={`Step ${currentStep} of ${TOTAL_STEPS}`}
+            onBack={() => (navigation.canGoBack() ? navigation.goBack() : confirmLeaveSignup())}
+          />
 
           {/* Progress */}
-          <View style={styles.progressBarBg}>
-            <View
-              style={[
-                styles.progressBarFill,
-                { width: `${(currentStep / TOTAL_STEPS) * 100}%` },
-              ]}
-            />
+          <View style={styles.progress} accessibilityLabel={`Step ${currentStep} of ${TOTAL_STEPS}`}>
+            {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
+              <View
+                key={i}
+                style={[styles.segment, i < currentStep && styles.segmentDone]}
+              />
+            ))}
           </View>
-
-          <Text style={styles.title}>Create Your Profile</Text>
 
           {/* Photo */}
           <View style={styles.photoContainer}>
-            <TouchableOpacity style={styles.photoCircle} onPress={pickImage}>
+            <TouchableOpacity
+              style={styles.photoCircle}
+              onPress={pickImage}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel={profileImage ? "Change profile photo" : "Add a profile photo"}
+            >
               {profileImage ? (
                 <Image source={{ uri: profileImage }} style={styles.photo} />
               ) : (
-                <Ionicons name="camera-outline" size={32} color="gray" />
+                <Ionicons name="camera-outline" size={34} color={COLORS.muted} />
               )}
+              <View style={styles.photoBadge}>
+                <Ionicons name={profileImage ? "pencil" : "add"} size={16} color={COLORS.midnight} />
+              </View>
             </TouchableOpacity>
             <Text style={styles.photoText}>Profile photo (optional)</Text>
           </View>
 
           {/* Name */}
-          <Text style={styles.label}>Full Name</Text>
-          <TextInput
+          <Field
+            label="Full Name"
+            left="person-outline"
             placeholder="Enter your full name"
             value={fullName}
             onChangeText={setFullName}
-            style={styles.input}
           />
-
-          {/* Button */}
-          <TouchableOpacity
-            style={[
-              styles.button,
-              { opacity: isFormValid && !loading ? 1 : 0.5 },
-            ]}
-            disabled={!isFormValid || loading}
-            onPress={handleContinue}
-          >
-            <Text style={styles.buttonText}>
-              {loading ? "Saving..." : "Continue"}
-            </Text>
-          </TouchableOpacity>
         </ScrollView>
+
+        <Footer>
+          <Button
+            title={loading ? "Saving..." : "Continue"}
+            disabled={!isFormValid}
+            loading={loading}
+            onPress={handleContinue}
+          />
+        </Footer>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.white },
-  container: { padding: 20, paddingBottom: 40 },
+  container: { padding: SPACE[5], paddingBottom: SPACE[8] },
 
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
+  progress: { flexDirection: "row", gap: 6, marginTop: SPACE[4], marginBottom: SPACE[7] },
+  segment: { flex: 1, height: 5, borderRadius: 3, backgroundColor: COLORS.line },
+  segmentDone: { backgroundColor: COLORS.midnight },
 
-  stepText: { fontSize: 16, fontWeight: "600" },
-
-  progressBarBg: {
-    height: 6,
-    backgroundColor: "#E5E5E5",
-    borderRadius: 10,
-    marginTop: 10,
-    marginBottom: 25,
-  },
-
-  progressBarFill: {
-    height: 6,
-    backgroundColor: PRIMARY,
-    borderRadius: 10,
-  },
-
-  title: { fontSize: 22, fontWeight: "bold", marginBottom: 30 },
-
-  photoContainer: { alignItems: "center", marginBottom: 30 },
+  photoContainer: { alignItems: "center", marginBottom: SPACE[7] },
   photoCircle: {
-    width: 110,
-    height: 110,
-    borderRadius: 60,
-    backgroundColor: "#F4F4F4",
+    width: 116,
+    height: 116,
+    borderRadius: 58,
+    backgroundColor: COLORS.fill,
     justifyContent: "center",
     alignItems: "center",
-    overflow: "hidden",
   },
-  photo: { width: "100%", height: "100%" },
-  photoText: { marginTop: 10, fontSize: 14, color: "gray" },
-
-  label: { fontSize: 14, fontWeight: "600", marginBottom: 6, marginLeft: 4 },
-  input: { color: COLORS.ink,
-    backgroundColor: "#F4F4F4",
-    borderRadius: 30,
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    fontSize: 16,
-    marginBottom: 30,
+  photo: { width: "100%", height: "100%", borderRadius: 58 },
+  photoBadge: {
+    position: "absolute", right: 0, bottom: 0,
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: COLORS.lime,
+    borderWidth: 3, borderColor: COLORS.surface,
+    alignItems: "center", justifyContent: "center",
   },
-
-  button: {
-    backgroundColor: PRIMARY,
-    paddingVertical: 16,
-    borderRadius: RADIUS.md,
-    alignItems: "center",
-  },
-  buttonText: { color: "white", fontSize: 16, fontWeight: "bold" },
+  photoText: { ...TYPE.small, marginTop: SPACE[3] },
 });

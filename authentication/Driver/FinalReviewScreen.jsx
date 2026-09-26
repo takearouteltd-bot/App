@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import { View, Text, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { doc, getDoc, updateDoc } from "firebase/firestore";
 import { auth, db } from "../../config/firebase";
 import { Alert } from "../../components/ui/alert";
-import { Banner, COLORS, RADIUS, SPACE, TYPE } from "../../components/ui/kit";
+import { Banner, Card, COLORS, SPACE, TYPE } from "../../components/ui/kit";
 import { ConsentRow, DRIVER_STEPS, OnboardingFrame, StepSection } from "../../components/onboarding/kit";
 import { openPrivacy, openTerms } from "../../utils/legal";
 
@@ -116,16 +116,13 @@ export default function ApplicationSummaryScreen({ navigation, setOnboardingStat
       }}
     >
       <StepSection title="Your application">
-        <View style={styles.list}>
-          {results.map((r, i) => {
-            const meta = DRIVER_STEPS[r.step - 1];
-            const detail = r.done ? r.summary(driver || {}) : "Needs finishing";
-            return (
-              <TouchableOpacity
-                key={r.step}
-                style={[styles.item, i < results.length - 1 && styles.itemLine]}
-                onPress={() => navigation.navigate(meta.route)}
-                activeOpacity={0.7}
+        {results.map((r) => {
+          const meta = DRIVER_STEPS[r.step - 1];
+          const detail = r.done ? r.summary(driver || {}) : "Needs finishing";
+          return (
+            <Card key={r.step} style={styles.item} onPress={() => navigation.navigate(meta.route)}>
+              <View
+                style={styles.itemRow}
                 accessibilityRole="button"
                 accessibilityLabel={`${meta.label}, ${r.done ? "complete" : "incomplete"}. Tap to edit`}
               >
@@ -133,7 +130,7 @@ export default function ApplicationSummaryScreen({ navigation, setOnboardingStat
                   <Ionicons
                     name={r.done ? "checkmark" : meta.icon}
                     size={20}
-                    color={r.done ? COLORS.white : COLORS.amber}
+                    color={r.done ? COLORS.midnight : COLORS.amber}
                   />
                 </View>
                 <View style={{ flex: 1 }}>
@@ -146,10 +143,10 @@ export default function ApplicationSummaryScreen({ navigation, setOnboardingStat
                   </Text>
                 </View>
                 <Text style={styles.edit}>Edit</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+              </View>
+            </Card>
+          );
+        })}
       </StepSection>
 
       <StepSection title="Your consent">
@@ -185,19 +182,12 @@ export default function ApplicationSummaryScreen({ navigation, setOnboardingStat
 }
 
 const styles = StyleSheet.create({
-  list: {
-    backgroundColor: COLORS.white,
-    borderRadius: RADIUS.lg,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.line,
-    paddingHorizontal: SPACE[4],
-  },
-  item: { flexDirection: "row", alignItems: "center", gap: SPACE[3], minHeight: 68, paddingVertical: SPACE[3] },
-  itemLine: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.line },
-  itemIcon: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center" },
-  itemIconDone: { backgroundColor: COLORS.primary },
+  item: { marginBottom: SPACE[3], paddingVertical: SPACE[4] },
+  itemRow: { flexDirection: "row", alignItems: "center", gap: SPACE[3] },
+  itemIcon: { width: 40, height: 40, borderRadius: 20, alignItems: "center", justifyContent: "center" },
+  itemIconDone: { backgroundColor: COLORS.lime },
   itemIconTodo: { backgroundColor: COLORS.amberSoft },
-  itemTitle: { ...TYPE.callout, color: COLORS.navy },
+  itemTitle: { ...TYPE.callout, color: COLORS.midnight },
   itemDetail: { ...TYPE.small, marginTop: 2 },
-  edit: { ...TYPE.small, color: COLORS.blue, fontWeight: "700" },
+  edit: { ...TYPE.small, color: COLORS.midnight, fontWeight: "700" },
 });

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { Alert } from '../../../components/ui/alert';
 import { auth, db, functions } from '../../../config/firebase';
 import { doc, getDoc, collection, onSnapshot } from 'firebase/firestore';
@@ -10,12 +10,14 @@ import {
   COLORS,
   TYPE,
   SPACE,
+  Screen,
   Card,
   Button,
   Banner,
-  ListRow,
+  RowGroup,
   StatusPill,
   ScreenHeader,
+  Loading,
 } from '../../../components/ui/kit';
 
 export default function SubscriptionScreen({ setOnboardingStatus }) {
@@ -133,9 +135,9 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
 
   if (checking) {
     return (
-      <SafeAreaView style={[styles.safe, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
-      </SafeAreaView>
+      <Screen scroll={false}>
+        <Loading />
+      </Screen>
     );
   }
 
@@ -143,24 +145,36 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
   const status = subscription?.status;
   const cardLabel = card ? `${(card.brand || 'Card').toUpperCase()} ···· ${card.last4}` : null;
   const cardRow = (
-    <Card flush style={{ marginTop: SPACE[4] }}>
-      <ListRow
-        icon="card-outline"
-        title="Card for membership"
-        detail={cardLabel || 'Used if your wallet is short at renewal'}
-        onPress={openCards}
-        last
-      />
-    </Card>
+    <RowGroup
+      style={{ marginTop: SPACE[4] }}
+      items={[
+        {
+          icon: 'card-outline',
+          iconColor: COLORS.midnight,
+          title: 'Card for membership',
+          detail: cardLabel || 'Used if your wallet is short at renewal',
+          onPress: openCards,
+        },
+      ]}
+    />
   );
 
   if (status === 'suspended') {
     return (
-      <SafeAreaView style={styles.safe}>
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <ScreenHeader title="Membership" />
+      <Screen>
+        <ScreenHeader title="Membership" />
 
-          {status === 'past_due' ? (
+        <Card tone="dark" style={styles.hero}>
+          <View style={styles.heroTop}>
+            <Text style={styles.heroPlan}>Monthly driver plan</Text>
+            <StatusPill status="expired" label="Paused" />
+          </View>
+          <Text style={styles.heroPrice}>{money(Number(subscription.debtAmount) || MONTHLY_PRICE)}</Text>
+          <Text style={styles.heroSub}>unpaid</Text>
+        </Card>
+
+        {status === 'past_due' ? (
+          <View style={styles.gap}>
             <Banner
               tone="warning"
               title="Payment due"
@@ -174,21 +188,23 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
                 />
               }
             />
-          ) : null}
+          </View>
+        ) : null}
+        <View style={styles.gap}>
           <Banner
             tone="danger"
             title="Your account is paused"
             body={`Your membership of ${money(Number(subscription.debtAmount) || MONTHLY_PRICE)} is unpaid, so you cannot go online. Pay now to start driving again straight away, or it is taken automatically once your wallet can cover it.`}
           />
-          <Button
-            title={card ? `Pay ${money(Number(subscription.debtAmount) || MONTHLY_PRICE)} by card` : 'Add a card to pay'}
-            onPress={payByCard}
-            loading={paying}
-            style={{ marginTop: SPACE[4] }}
-          />
-          {cardRow}
-        </ScrollView>
-      </SafeAreaView>
+        </View>
+        <Button
+          title={card ? `Pay ${money(Number(subscription.debtAmount) || MONTHLY_PRICE)} by card` : 'Add a card to pay'}
+          onPress={payByCard}
+          loading={paying}
+          style={{ marginTop: SPACE[4] }}
+        />
+        {cardRow}
+      </Screen>
     );
   }
 
@@ -196,114 +212,134 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
     const debtAmount = Number(subscription.debtAmount) || 0;
 
     return (
-      <SafeAreaView style={styles.safe}>
-        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-          <ScreenHeader title="Membership" />
+      <Screen>
+        <ScreenHeader title="Membership" />
 
-          <Card tone="dark" style={styles.hero}>
-            <View style={styles.heroTop}>
-              <Text style={styles.heroPlan}>Monthly driver plan</Text>
+        <Card tone="dark" style={styles.hero}>
+          <View style={styles.heroTop}>
+            <Text style={styles.heroPlan}>Monthly driver plan</Text>
+            {status === 'past_due' ? (
+              <StatusPill status="expiring" label="Payment due" />
+            ) : (
               <StatusPill status="approved" label="Active" />
-            </View>
-            <Text style={styles.heroPrice}>{money(MONTHLY_PRICE)}</Text>
-            <Text style={styles.heroSub}>per month, taken from your earnings</Text>
-          </Card>
+            )}
+          </View>
+          <Text style={styles.heroPrice}>{money(MONTHLY_PRICE)}</Text>
+          <Text style={styles.heroSub}>per month, taken from your earnings</Text>
+          <View style={styles.heroRenewal}>
+            <Text style={styles.heroRenewalLabel}>Next payment</Text>
+            <Text style={styles.heroRenewalValue}>{formatDate(subscription.nextBillingDate)}</Text>
+          </View>
+        </Card>
 
-          {debtAmount > 0 ? (
+        {debtAmount > 0 ? (
+          <View style={styles.gap}>
             <Banner
               tone="warning"
               title={`${money(debtAmount)} outstanding`}
               body="This comes out automatically as soon as your wallet reaches that amount."
             />
-          ) : null}
+          </View>
+        ) : null}
 
-          <Card flush style={{ marginTop: SPACE[4] }}>
-            <ListRow
-              icon="calendar-outline"
-              title="Next payment"
-              detail={formatDate(subscription.nextBillingDate)}
-            />
-            <ListRow icon="wallet-outline" title="Paid from" detail="Your earnings wallet" />
-            <ListRow
-              icon="cash-outline"
-              title="Amount"
-              detail={`${money(MONTHLY_PRICE)} each month`}
-              last
-            />
-          </Card>
+        <RowGroup
+          style={{ marginTop: SPACE[4] }}
+          items={[
+            {
+              icon: 'calendar-outline',
+              iconColor: COLORS.midnight,
+              title: 'Next payment',
+              detail: formatDate(subscription.nextBillingDate),
+            },
+            { icon: 'wallet-outline', iconColor: COLORS.midnight, title: 'Paid from', detail: 'Your earnings wallet' },
+            {
+              icon: 'cash-outline',
+              iconColor: COLORS.midnight,
+              title: 'Amount',
+              detail: `${money(MONTHLY_PRICE)} each month`,
+            },
+          ]}
+        />
 
+        <View style={styles.gap}>
           <Banner
             tone="info"
             body="Your membership renews every month from your wallet. If there is not enough in it, we charge the card below. If neither works, you have a few days to pay before your account is paused."
           />
-          {cardRow}
-        </ScrollView>
-      </SafeAreaView>
+        </View>
+        {cardRow}
+      </Screen>
     );
   }
 
   /* ================= NOT YET ACTIVE ================= */
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <ScreenHeader
-          title="Activate your account"
-          subtitle="One monthly fee, taken from what you earn."
-        />
+    <Screen>
+      <ScreenHeader
+        title="Activate your account"
+        subtitle="One monthly fee, taken from what you earn."
+      />
 
-        <Card tone="dark" style={styles.hero}>
-          <Text style={styles.heroPlan}>Monthly driver plan</Text>
-          <Text style={styles.heroPrice}>{money(MONTHLY_PRICE)}</Text>
-          <Text style={styles.heroSub}>per month</Text>
-        </Card>
+      <Card tone="dark" style={styles.hero}>
+        <Text style={styles.heroPlan}>Monthly driver plan</Text>
+        <Text style={styles.heroPrice}>{money(MONTHLY_PRICE)}</Text>
+        <Text style={styles.heroSub}>per month</Text>
+      </Card>
 
-        {/* Only what the platform genuinely does. */}
-        <Card flush style={{ marginTop: SPACE[4] }}>
-          <ListRow
-            icon="cash-outline"
-            iconColor={COLORS.primary}
-            title="You keep the whole fare"
-            detail="No commission is taken from any ride"
-          />
-          <ListRow
-            icon="infinite-outline"
-            iconColor={COLORS.primary}
-            title="No limit on jobs"
-            detail="Take as much work as you like"
-          />
-          <ListRow
-            icon="wallet-outline"
-            iconColor={COLORS.primary}
-            title="Paid from your earnings"
-            detail="Nothing to pay up front"
-            last
-          />
-        </Card>
+      {/* Only what the platform genuinely does. */}
+      <RowGroup
+        style={{ marginTop: SPACE[4] }}
+        items={[
+          {
+            icon: 'cash-outline',
+            iconColor: COLORS.limeInk,
+            title: 'You keep the whole fare',
+            detail: 'No commission is taken from any ride',
+          },
+          {
+            icon: 'infinite-outline',
+            iconColor: COLORS.limeInk,
+            title: 'No limit on jobs',
+            detail: 'Take as much work as you like',
+          },
+          {
+            icon: 'wallet-outline',
+            iconColor: COLORS.limeInk,
+            title: 'Paid from your earnings',
+            detail: 'Nothing to pay up front',
+          },
+        ]}
+      />
 
+      <View style={styles.gap}>
         <Banner
           tone="info"
           body={`If your wallet already holds ${money(MONTHLY_PRICE)} we take it now. If not, it comes out automatically once you have earned enough.`}
         />
+      </View>
 
-        <Button
-          title="Activate and start driving"
-          onPress={handleActivate}
-          loading={loading}
-          style={{ marginTop: SPACE[6] }}
-        />
-      </ScrollView>
-    </SafeAreaView>
+      <Button
+        title="Activate and start driving"
+        onPress={handleActivate}
+        loading={loading}
+        style={{ marginTop: SPACE[6] }}
+      />
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.surface },
-  centered: { alignItems: 'center', justifyContent: 'center' },
-  content: { padding: SPACE[5], paddingBottom: SPACE[12] },
-
   hero: { marginTop: SPACE[5] },
-  heroTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  heroPlan: { ...TYPE.small, color: COLORS.onDark },
-  heroPrice: { fontSize: 40, fontWeight: '800', color: COLORS.white, letterSpacing: -1.4, marginTop: SPACE[2] },
+  heroTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: SPACE[3] },
+  heroPlan: { ...TYPE.label, color: COLORS.lime },
+  heroPrice: { ...TYPE.display, color: COLORS.white, marginTop: SPACE[2] },
   heroSub: { ...TYPE.small, color: COLORS.onDark, marginTop: 2 },
+  heroRenewal: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginTop: SPACE[5], paddingTop: SPACE[4],
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.midnightLine,
+  },
+  heroRenewalLabel: { ...TYPE.small, color: COLORS.onDark },
+  heroRenewalValue: { ...TYPE.callout, color: COLORS.white },
+  gap: { marginTop: SPACE[4] },
 });

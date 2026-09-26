@@ -4,14 +4,11 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  ScrollView,
-  ActivityIndicator,
   Modal,
-  TextInput,
 } from "react-native";
 import { Alert, AlertHost } from "../../../components/ui/alert";
 import { Ionicons } from "@expo/vector-icons";
-import { useNavigation, useFocusEffect } from "@react-navigation/native";
+import { useNavigation } from "@react-navigation/native";
 import {
   doc,
   collection,
@@ -21,18 +18,26 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { auth, db } from "../../../config/firebase";
-import { COLORS } from '../../../components/ui/kit';
-
-
-const PRIMARY = COLORS.primary;
-const SECONDARY = COLORS.blue;
-const BG = COLORS.surface;
-const DANGER = COLORS.red;
+import {
+  COLORS,
+  TYPE,
+  SPACE,
+  Screen,
+  ScreenHeader,
+  Section,
+  Card,
+  RowGroup,
+  Button,
+  Chip,
+  Field,
+  EmptyState,
+  Loading,
+} from '../../../components/ui/kit';
 
 const PLACE_TYPES = {
-  home: { icon: "home", label: "Home", color: "#EEF0F4", iconColor: SECONDARY },
-  work: { icon: "briefcase", label: "Work", color: "#FFF3E0", iconColor: "#F57C00" },
-  other: { icon: "location", label: "Saved", color: "#F2FADF", iconColor: PRIMARY },
+  home: { icon: "home", label: "Home" },
+  work: { icon: "briefcase", label: "Work" },
+  other: { icon: "location", label: "Saved" },
 };
 
 export default function SavedPlacesScreen() {
@@ -135,115 +140,68 @@ export default function SavedPlacesScreen() {
 
   const getPlaceStyle = (type) => PLACE_TYPES[type] || PLACE_TYPES.other;
 
-  const renderPlaceCard = (place) => {
-    const style = getPlaceStyle(place.type);
-
-    return (
-      <TouchableOpacity
-        key={place.id}
-        style={styles.placeCard}
-        onPress={() => openEditModal(place)}
-        activeOpacity={0.7}
-      >
-        <View style={[styles.placeIcon, { backgroundColor: style.color }]}>
-          <Ionicons name={style.icon} size={22} color={style.iconColor} />
-        </View>
-
-        <View style={styles.placeInfo}>
-          <Text style={styles.placeName}>{place.name}</Text>
-          <Text style={styles.placeAddress} numberOfLines={2}>
-            {place.address}
-          </Text>
-        </View>
-
-        <TouchableOpacity
-          style={styles.deleteBtn}
-          onPress={() => handleDeletePlace(place)}
-        >
-          <Ionicons name="trash-outline" size={18} color={DANGER} />
-        </TouchableOpacity>
-      </TouchableOpacity>
-    );
-  };
-
-  const renderQuickAdd = () => {
-    const hasHome = places.some((p) => p.type === "home");
-    const hasWork = places.some((p) => p.type === "work");
-
-    return (
-      <View style={styles.quickAddSection}>
-        {!hasHome && (
-          <TouchableOpacity
-            style={[styles.quickAddBtn, { backgroundColor: PLACE_TYPES.home.color }]}
-            onPress={() => handleAddPlace("home")}
-          >
-            <Ionicons name="add" size={20} color={PLACE_TYPES.home.iconColor} />
-            <Text style={[styles.quickAddText, { color: PLACE_TYPES.home.iconColor }]}>
-              Add Home
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        {!hasWork && (
-          <TouchableOpacity
-            style={[styles.quickAddBtn, { backgroundColor: PLACE_TYPES.work.color }]}
-            onPress={() => handleAddPlace("work")}
-          >
-            <Ionicons name="add" size={20} color={PLACE_TYPES.work.iconColor} />
-            <Text style={[styles.quickAddText, { color: PLACE_TYPES.work.iconColor }]}>
-              Add Work
-            </Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    );
-  };
+  const hasHome = places.some((p) => p.type === "home");
+  const hasWork = places.some((p) => p.type === "work");
 
   if (loading) {
     return (
-      <View style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={PRIMARY} />
-      </View>
+      <Screen scroll={false}>
+        <Loading />
+      </Screen>
     );
   }
 
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={24} color={COLORS.white} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Saved Places</Text>
-        <View style={styles.backBtn} />
-      </View>
+    <Screen>
+        <ScreenHeader title="Saved Places" />
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-        {renderQuickAdd()}
-
-        <View style={styles.placesList}>
-          {places.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Ionicons name="location-outline" size={48} color="#ddd" />
-              <Text style={styles.emptyTitle}>No Saved Places</Text>
-              <Text style={styles.emptySubtitle}>
-                Add your home, work, or frequent destinations for quick access when booking rides.
-              </Text>
-            </View>
-          ) : (
-            places.map(renderPlaceCard)
-          )}
-        </View>
-
-        {/* Add Custom Place */}
-        <TouchableOpacity style={styles.addCustomBtn} onPress={() => handleAddPlace("other")}>
-          <View style={[styles.placeIcon, { backgroundColor: COLORS.surface }]}>
-            <Ionicons name="add" size={22} color={COLORS.muted} />
+        {(!hasHome || !hasWork) && (
+          <View style={styles.quickAdd}>
+            {!hasHome && (
+              <Button title="Add Home" icon="home-outline" variant="secondary" size="small" onPress={() => handleAddPlace("home")} />
+            )}
+            {!hasWork && (
+              <Button title="Add Work" icon="briefcase-outline" variant="secondary" size="small" onPress={() => handleAddPlace("work")} />
+            )}
           </View>
-          <Text style={styles.addCustomText}>Add a New Place</Text>
-          <Ionicons name="chevron-forward" size={18} color={COLORS.faint} />
-        </TouchableOpacity>
-      </ScrollView>
+        )}
+
+        <Section>
+          {places.length === 0 ? (
+            <EmptyState
+              icon="location-outline"
+              title="No Saved Places"
+              body="Add your home, work, or frequent destinations for quick access when booking rides."
+            />
+          ) : (
+            <RowGroup
+              items={places.map((place) => {
+                const style = getPlaceStyle(place.type);
+                return {
+                  key: place.id,
+                  icon: style.icon,
+                  iconColor: COLORS.midnight,
+                  title: place.name,
+                  detail: place.address,
+                  onPress: () => openEditModal(place),
+                  right: (
+                    <TouchableOpacity
+                      style={styles.deleteBtn}
+                      onPress={() => handleDeletePlace(place)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Delete ${place.name}`}
+                    >
+                      <Ionicons name="trash-outline" size={18} color={COLORS.red} />
+                    </TouchableOpacity>
+                  ),
+                };
+              })}
+            />
+          )}
+        </Section>
+
+        <Button title="Add a New Place" icon="add" style={{ marginTop: SPACE[5] }} onPress={() => handleAddPlace("other")} />
 
       {/* Edit Modal */}
       <Modal
@@ -252,300 +210,61 @@ export default function SavedPlacesScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => setEditModalVisible(false)}
       >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setEditModalVisible(false)}>
-              <Text style={styles.modalCancel}>Cancel</Text>
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>Edit Place</Text>
-            <TouchableOpacity onPress={handleUpdatePlace} disabled={saving}>
-              {saving ? (
-                <ActivityIndicator size="small" color={PRIMARY} />
-              ) : (
-                <Text style={styles.modalSave}>Save</Text>
-              )}
-            </TouchableOpacity>
-          </View>
+        <Screen contentStyle={{ paddingHorizontal: 0 }}>
+          <ScreenHeader
+            compact
+            title="Edit Place"
+            onBack={() => setEditModalVisible(false)}
+            right={<Button title="Save" size="small" onPress={handleUpdatePlace} loading={saving} disabled={saving} />}
+          />
 
-          <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-            <View style={styles.editAddressBox}>
-              <Ionicons name="location" size={20} color={PRIMARY} />
-              <Text style={styles.editAddressText} numberOfLines={3}>
-                {editingPlace?.address}
-              </Text>
-            </View>
+          <View style={{ paddingHorizontal: SPACE[5], paddingTop: SPACE[3] }}>
+            <Card>
+              <View style={styles.addressRow}>
+                <Ionicons name="location" size={20} color={COLORS.limeInk} />
+                <Text style={[TYPE.callout, { flex: 1 }]} numberOfLines={3}>
+                  {editingPlace?.address}
+                </Text>
+              </View>
+            </Card>
 
-            <Text style={styles.inputLabel}>Place Name</Text>
-            <TextInput
-              style={styles.nameInput}
+            <Field
+              label="Place Name"
+              left="bookmark-outline"
               value={editName}
               onChangeText={setEditName}
               placeholder="Place name"
-              placeholderTextColor={COLORS.faint}
+              style={{ marginTop: SPACE[5] }}
             />
 
-            <Text style={styles.inputLabel}>Place Type</Text>
+            <Text style={styles.fieldLabel}>Place Type</Text>
             <View style={styles.typeSelector}>
               {Object.entries(PLACE_TYPES).map(([key, config]) => (
-                <TouchableOpacity
+                <Chip
                   key={key}
-                  style={[
-                    styles.typeOption,
-                    editType === key && {
-                      borderColor: config.iconColor,
-                      backgroundColor: config.color,
-                    },
-                  ]}
+                  label={config.label}
+                  icon={config.icon}
+                  active={editType === key}
                   onPress={() => setEditType(key)}
-                >
-                  <Ionicons
-                    name={config.icon}
-                    size={20}
-                    color={editType === key ? config.iconColor : COLORS.faint}
-                  />
-                  <Text
-                    style={[
-                      styles.typeLabel,
-                      editType === key && { color: config.iconColor, fontWeight: "600" },
-                    ]}
-                  >
-                    {config.label}
-                  </Text>
-                </TouchableOpacity>
+                />
               ))}
             </View>
-          </ScrollView>
-        </View>
+          </View>
+        </Screen>
         <AlertHost />
       </Modal>
-    </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: BG,
-  },
-  centered: {
-    justifyContent: "center",
-    alignItems: "center",
-    flex: 1,
-  },
-
-  header: {
-    backgroundColor: SECONDARY,
-    paddingTop: 50,
-    paddingBottom: 16,
-    paddingHorizontal: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    borderBottomLeftRadius: 20,
-    borderBottomRightRadius: 20,
-  },
-  backBtn: {
-    width: 40,
-    height: 40,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: COLORS.white,
-  },
-
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-
-  quickAddSection: {
-    flexDirection: "row",
-    gap: 12,
-    marginBottom: 20,
-  },
-  quickAddBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 14,
-    borderRadius: 12,
-    gap: 6,
-  },
-  quickAddText: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-
-  placesList: {
-    gap: 10,
-  },
-  placeCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: COLORS.white,
-    padding: 14,
-    borderRadius: 14,
-    marginBottom: 10,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  placeIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 14,
-  },
-  placeInfo: {
-    flex: 1,
-  },
-  placeName: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: COLORS.ink,
-    marginBottom: 3,
-  },
-  placeAddress: {
-    fontSize: 13,
-    color: COLORS.muted,
-    lineHeight: 18,
-  },
+  quickAdd: { flexDirection: "row", gap: SPACE[3], marginTop: SPACE[4], flexWrap: "wrap" },
   deleteBtn: {
-    padding: 8,
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: COLORS.redSoft,
+    alignItems: "center", justifyContent: "center",
   },
-
-  emptyState: {
-    alignItems: "center",
-    paddingVertical: 50,
-  },
-  emptyTitle: {
-    fontSize: 17,
-    fontWeight: "600",
-    color: COLORS.muted,
-    marginTop: 16,
-  },
-  emptySubtitle: {
-    fontSize: 13,
-    color: "#aaa",
-    textAlign: "center",
-    marginTop: 8,
-    paddingHorizontal: 30,
-    lineHeight: 20,
-  },
-
-  addCustomBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: COLORS.white,
-    padding: 14,
-    borderRadius: 14,
-    marginTop: 10,
-    borderStyle: "dashed",
-    borderWidth: 1.5,
-    borderColor: "#ddd",
-  },
-  addCustomText: {
-    flex: 1,
-    fontSize: 15,
-    fontWeight: "500",
-    color: "#555",
-    marginLeft: 14,
-  },
-
-  // Edit Modal
-  modalContainer: {
-    flex: 1,
-    backgroundColor: BG,
-  },
-  modalHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingTop: 50,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.line,
-    backgroundColor: COLORS.white,
-  },
-  modalCancel: {
-    fontSize: 15,
-    color: COLORS.muted,
-  },
-  modalTitle: {
-    fontSize: 17,
-    fontWeight: "700",
-    color: COLORS.ink,
-  },
-  modalSave: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: PRIMARY,
-  },
-  modalBody: {
-    padding: 20,
-  },
-  editAddressBox: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    backgroundColor: "#EEF0F4",
-    padding: 14,
-    borderRadius: 12,
-    gap: 10,
-    marginBottom: 20,
-  },
-  editAddressText: {
-    flex: 1,
-    fontSize: 13,
-    color: SECONDARY,
-    lineHeight: 20,
-  },
-  inputLabel: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: COLORS.muted,
-    marginBottom: 8,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-  },
-  nameInput: {
-    backgroundColor: COLORS.white,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    fontSize: 16,
-    color: COLORS.ink,
-    marginBottom: 20,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  typeSelector: {
-    flexDirection: "row",
-    gap: 10,
-  },
-  typeOption: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: COLORS.line,
-    backgroundColor: COLORS.white,
-    gap: 6,
-  },
-  typeLabel: {
-    fontSize: 12,
-    color: COLORS.muted,
-  },
+  addressRow: { flexDirection: "row", alignItems: "flex-start", gap: SPACE[3] },
+  fieldLabel: { fontSize: 13, fontWeight: "700", color: COLORS.inkSoft, marginBottom: SPACE[2] },
+  typeSelector: { flexDirection: "row", gap: SPACE[2], flexWrap: "wrap" },
 });

@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, Switch, Linking } from 'react-native';
+import { View, Text, Switch, Linking } from 'react-native';
 import { Alert } from '../../../components/ui/alert';
-import { useNavigation } from '@react-navigation/native';
 import { auth, db } from '../../../config/firebase';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { useAppConfig, femaleDriverEnabled } from '../../../utils/appConfig';
@@ -14,8 +13,9 @@ import {
   COLORS,
   TYPE,
   SPACE,
-  Card,
-  ListRow,
+  Screen,
+  Section,
+  RowGroup,
   Banner,
   Loading,
   ScreenHeader,
@@ -28,7 +28,6 @@ import {
    honoured is offered, and it works by adding or removing this phone's push
    token, which is what the server actually sends to. */
 export default function PreferencesScreen() {
-  const navigation = useNavigation();
   const user = auth.currentUser;
 
   const [loading, setLoading] = useState(true);
@@ -105,80 +104,75 @@ export default function PreferencesScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <Screen scroll={false}>
         <Loading />
-      </SafeAreaView>
+      </Screen>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <ScreenHeader
-          title="Preferences"
-          subtitle="How your rides work, and what this phone is sent."
-          onBack={() => navigation.goBack()}
-        />
+    <Screen>
+      <ScreenHeader
+        title="Preferences"
+        subtitle="How your rides work, and what this phone is sent."
+      />
 
-        {femaleDriverEnabled(appConfig) ? (
-          <>
-            <Text style={[TYPE.label, { marginTop: SPACE[5] }]}>Rides</Text>
-            <Card flush style={{ marginTop: SPACE[2] }}>
-              <ListRow
-                icon="woman-outline"
-                title="Female drivers only"
-                detail="We look for a female driver first. If none is free, we ask before finding anyone else."
-                last
-                right={
+      {femaleDriverEnabled(appConfig) ? (
+        <Section title="Rides">
+          <RowGroup
+            items={[
+              {
+                icon: 'woman-outline',
+                title: 'Female drivers only',
+                detail: 'We look for a female driver first. If none is free, we ask before finding anyone else.',
+                right: (
                   <Switch
                     value={femaleOnly}
                     onValueChange={toggleFemaleOnly}
                     trackColor={{ false: COLORS.line, true: COLORS.limeDeep }}
                     thumbColor={COLORS.white}
                   />
-                }
-              />
-            </Card>
-            <Text style={[TYPE.label, { marginTop: SPACE[5] }]}>Notifications</Text>
-          </>
-        ) : null}
-
-        <Card flush style={{ marginTop: femaleDriverEnabled(appConfig) ? SPACE[2] : SPACE[5] }}>
-          <ListRow
-            icon="notifications-outline"
-            title="Push notifications"
-            detail="Driver on the way, arrival, messages and replies from support"
-            last
-            right={
-              <Switch
-                value={pushOn}
-                onValueChange={togglePush}
-                disabled={saving}
-                trackColor={{ false: COLORS.line, true: COLORS.limeDeep }}
-                thumbColor={COLORS.white}
-              />
-            }
+                ),
+              },
+            ]}
           />
-        </Card>
+        </Section>
+      ) : null}
 
+      <Section title="Notifications">
+        <RowGroup
+          items={[
+            {
+              icon: 'notifications-outline',
+              title: 'Push notifications',
+              detail: 'Driver on the way, arrival, messages and replies from support',
+              right: (
+                <Switch
+                  value={pushOn}
+                  onValueChange={togglePush}
+                  disabled={saving}
+                  trackColor={{ false: COLORS.line, true: COLORS.limeDeep }}
+                  thumbColor={COLORS.white}
+                />
+              ),
+            },
+          ]}
+        />
         {!pushOn ? (
-          <Banner
-            tone="warning"
-            title="You will not be told when your driver arrives"
-            body="Trip updates and messages from your driver will not reach this phone while this is off."
-          />
+          <View style={{ marginTop: SPACE[3] }}>
+            <Banner
+              tone="warning"
+              title="You will not be told when your driver arrives"
+              body="Trip updates and messages from your driver will not reach this phone while this is off."
+            />
+          </View>
         ) : null}
+      </Section>
 
-        <Text style={[TYPE.small, { marginTop: SPACE[6] }]}>
-          Receipts are emailed for every trip you pay for, as a record of the payment. You can
-          also email a copy of any receipt to yourself from the trip in Trip history.
-        </Text>
-      </ScrollView>
-    </SafeAreaView>
+      <Text style={[TYPE.small, { marginTop: SPACE[6] }]}>
+        Receipts are emailed for every trip you pay for, as a record of the payment. You can
+        also email a copy of any receipt to yourself from the trip in Trip history.
+      </Text>
+    </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.surface },
-  content: { padding: SPACE[5], paddingBottom: SPACE[12] },
-});

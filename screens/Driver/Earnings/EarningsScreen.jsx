@@ -1,17 +1,31 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, TouchableOpacity, FlatList } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { View, Text, StyleSheet, FlatList } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { getFirestore, doc, onSnapshot, collection, query, orderBy } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { money, useAppConfig } from '../../../utils/appConfig';
-import { COLORS, TYPE, Card, Button, EmptyState, Loading } from '../../../components/ui/kit';
+import {
+  COLORS,
+  TYPE,
+  SPACE,
+  RADIUS,
+  Screen,
+  ScreenHeader,
+  Section,
+  Card,
+  ListRow,
+  Button,
+  Chip,
+  StatRow,
+  EmptyState,
+  Loading,
+} from '../../../components/ui/kit';
 
 export default function EarningsScreen() {
   const navigation = useNavigation();
   const db = getFirestore();
   const auth = getAuth();
-  
+
   const [wallet, setWallet] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -43,7 +57,7 @@ export default function EarningsScreen() {
       collection(db, 'driverWallets', driverId, 'transactions'),
       orderBy('createdAt', 'desc')
     );
-    
+
     const unsubscribeTx = onSnapshot(txQuery, (snapshot) => {
       const txList = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -101,7 +115,7 @@ const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
       date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   };
 
-  const renderTransaction = ({ item }) => {
+  const renderTransaction = ({ item, index }) => {
     const amount = Number(item.amount) || 0;
     const isPositive = amount > 0;
     let icon = 'car-outline';
@@ -111,68 +125,67 @@ const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
     if (isSubscription(item)) icon = 'calendar-outline';
 
     return (
-      <View style={styles.txRow}>
-        <View style={[styles.txIcon, { backgroundColor: isPositive ? COLORS.limeSoft : COLORS.blueSoft }]}>
-          <Ionicons name={icon} size={18} color={isPositive ? COLORS.success : COLORS.blue} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.txTitle} numberOfLines={1}>{title}</Text>
-          <Text style={TYPE.small}>{formatDate(item.createdAt)}</Text>
-        </View>
-        <Text style={[styles.txAmount, { color: isPositive ? COLORS.success : COLORS.ink }]}>
-          {isPositive ? '+' : '-'}{money(Math.abs(amount))}
-        </Text>
+      <View style={[styles.txCard, index === 0 && styles.txCardFirst, index === filteredTransactions.length - 1 && styles.txCardLast]}>
+        <ListRow
+          icon={icon}
+          iconColor={isPositive ? COLORS.limeInk : COLORS.midnight}
+          title={title}
+          detail={formatDate(item.createdAt)}
+          last={index === filteredTransactions.length - 1}
+          right={
+            <Text style={[styles.txAmount, { color: isPositive ? COLORS.success : COLORS.ink }]}>
+              {isPositive ? '+' : '-'}{money(Math.abs(amount))}
+            </Text>
+          }
+        />
       </View>
     );
   };
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <Screen scroll={false}>
         <Loading />
-      </SafeAreaView>
+      </Screen>
     );
   }
 
   const header = (
     <View>
-      <Text style={[TYPE.title, { marginTop: 8 }]}>Earnings</Text>
+      <ScreenHeader title="Earnings" />
 
       {/* The one bold element on this screen: the balance you can take out. */}
-      <View style={styles.balance}>
-        <Text style={styles.balanceLabel}>Available to withdraw</Text>
-        <Text style={styles.balanceValue}>{money(totalBalance)}</Text>
-        <Text style={styles.balanceSub}>
+      <Card tone="dark" style={styles.hero}>
+        <Text style={styles.heroLabel}>Available balance</Text>
+        <Text style={styles.heroValue}>{money(totalBalance)}</Text>
+        <Text style={styles.heroSub}>
           {totalBalance < minimumPayout
             ? `You can withdraw once you reach ${money(minimumPayout)}.`
             : 'Paid to your bank after admin approval.'}
         </Text>
+
+        <StatRow
+          tone="onDark"
+          style={styles.heroStats}
+          items={[
+            { value: money(earnedThisWeek), label: 'This week' },
+            { value: money(wallet ? wallet.totalEarned || 0 : 0), label: 'All time' },
+            { value: money(wallet ? wallet.pendingBalance || 0 : 0), label: 'Pending' },
+          ]}
+        />
+
         <Button
           title="Withdraw to bank"
+          variant="accent"
           icon="wallet-outline"
           style={styles.withdrawBtn}
           disabled={totalBalance <= 0 || totalBalance < minimumPayout}
           onPress={() => navigation.navigate('WithdrawScreen')}
         />
-      </View>
-
-      <View style={styles.stats}>
-        <Card style={styles.stat}>
-          <Text style={TYPE.small}>This week</Text>
-          <Text style={styles.statValue}>{money(earnedThisWeek)}</Text>
-        </Card>
-        <Card style={styles.stat}>
-          <Text style={TYPE.small}>All time</Text>
-          <Text style={styles.statValue}>{money(wallet ? wallet.totalEarned || 0 : 0)}</Text>
-        </Card>
-        <Card style={styles.stat}>
-          <Text style={TYPE.small}>Pending</Text>
-          <Text style={styles.statValue}>{money(wallet ? wallet.pendingBalance || 0 : 0)}</Text>
-        </Card>
-      </View>
+      </Card>
 
       {subscription && subscription.status === 'active' ? (
-        <Card style={{ marginTop: 12 }}>
+        <Card style={{ marginTop: SPACE[3] }}>
           <Text style={styles.txTitle}>Subscription {money(appConfig.subscription.monthlyPrice)} a month</Text>
           <Text style={TYPE.small}>
             Next payment{' '}
@@ -185,34 +198,36 @@ const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
       ) : null}
 
       {subscription && subscription.status === 'suspended' ? (
-        <Card tone="danger" style={{ marginTop: 12 }}>
+        <Card tone="danger" style={{ marginTop: SPACE[3] }}>
           <Text style={[styles.txTitle, { color: COLORS.red }]}>Subscription suspended</Text>
           <Text style={TYPE.small}>Complete trips to top up your wallet and it will restart automatically.</Text>
         </Card>
       ) : null}
 
-      <Text style={[TYPE.heading, { marginTop: 24, marginBottom: 10 }]}>Activity</Text>
-      <View style={styles.filters}>
-        {['All', 'Trips', 'Payouts', 'Subscription'].map((f) => {
-          const active = selectedFilter === f;
-          return (
-            <TouchableOpacity key={f} onPress={() => setSelectedFilter(f)} style={[styles.chip, active && styles.chipActive]}>
-              <Text style={[styles.chipText, active && { color: COLORS.white }]}>{f}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+      <Section title="Activity">
+        <View style={styles.filters}>
+          {['All', 'Trips', 'Payouts', 'Subscription'].map((f) => (
+            <Chip
+              key={f}
+              label={f}
+              active={selectedFilter === f}
+              onPress={() => setSelectedFilter(f)}
+            />
+          ))}
+        </View>
+      </Section>
     </View>
   );
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen scroll={false}>
       <FlatList
         data={filteredTransactions}
         keyExtractor={(item) => item.id}
         renderItem={renderTransaction}
         ListHeaderComponent={header}
         contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
         ListEmptyComponent={
           <EmptyState
             icon="receipt-outline"
@@ -221,38 +236,27 @@ const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
           />
         }
       />
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.surface },
-  content: { padding: 20, paddingBottom: 48 },
-  balance: {
-    marginTop: 16,
-    backgroundColor: COLORS.navy,
-    borderRadius: 22,
-    padding: 22,
-  },
-  balanceLabel: { fontSize: 14, fontWeight: '600', color: COLORS.onDark },
-  balanceValue: { fontSize: 40, fontWeight: '800', color: COLORS.white, letterSpacing: -1, marginTop: 4 },
-  balanceSub: { fontSize: 13, color: COLORS.onDark, marginTop: 4 },
-  withdrawBtn: { marginTop: 18 },
-  stats: { flexDirection: 'row', gap: 10, marginTop: 12 },
-  stat: { flex: 1, padding: 12 },
-  statValue: { fontSize: 17, fontWeight: '800', color: COLORS.navy, marginTop: 4 },
-  filters: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
-  chip: {
-    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999,
-    borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.white,
-  },
-  chipActive: { backgroundColor: COLORS.navy, borderColor: COLORS.navy },
-  chipText: { fontSize: 14, fontWeight: '600', color: COLORS.ink },
-  txRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.line,
-  },
-  txIcon: { width: 38, height: 38, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  txTitle: { fontSize: 15, fontWeight: '600', color: COLORS.ink },
-  txAmount: { fontSize: 15, fontWeight: '700' },
+  content: { padding: SPACE[5], paddingBottom: SPACE[12] },
+
+  hero: { marginTop: SPACE[5] },
+  heroLabel: { ...TYPE.label, color: COLORS.lime },
+  heroValue: { ...TYPE.display, color: COLORS.white, marginTop: SPACE[1] },
+  heroSub: { ...TYPE.small, color: COLORS.onDark, marginTop: SPACE[1] },
+  heroStats: { marginTop: SPACE[5], justifyContent: 'space-between' },
+  withdrawBtn: { marginTop: SPACE[5] },
+
+  filters: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACE[2] },
+
+  // One white block for the whole list: rounded at the top of the first
+  // row and the bottom of the last, straight edges in between.
+  txCard: { backgroundColor: COLORS.white, paddingHorizontal: SPACE[4] },
+  txCardFirst: { borderTopLeftRadius: RADIUS.lg, borderTopRightRadius: RADIUS.lg },
+  txCardLast: { borderBottomLeftRadius: RADIUS.lg, borderBottomRightRadius: RADIUS.lg },
+  txTitle: { ...TYPE.callout },
+  txAmount: { ...TYPE.callout },
 });

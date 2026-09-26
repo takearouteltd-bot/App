@@ -11,7 +11,9 @@ import { useNavigation, useRoute } from "@react-navigation/native";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { auth, db } from "../../config/firebase";
 
-import { COLORS, TYPE, ScreenHeader, Card, EmptyState, Loading } from "../../components/ui/kit";
+import {
+  COLORS, TYPE, SPACE, ScreenHeader, Card, StatusPill, EmptyState, Loading,
+} from "../../components/ui/kit";
 
 function toMillis(value) {
   if (!value) return 0;
@@ -101,7 +103,7 @@ export default function InboxScreen() {
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.content}
         ListHeaderComponent={
-          <View style={{ marginBottom: 16 }}>
+          <View style={{ marginBottom: SPACE[4] }}>
             <ScreenHeader
               title="Messages"
               subtitle="Updates from TakeARoute."
@@ -120,16 +122,26 @@ export default function InboxScreen() {
             />
           )
         }
-        renderItem={({ item }) => (
-          <Card style={styles.card}>
-            {item.audience === "user" ? <View style={styles.directMark} /> : null}
-            <Text style={styles.title}>{item.title}</Text>
-            <Text style={[TYPE.body, { marginTop: 6 }]}>{item.body}</Text>
-            <Text style={[TYPE.small, { marginTop: 10 }]}>
-              {item.audience === "user" ? "Sent to you" : "Sent to everyone"}, {formatWhen(item.createdAt)}
-            </Text>
-          </Card>
-        )}
+        renderItem={({ item }) => {
+          const direct = item.audience === "user";
+          return (
+            <Card style={styles.card}>
+              <View style={styles.top}>
+                <View style={styles.titleRow}>
+                  {direct ? <View style={styles.directDot} /> : null}
+                  <Text style={[styles.title, direct && { fontWeight: "800" }]} numberOfLines={2}>
+                    {item.title}
+                  </Text>
+                </View>
+                <StatusPill status={direct ? "direct" : "everyone"} label={direct ? "For you" : "Everyone"} />
+              </View>
+              <Text style={[TYPE.body, { marginTop: SPACE[2] }]}>{item.body}</Text>
+              <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>
+                {direct ? "Sent to you" : "Sent to everyone"}, {formatWhen(item.createdAt)}
+              </Text>
+            </Card>
+          );
+        }}
       />
     </SafeAreaView>
   );
@@ -137,8 +149,10 @@ export default function InboxScreen() {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.surface },
-  content: { padding: 20, paddingBottom: 48 },
-  card: { marginBottom: 12, overflow: "hidden" },
-  directMark: { position: "absolute", left: 0, top: 0, bottom: 0, width: 4, backgroundColor: COLORS.limeDeep },
-  title: { fontSize: 16, fontWeight: "700", color: COLORS.navy },
+  content: { padding: SPACE[5], paddingBottom: SPACE[12] },
+  card: { marginBottom: SPACE[3] },
+  top: { flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", gap: SPACE[3] },
+  titleRow: { flex: 1, flexDirection: "row", alignItems: "center", gap: SPACE[2] },
+  directDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.limeDeep },
+  title: { ...TYPE.subhead, flex: 1, color: COLORS.midnight },
 });

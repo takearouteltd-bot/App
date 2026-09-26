@@ -1,14 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  SafeAreaView,
-  ActivityIndicator,
-  RefreshControl,
-} from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { collection, doc, getDoc, getDocs, limit, onSnapshot, query, where } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
@@ -18,12 +9,16 @@ import {
   COLORS,
   TYPE,
   SPACE,
-  RADIUS,
+  Screen,
+  ScreenHeader,
+  Section,
   Card,
+  RowGroup,
   ListRow,
+  Button,
   Banner,
   EmptyState,
-  ScreenHeader,
+  StatusPill,
 } from '../../../components/ui/kit';
 
 export default function PaymentsMethodScreen({ navigation }) {
@@ -129,85 +124,92 @@ export default function PaymentsMethodScreen({ navigation }) {
   const formatAmount = (amount, currency) =>
     `${currencySymbol(currency)}${(Number(amount || 0) / 100).toFixed(2)}`;
 
-  const statusTone = (status) =>
+  // The kit's pill tones, one per payment state.
+  const statusPill = (status) =>
     status === 'captured'
-      ? { bg: COLORS.limeSoft, fg: COLORS.success, label: 'Paid' }
+      ? { status: 'approved', label: 'Paid' }
       : status === 'authorized'
-      ? { bg: COLORS.blueSoft, fg: COLORS.blue, label: 'Held' }
+      ? { status: 'pending', label: 'Held' }
       : status === 'canceled'
-      ? { bg: COLORS.surface, fg: COLORS.muted, label: 'Cancelled' }
-      : { bg: COLORS.redSoft, fg: COLORS.red, label: status || 'Failed' };
+      ? { status: 'offline', label: 'Cancelled' }
+      : { status: 'rejected', label: status || 'Failed' };
 
   const brand = card?.brand ? card.brand.replace(/^./, (c) => c.toUpperCase()) : null;
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />
-        }
-      >
-        <ScreenHeader title="Payment" subtitle="The card your rides are charged to." />
+    <Screen
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.midnight} />
+      }
+    >
+      <ScreenHeader title="Payment" subtitle="The card your rides are charged to." />
 
-        {/* The card itself: the brand and last four, nothing invented. */}
-        <Card tone="dark" style={styles.cardFace}>
-          {loading && !card ? (
-            <ActivityIndicator color={COLORS.white} />
-          ) : card ? (
-            <>
-              <View style={styles.cardTop}>
-                <Text style={styles.cardBrand}>{brand || 'Card'}</Text>
-                <Ionicons name="card" size={22} color={COLORS.onDark} />
-              </View>
-              <Text style={styles.cardNumber}>···· ···· ···· {card.last4}</Text>
-              <View style={styles.cardBottom}>
-                <View>
-                  <Text style={styles.cardLabel}>Cardholder</Text>
-                  <Text style={styles.cardValue} numberOfLines={1}>
-                    {card.cardholderName || card.name || '—'}
-                  </Text>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={styles.cardLabel}>Expires</Text>
-                  <Text style={styles.cardValue}>
-                    {String(card.exp_month).padStart(2, '0')}/{String(card.exp_year).slice(-2)}
-                  </Text>
-                </View>
-              </View>
-            </>
-          ) : (
-            <View style={styles.noCard}>
-              <Ionicons name="card-outline" size={30} color={COLORS.onDark} />
-              <Text style={styles.noCardText}>No card added yet</Text>
+      {/* The card itself: the brand and last four, nothing invented. */}
+      <Card tone="dark" style={styles.cardFace}>
+        {loading && !card ? (
+          <ActivityIndicator color={COLORS.lime} />
+        ) : card ? (
+          <>
+            <View style={styles.cardTop}>
+              <Text style={styles.cardEyebrow}>Default card</Text>
+              <Ionicons name="card" size={22} color={COLORS.lime} />
             </View>
-          )}
-        </Card>
+            <Text style={styles.cardBrand}>{brand || 'Card'}</Text>
+            <Text style={styles.cardNumber}>···· ···· ···· {card.last4}</Text>
+            <View style={styles.cardBottom}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.cardLabel}>Cardholder</Text>
+                <Text style={styles.cardValue} numberOfLines={1}>
+                  {card.cardholderName || card.name || '—'}
+                </Text>
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={styles.cardLabel}>Expires</Text>
+                <Text style={styles.cardValue}>
+                  {String(card.exp_month).padStart(2, '0')}/{String(card.exp_year).slice(-2)}
+                </Text>
+              </View>
+            </View>
+          </>
+        ) : (
+          <View style={styles.noCard}>
+            <View style={styles.noCardIcon}>
+              <Ionicons name="card-outline" size={26} color={COLORS.lime} />
+            </View>
+            <Text style={styles.noCardText}>No card added yet</Text>
+          </View>
+        )}
+        <Button
+          title={card ? 'Add another card' : 'Add a card'}
+          variant="accent"
+          icon="add"
+          style={{ marginTop: SPACE[5] }}
+          onPress={() => navigation.navigate('AddPaymentMethod')}
+        />
+      </Card>
 
-        <Card flush style={{ marginTop: SPACE[4] }}>
-          <ListRow
-            icon="add-circle-outline"
-            iconColor={COLORS.primary}
-            title={card ? 'Add another card' : 'Add a card'}
-            detail="Credit or debit"
-            onPress={() => navigation.navigate('AddPaymentMethod')}
-          />
-          <ListRow
-            icon="albums-outline"
-            title="Manage cards"
-            detail="Change your default or remove a card"
-            onPress={() => navigation.navigate('AllPaymentMethods')}
-            last
-          />
-        </Card>
+      <RowGroup
+        style={{ marginTop: SPACE[4] }}
+        items={[
+          {
+            icon: 'albums-outline',
+            iconColor: COLORS.midnight,
+            title: 'Manage cards',
+            detail: 'Change your default or remove a card',
+            onPress: () => navigation.navigate('AllPaymentMethods'),
+          },
+        ]}
+      />
 
-        {error ? <Banner tone="danger" body={error} /> : null}
+      {error ? (
+        <View style={{ marginTop: SPACE[4] }}>
+          <Banner tone="danger" body={error} />
+        </View>
+      ) : null}
 
-        <Text style={[TYPE.label, { marginTop: SPACE[7], marginBottom: SPACE[3] }]}>Payments</Text>
-
+      <Section title="Payments">
         {loading ? (
-          <ActivityIndicator color={COLORS.primary} style={{ marginTop: SPACE[6] }} />
+          <ActivityIndicator color={COLORS.midnight} style={{ marginTop: SPACE[6] }} />
         ) : transactions.length === 0 ? (
           <EmptyState
             icon="receipt-outline"
@@ -217,23 +219,19 @@ export default function PaymentsMethodScreen({ navigation }) {
         ) : (
           <Card flush>
             {transactions.map((item, i) => {
-              const tone = statusTone(item.status);
+              const pill = statusPill(item.status);
               return (
                 <ListRow
                   key={item.id}
                   icon="car-outline"
-                  iconColor={COLORS.navy}
+                  iconColor={COLORS.midnight}
                   title={item.rideId ? 'Ride' : 'Payment'}
                   detail={formatDate(item.createdAtDate)}
                   last={i === transactions.length - 1}
                   right={
-                    <View style={{ alignItems: 'flex-end' }}>
-                      <Text style={styles.amount}>
-                        {formatAmount(item.amount, item.currency)}
-                      </Text>
-                      <View style={[styles.pill, { backgroundColor: tone.bg }]}>
-                        <Text style={[styles.pillText, { color: tone.fg }]}>{tone.label}</Text>
-                      </View>
+                    <View style={{ alignItems: 'flex-end', gap: SPACE[1] }}>
+                      <Text style={styles.amount}>{formatAmount(item.amount, item.currency)}</Text>
+                      <StatusPill status={pill.status} label={pill.label} />
                     </View>
                   }
                 />
@@ -241,32 +239,30 @@ export default function PaymentsMethodScreen({ navigation }) {
             })}
           </Card>
         )}
-      </ScrollView>
-    </SafeAreaView>
+      </Section>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.surface },
-  content: { padding: SPACE[5], paddingBottom: SPACE[12] },
-
-  cardFace: { marginTop: SPACE[5], minHeight: 168, justifyContent: 'space-between' },
+  cardFace: { marginTop: SPACE[5] },
   cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  cardBrand: { fontSize: 15, fontWeight: '700', color: COLORS.white, letterSpacing: 0.2 },
+  cardEyebrow: { ...TYPE.label, color: COLORS.lime },
+  cardBrand: { ...TYPE.subhead, color: COLORS.white, marginTop: SPACE[4] },
   cardNumber: {
-    fontSize: 20, fontWeight: '700', color: COLORS.white,
-    letterSpacing: 2, marginVertical: SPACE[5],
+    fontSize: 22, fontWeight: '800', color: COLORS.white,
+    letterSpacing: 2, marginTop: SPACE[1], marginBottom: SPACE[5],
   },
-  cardBottom: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between' },
-  cardLabel: { fontSize: 11, fontWeight: '700', color: COLORS.onDark, letterSpacing: 0.6, textTransform: 'uppercase' },
-  cardValue: { fontSize: 14, fontWeight: '600', color: COLORS.white, marginTop: 2 },
-  noCard: { alignItems: 'center', justifyContent: 'center', flex: 1, gap: SPACE[2], paddingVertical: SPACE[6] },
+  cardBottom: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: SPACE[4] },
+  cardLabel: { ...TYPE.label, color: COLORS.onDark },
+  cardValue: { ...TYPE.callout, color: COLORS.white, marginTop: 2 },
+  noCard: { alignItems: 'center', justifyContent: 'center', gap: SPACE[3], paddingVertical: SPACE[4] },
+  noCardIcon: {
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: COLORS.midnightSoft,
+    alignItems: 'center', justifyContent: 'center',
+  },
   noCardText: { ...TYPE.small, color: COLORS.onDark },
 
-  amount: { fontSize: 15, fontWeight: '700', color: COLORS.ink },
-  pill: {
-    marginTop: 4, paddingHorizontal: SPACE[2], paddingVertical: 2,
-    borderRadius: RADIUS.pill,
-  },
-  pillText: { fontSize: 11, fontWeight: '700' },
+  amount: { ...TYPE.callout, color: COLORS.midnight },
 });

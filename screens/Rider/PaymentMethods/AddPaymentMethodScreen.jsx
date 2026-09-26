@@ -14,12 +14,13 @@ import { httpsCallable } from 'firebase/functions';
 import { functions, auth } from '../../../config/firebase';
 import {
   COLORS,
-  TYPE,
   SPACE,
   RADIUS,
+  Card,
   Field,
   Button,
   Banner,
+  Footer,
   ScreenHeader,
 } from '../../../components/ui/kit';
 
@@ -105,9 +106,10 @@ export default function AddCardScreen({ navigation }) {
             onBack={() => navigation.goBack()}
           />
 
-          <View style={{ marginTop: SPACE[6] }}>
+          <Card style={{ marginTop: SPACE[6] }}>
             <Field
               label="Name on the card"
+              left="person-outline"
               placeholder="As printed on the card"
               value={cardholderName}
               onChangeText={setCardholderName}
@@ -121,32 +123,36 @@ export default function AddCardScreen({ navigation }) {
                 postalCodeEnabled
                 placeholders={{ number: '1234 1234 1234 1234', cvc: 'CVC', expiry: 'MM/YY' }}
                 cardStyle={{
-                  backgroundColor: COLORS.white,
+                  backgroundColor: COLORS.fill,
                   textColor: COLORS.ink,
                   placeholderColor: COLORS.faint,
-                  fontSize: 15,
+                  fontSize: 16,
                   borderWidth: 0,
+                  borderRadius: RADIUS.md,
                 }}
                 style={styles.cardField}
                 onCardChange={setCardDetails}
               />
             </View>
+          </Card>
+
+          <View style={{ marginTop: SPACE[4] }}>
+            <Banner
+              tone="info"
+              icon="lock-closed"
+              body="Your card details go straight to Stripe and are never stored on our servers."
+            />
           </View>
+        </ScrollView>
 
-          <Banner
-            tone="info"
-            icon="lock-closed"
-            body="Your card details go straight to Stripe and are never stored on our servers."
-          />
-
+        <Footer>
           <Button
             title="Save card"
             onPress={handleAddCard}
             disabled={!ready}
             loading={loading}
-            style={{ marginTop: SPACE[6] }}
           />
-        </ScrollView>
+        </Footer>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -154,16 +160,16 @@ export default function AddCardScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.surface },
-  content: { padding: SPACE[5], paddingBottom: SPACE[12] },
+  content: { padding: SPACE[5], paddingBottom: SPACE[8] },
 
-  label: { fontSize: 13, fontWeight: '600', color: COLORS.navy, marginBottom: SPACE[2] },
+  label: { fontSize: 13, fontWeight: '700', color: COLORS.inkSoft, marginBottom: SPACE[2] },
   cardFieldWrap: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.lineStrong,
+    borderWidth: 1.5,
+    borderColor: COLORS.fill,
     borderRadius: RADIUS.md,
-    backgroundColor: COLORS.white,
+    backgroundColor: COLORS.fill,
     paddingHorizontal: SPACE[2],
-    marginBottom: SPACE[5],
+    overflow: 'hidden',
   },
-  cardField: { width: '100%', height: 52 },
+  cardField: { width: '100%', height: 54 },
 });

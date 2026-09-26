@@ -5,7 +5,7 @@ import { SafeAreaView, FlatList, View, Text, StyleSheet } from 'react-native';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
 import {
-  COLORS, TYPE, ScreenHeader, Card, StatusPill, Button, EmptyState, Loading, formatWhen,
+  COLORS, TYPE, SPACE, ScreenHeader, Card, StatusPill, Button, EmptyState, Loading, formatWhen,
 } from '../../components/ui/kit';
 
 export default function MyReportsScreen({ navigation, route }) {
@@ -36,7 +36,7 @@ export default function MyReportsScreen({ navigation, route }) {
   const renderItem = ({ item }) => {
     const hasReply = item.lastReplyBy === 'admin';
     return (
-      <Card style={{ marginBottom: 12 }} onPress={() => navigation.navigate('ReportDetail', { reportId: item.id, role })}>
+      <Card style={{ marginBottom: SPACE[3] }} onPress={() => navigation.navigate('ReportDetail', { reportId: item.id, role })}>
         <View style={styles.rowTop}>
           <Text style={styles.title} numberOfLines={1}>{item.subCategoryLabel || item.categoryLabel || 'Report'}</Text>
           <StatusPill status={item.status || 'open'} />
@@ -44,7 +44,12 @@ export default function MyReportsScreen({ navigation, route }) {
         <Text style={TYPE.small} numberOfLines={2}>{item.description}</Text>
         <View style={styles.rowBottom}>
           <Text style={TYPE.small}>{formatWhen(item.createdAt)}</Text>
-          {hasReply ? <Text style={styles.reply}>New reply from support</Text> : null}
+          {hasReply ? (
+            <View style={styles.replyRow}>
+              <View style={styles.replyDot} />
+              <Text style={styles.reply}>New reply from support</Text>
+            </View>
+          ) : null}
         </View>
       </Card>
     );
@@ -58,14 +63,14 @@ export default function MyReportsScreen({ navigation, route }) {
         renderItem={renderItem}
         contentContainerStyle={styles.content}
         ListHeaderComponent={
-          <View style={{ marginBottom: 20 }}>
+          <View style={{ marginBottom: SPACE[5] }}>
             <ScreenHeader
               title="My reports"
               subtitle="Issues you have raised and what support has done."
               onBack={() => navigation.goBack()}
             />
             {reports && reports.length ? (
-              <Button title="Report a new issue" icon="add" variant="secondary" style={{ marginTop: 16 }} onPress={newReport} />
+              <Button title="Report a new issue" icon="add" variant="secondary" style={{ marginTop: SPACE[4] }} onPress={newReport} />
             ) : null}
           </View>
         }
@@ -88,9 +93,11 @@ export default function MyReportsScreen({ navigation, route }) {
 
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.surface },
-  content: { padding: 20, paddingBottom: 48 },
-  rowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 6 },
-  title: { flex: 1, fontSize: 16, fontWeight: '700', color: COLORS.ink },
-  rowBottom: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 },
-  reply: { fontSize: 13, fontWeight: '700', color: COLORS.blue },
+  content: { padding: SPACE[5], paddingBottom: SPACE[12] },
+  rowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: SPACE[3], marginBottom: SPACE[2] },
+  title: { ...TYPE.subhead, flex: 1, color: COLORS.midnight },
+  rowBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: SPACE[3] },
+  replyRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[2] },
+  replyDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.limeDeep },
+  reply: { fontSize: 13, fontWeight: '700', color: COLORS.limeInk },
 });

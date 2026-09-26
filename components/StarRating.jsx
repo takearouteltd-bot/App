@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { COLORS, TYPE } from './ui/kit';
+import { COLORS, TYPE, SPACE } from './ui/kit';
 import { submitRating } from '../utils/ratings';
 
 const WORDS = ['', 'Poor', 'Fair', 'Good', 'Great', 'Excellent'];
@@ -30,12 +30,21 @@ export default function StarRating({ rideId, who, existing, prompt, style }) {
       <Text style={TYPE.heading}>{saved ? 'Thanks for rating' : prompt}</Text>
       <View style={styles.row}>
         {[1, 2, 3, 4, 5].map((n) => (
-          <TouchableOpacity key={n} onPress={() => rate(n)} disabled={saved} activeOpacity={0.7} hitSlop={6}>
-            <Ionicons name={n <= stars ? 'star' : 'star-outline'} size={38} color={n <= stars ? COLORS.star : COLORS.line} />
+          <TouchableOpacity
+            key={n}
+            onPress={() => rate(n)}
+            disabled={saved}
+            activeOpacity={0.7}
+            style={styles.star}
+            accessibilityRole="button"
+            accessibilityLabel={`${n} star${n === 1 ? '' : 's'}`}
+            accessibilityState={{ selected: n <= stars, disabled: saved }}
+          >
+            <Ionicons name={n <= stars ? 'star' : 'star-outline'} size={36} color={n <= stars ? COLORS.star : COLORS.lineStrong} />
           </TouchableOpacity>
         ))}
       </View>
-      <Text style={[TYPE.small, error && { color: COLORS.red }]}>
+      <Text style={[TYPE.small, stars && !error ? { color: COLORS.midnight, fontWeight: '700' } : null, error && { color: COLORS.red }]}>
         {error || (stars ? WORDS[stars] : 'Tap a star')}
       </Text>
     </View>
@@ -43,6 +52,7 @@ export default function StarRating({ rideId, who, existing, prompt, style }) {
 }
 
 const styles = StyleSheet.create({
-  wrap: { alignItems: 'center', paddingVertical: 8 },
-  row: { flexDirection: 'row', gap: 8, marginVertical: 10 },
+  wrap: { alignItems: 'center', paddingVertical: SPACE[2] },
+  row: { flexDirection: 'row', gap: SPACE[1], marginVertical: SPACE[2] },
+  star: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
 });

@@ -3,21 +3,24 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   TextInput,
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
-  ActivityIndicator,
 } from "react-native";
 import { Alert } from "../../components/ui/alert";
-import { Ionicons } from "@expo/vector-icons";
 import nativeAuth from "@react-native-firebase/auth";
 import { setConfirmation } from "../../store/phoneAuthStore";
-import { COLORS, RADIUS } from '../../components/ui/kit';
-
-const PRIMARY = COLORS.primary;
-const DARK = COLORS.ink;
+import {
+  COLORS,
+  RADIUS,
+  SPACE,
+  TYPE,
+  Button,
+  Footer,
+  Screen,
+  ScreenHeader,
+} from '../../components/ui/kit';
 
 const UK_DIAL_CODE = "+44";
 const UK_LOCAL_LENGTH = 10; // UK mobile: 7xxxxxxxxx (the leading 0 is dropped)
@@ -39,6 +42,7 @@ const formatLocal = (digits) => {
 export default function PhoneLoginScreen({ navigation }) {
   const [local, setLocal] = useState("");
   const [loading, setLoading] = useState(false);
+  const [focused, setFocused] = useState(false);
   const inputRef = useRef(null);
 
   const fullNumber = useMemo(() => `${UK_DIAL_CODE}${local}`, [local]);
@@ -76,106 +80,94 @@ export default function PhoneLoginScreen({ navigation }) {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <Screen scroll={false}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
-        style={styles.innerContainer}
+        style={{ flex: 1 }}
       >
-        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={28} color={DARK} />
-        </TouchableOpacity>
-
-        <Text style={styles.title}>Enter your phone number</Text>
-        <Text style={styles.subtitle}>
-          We will send a verification code to sign you in.
-        </Text>
-
-        <TouchableOpacity
-          activeOpacity={1}
-          style={styles.inputContainer}
-          onPress={() => inputRef.current?.focus()}
-        >
-          <View style={styles.prefix}>
-            <Text style={styles.flag}>🇬🇧</Text>
-            <Text style={styles.prefixText}>{UK_DIAL_CODE}</Text>
-          </View>
-          <View style={styles.divider} />
-          <TextInput
-            ref={inputRef}
-            style={styles.input}
-            placeholder="7700 900123"
-            placeholderTextColor={COLORS.faint}
-            keyboardType="number-pad"
-            textContentType="telephoneNumber"
-            autoComplete="tel"
-            value={formatLocal(local)}
-            onChangeText={handleChange}
-            autoFocus
-            maxLength={12}
+        <View style={styles.body}>
+          <ScreenHeader
+            title="Enter your phone number"
+            subtitle="We will send a verification code to sign you in."
+            onBack={() => navigation.goBack()}
           />
-        </TouchableOpacity>
 
-        <Text style={styles.hint}>
-          UK mobile numbers only. Enter the number after +44 without the leading 0.
-        </Text>
+          {/* The phone field: a fixed +44 prefix, then the number. Hand-built
+              because the kit's Field has no prefix slot. */}
+          <TouchableOpacity
+            activeOpacity={1}
+            style={[styles.inputContainer, focused && styles.inputContainerFocused]}
+            onPress={() => inputRef.current?.focus()}
+            accessibilityRole="none"
+          >
+            <View style={styles.prefix}>
+              <Text style={styles.flag}>🇬🇧</Text>
+              <Text style={styles.prefixText}>{UK_DIAL_CODE}</Text>
+            </View>
+            <View style={styles.divider} />
+            <TextInput
+              ref={inputRef}
+              style={styles.input}
+              placeholder="7700 900123"
+              placeholderTextColor={COLORS.faint}
+              selectionColor={COLORS.midnight}
+              keyboardType="number-pad"
+              textContentType="telephoneNumber"
+              autoComplete="tel"
+              value={formatLocal(local)}
+              onChangeText={handleChange}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
+              autoFocus
+              maxLength={12}
+            />
+          </TouchableOpacity>
 
-        <View style={{ flex: 1 }} />
+          <Text style={styles.hint}>
+            UK mobile numbers only. Enter the number after +44 without the leading 0.
+          </Text>
+        </View>
 
-        <TouchableOpacity
-          style={[styles.button, (!canSubmit || loading) && styles.buttonDisabled]}
-          onPress={handleContinue}
-          disabled={!canSubmit || loading}
-        >
-          {loading ? (
-            <ActivityIndicator color={COLORS.white} />
-          ) : (
-            <Text style={styles.buttonText}>Send Verification Code</Text>
-          )}
-        </TouchableOpacity>
+        <Footer>
+          <Button
+            title="Send Verification Code"
+            onPress={handleContinue}
+            disabled={!canSubmit}
+            loading={loading}
+          />
+        </Footer>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.white },
-  innerContainer: { flex: 1, paddingHorizontal: 25, paddingTop: 20 },
-  backBtn: { marginBottom: 30 },
-  title: { fontSize: 34, fontWeight: "bold", color: DARK, marginBottom: 10 },
-  subtitle: { fontSize: 16, color: COLORS.muted, marginBottom: 40, lineHeight: 22 },
+  body: { flex: 1, padding: SPACE[5] },
   inputContainer: {
     flexDirection: "row",
     alignItems: "center",
-    borderWidth: 1,
-    borderColor: COLORS.lineStrong,
-    borderRadius: 12,
-    paddingHorizontal: 15,
+    borderWidth: 1.5,
+    borderColor: COLORS.fill,
+    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.fill,
+    paddingHorizontal: SPACE[4],
     height: 60,
+    marginTop: SPACE[6],
   },
+  inputContainerFocused: { borderColor: COLORS.midnight, backgroundColor: COLORS.white },
   prefix: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
   },
   flag: { fontSize: 20 },
-  prefixText: { fontSize: 18, fontWeight: "600", color: DARK },
+  prefixText: { fontSize: 18, fontWeight: "700", color: COLORS.midnight },
   divider: {
     width: 1,
     height: 28,
     backgroundColor: COLORS.lineStrong,
-    marginHorizontal: 12,
+    marginHorizontal: SPACE[3],
   },
-  input: { flex: 1, fontSize: 18, color: DARK, letterSpacing: 0.5 },
-  hint: { fontSize: 13, color: COLORS.faint, marginTop: 8, marginLeft: 4 },
-  button: {
-    backgroundColor: PRIMARY,
-    paddingVertical: 20,
-    borderRadius: RADIUS.md,
-    alignItems: "center",
-    marginBottom: 15,
-  },
-  buttonDisabled: {
-    opacity: 0.5,
-  },
-  buttonText: { color: COLORS.white, fontSize: 18, fontWeight: "bold" },
+  input: { flex: 1, fontSize: 18, color: COLORS.ink, letterSpacing: 0.5 },
+  hint: { ...TYPE.small, marginTop: SPACE[2], marginLeft: SPACE[1] },
 });

@@ -1,27 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  SafeAreaView,
-  TouchableOpacity,
-  ScrollView,
-  Image,
-  ActivityIndicator,
-} from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { Alert } from '../../../components/ui/alert';
-import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { arrayRemove, arrayUnion, doc, getDoc, onSnapshot, setDoc, deleteField } from 'firebase/firestore';
 import { auth, db } from '../../../config/firebase';
 import { currencySymbol } from '../../../utils/appConfig';
 import EmailReceiptButton from '../../../components/EmailReceiptButton';
-import { COLORS, Avatar, RADIUS } from '../../../components/ui/kit';
-
-const PRIMARY = COLORS.primary;
-const SECONDARY = COLORS.blue;
-const DANGER = COLORS.red;
+import {
+  COLORS, TYPE, SPACE, RADIUS, Screen, ScreenHeader, Card, Button, Avatar, StatusPill, StatRow,
+  RouteLine,
+} from '../../../components/ui/kit';
 
 export default function RiderTripDetailsScreen() {
   const navigation = useNavigation();
@@ -136,6 +126,8 @@ export default function RiderTripDetailsScreen() {
   const status = trip.route?.status?.toUpperCase() || 'PENDING';
   const isCompleted = status === 'COMPLETED';
   const isCancelled = status === 'CANCELLED';
+  // The pill's colour: green for done, red for cancelled, amber otherwise.
+  const pillStatus = isCompleted ? 'approved' : isCancelled ? 'rejected' : 'pending';
 
   // ✅ Fare is an object — extract the total
   const fareTotal = trip.fare?.total ?? 0;
@@ -155,16 +147,6 @@ export default function RiderTripDetailsScreen() {
   const distanceMiles = routeInfo.distanceMiles ?? (routeInfo.distanceKm ? routeInfo.distanceKm * 0.621371 : 0);
   const durationMinutes = routeInfo.durationMinutes ?? 0;
 
-  // ✅ Payment info from nested payment object
-  const payment = trip.payment || {};
-  const paymentMethod = payment.method || 'card';
-  // Written onto the ride by chargeOnRideCompletion from the card Stripe
-  // actually charged. Older trips predate it, so they just say "Card" rather
-  // than inventing digits.
-  const cardLabel = trip.cardLast4
-    ? `${(trip.cardBrand || 'Card').replace(/^./, (c) => c.toUpperCase())} ···· ${trip.cardLast4}`
-    : 'Card';
-
   // ✅ Format timestamps
   const formatDateTime = (timestamp) => {
     if (!timestamp) return 'N/A';
@@ -179,530 +161,198 @@ export default function RiderTripDetailsScreen() {
     });
   };
 
+  const fareRows = [
+    ['Base Fare', trip.fare?.baseFare?.toFixed(2) || '0.00'],
+    ['Distance Fare', trip.fare?.distanceFare?.toFixed(2) || '0.00'],
+    ['Time Fare', trip.fare?.timeFare?.toFixed(2) || '0.00'],
+    trip.fare?.vat > 0 ? ['VAT', trip.fare?.vat?.toFixed(2)] : null,
+  ].filter(Boolean);
+
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()}>
-          <Ionicons name="arrow-back" size={26} color={SECONDARY} />
-        </TouchableOpacity>
+    <Screen>
+      <ScreenHeader title="Trip Details" subtitle={formatDateTime(trip.timestamps?.createdAt)} />
 
-        <Text style={styles.headerTitle}>Trip Details</Text>
-
-        <View style={{ width: 26 }} />
+      <View style={styles.statusRow}>
+        <StatusPill status={pillStatus} label={status} dot />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
-        {/* Map. Trips without saved coordinates simply have no map, rather
-            than falling back to a fixed point on the other side of the world. */}
-        {hasRouteCoords ? (
-        <View style={styles.mapContainer}>
-          <MapView
-            style={styles.map}
-            initialRegion={{
+      {/* Map. Trips without saved coordinates simply have no map, rather
+          than falling back to a fixed point on the other side of the world. */}
+      {hasRouteCoords ? (
+      <View style={styles.mapContainer}>
+        <MapView
+          style={styles.map}
+          initialRegion={{
+            latitude: pickup.latitude,
+            longitude: pickup.longitude,
+            latitudeDelta: 0.02,
+            longitudeDelta: 0.02,
+          }}
+          scrollEnabled={false}
+          zoomEnabled={false}
+        >
+          <Marker
+            coordinate={{
               latitude: pickup.latitude,
               longitude: pickup.longitude,
-              latitudeDelta: 0.02,
-              longitudeDelta: 0.02,
             }}
-            scrollEnabled={false}
-            zoomEnabled={false}
-          >
-            <Marker
-              coordinate={{
+            pinColor={COLORS.primary}
+          />
+
+          <Marker
+            coordinate={{
+              latitude: dropoff.latitude,
+              longitude: dropoff.longitude,
+            }}
+            pinColor={COLORS.red}
+          />
+
+          <Polyline
+            coordinates={[
+              {
                 latitude: pickup.latitude,
                 longitude: pickup.longitude,
-              }}
-              pinColor={PRIMARY}
-            />
-
-            <Marker
-              coordinate={{
+              },
+              {
                 latitude: dropoff.latitude,
                 longitude: dropoff.longitude,
-              }}
-              pinColor={DANGER}
-            />
-
-            <Polyline
-              coordinates={[
-                {
-                  latitude: pickup.latitude,
-                  longitude: pickup.longitude,
-                },
-                {
-                  latitude: dropoff.latitude,
-                  longitude: dropoff.longitude,
-                },
-              ]}
-              strokeColor={SECONDARY}
-              strokeWidth={3}
-            />
-          </MapView>
-        </View>
-        ) : null}
-
-        {/* Status Badge */}
-        <View style={styles.statusRow}>
-          <View style={[
-            styles.statusBadge,
-            {
-              backgroundColor: isCompleted ? COLORS.limeSoft : isCancelled ? '#FDECEC' : '#EEF0F4',
-            }
-          ]}>
-            <Text style={[
-              styles.statusText,
-              {
-                color: isCompleted ? COLORS.success : isCancelled ? DANGER : SECONDARY,
-              }
-            ]}>
-              {status}
-            </Text>
-          </View>
-          <Text style={styles.dateText}>
-            {formatDateTime(trip.timestamps?.createdAt)}
-          </Text>
-        </View>
-
-        {/* Pickup */}
-        <View style={styles.locationRow}>
-          <Ionicons name="location-sharp" size={22} color={PRIMARY} />
-          <View style={styles.locationText}>
-            <Text style={styles.locationLabel}>Pickup</Text>
-            <Text style={styles.locationValue}>{pickup.address || 'Unknown pickup'}</Text>
-          </View>
-        </View>
-
-        {/* Destination */}
-        <View style={styles.locationRow}>
-          <Ionicons name="flag" size={22} color={DANGER} />
-          <View style={styles.locationText}>
-            <Text style={styles.locationLabel}>Destination</Text>
-            <Text style={styles.locationValue}>{dropoff.address || 'Unknown destination'}</Text>
-          </View>
-        </View>
-
-        <View style={styles.divider} />
-
-        {/* Driver Card — with real data */}
-        <View style={styles.driverCard}>
-          {loadingDriver ? (
-            <ActivityIndicator size="small" color={PRIMARY} />
-          ) : (
-            <>
-              <Avatar uri={driver?.image} name={driver?.name} size={52} />
-
-              <View style={{ marginLeft: 12, flex: 1 }}>
-                <Text style={styles.driverName}>{driver?.name || 'Driver'}</Text>
-                <Text style={styles.driverSubtext}>{driver?.vehicle || 'Vehicle'}</Text>
-              </View>
-
-              <View style={styles.driverRating}>
-                <Ionicons name="star" size={16} color={COLORS.star} />
-                <Text style={styles.ratingText}>{driver?.rating || 'New'}</Text>
-              </View>
-            </>
-          )}
-        </View>
-
-        {/* Duration & Distance */}
-        <View style={styles.statsRow}>
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>DURATION</Text>
-            <Text style={styles.statValue}>
-              {durationMinutes ? `${Math.ceil(durationMinutes)} min` : 'N/A'}
-            </Text>
-          </View>
-
-          <View style={styles.statCard}>
-            <Text style={styles.statLabel}>DISTANCE</Text>
-            <Text style={styles.statValue}>
-              {distanceMiles ? `${distanceMiles.toFixed(1)} mi` : 'N/A'}
-            </Text>
-          </View>
-        </View>
-
-        {/* Payment Summary */}
-        <View style={styles.paymentCard}>
-          <Text style={styles.paymentTitle}>Payment Summary</Text>
-
-          <View style={styles.paymentRow}>
-            <Text style={styles.paymentLabel}>Base Fare</Text>
-            <Text style={styles.paymentValue}>
-              {currency}{trip.fare?.baseFare?.toFixed(2) || '0.00'}
-            </Text>
-          </View>
-
-          <View style={styles.paymentRow}>
-            <Text style={styles.paymentLabel}>Distance Fare</Text>
-            <Text style={styles.paymentValue}>
-              {currency}{trip.fare?.distanceFare?.toFixed(2) || '0.00'}
-            </Text>
-          </View>
-
-          <View style={styles.paymentRow}>
-            <Text style={styles.paymentLabel}>Time Fare</Text>
-            <Text style={styles.paymentValue}>
-              {currency}{trip.fare?.timeFare?.toFixed(2) || '0.00'}
-            </Text>
-          </View>
-
-          {trip.fare?.vat > 0 && (
-            <View style={styles.paymentRow}>
-              <Text style={styles.paymentLabel}>VAT</Text>
-              <Text style={styles.paymentValue}>
-                {currency}{trip.fare?.vat?.toFixed(2)}
-              </Text>
-            </View>
-          )}
-
-          <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>Total Paid</Text>
-            <Text style={styles.totalValue}>
-              {currency}{fareTotal.toFixed(2)}
-            </Text>
-          </View>
-        </View>
-
-        {/* Payment Method */}
-        {/* <View style={styles.paymentMethodCard}>
-          <Ionicons 
-            name={paymentMethod === 'card' ? 'card-outline' : 'cash-outline'} 
-            size={24} 
-            color={SECONDARY} 
+              },
+            ]}
+            strokeColor={COLORS.midnight}
+            strokeWidth={3}
           />
-          <View style={{ marginLeft: 12, flex: 1 }}>
-            <Text style={styles.paymentMethodLabel}>Payment Method</Text>
-            <Text style={styles.paymentMethodValue}>
-              {paymentMethod === 'card' ? cardLabel : 'Cash'}
-            </Text>
-          </View>
-          <Text style={[
-            styles.paymentStatus,
-            { color: payment.status === 'paid' ? COLORS.success : DANGER }
-          ]}>
-            {payment.status?.toUpperCase() || 'PENDING'}
-          </Text>
-        </View> */}
+        </MapView>
+      </View>
+      ) : null}
 
-        {/* Buttons */}
+      {/* Journey */}
+      <Card style={{ marginTop: SPACE[4] }}>
+        <RouteLine
+          pickup={pickup.address || 'Unknown pickup'}
+          dropoff={dropoff.address || 'Unknown destination'}
+        />
+      </Card>
+
+      {/* Driver Card — with real data */}
+      <Card style={styles.driverCard}>
+        {loadingDriver ? (
+          <ActivityIndicator size="small" color={COLORS.midnight} />
+        ) : (
+          <>
+            <Avatar uri={driver?.image} name={driver?.name} size={52} />
+
+            <View style={{ marginLeft: SPACE[3], flex: 1 }}>
+              <Text style={styles.driverName}>{driver?.name || 'Driver'}</Text>
+              <Text style={[TYPE.small, { marginTop: 2 }]}>{driver?.vehicle || 'Vehicle'}</Text>
+            </View>
+
+            <View style={styles.driverRating}>
+              <Ionicons name="star" size={16} color={COLORS.star} />
+              <Text style={styles.ratingText}>{driver?.rating || 'New'}</Text>
+            </View>
+          </>
+        )}
+      </Card>
+
+      {/* Duration & Distance */}
+      <Card style={{ marginTop: SPACE[3] }}>
+        <StatRow
+          items={[
+            { value: durationMinutes ? `${Math.ceil(durationMinutes)} min` : 'N/A', label: 'Duration' },
+            { value: distanceMiles ? `${distanceMiles.toFixed(1)} mi` : 'N/A', label: 'Distance' },
+          ]}
+        />
+      </Card>
+
+      {/* Payment Summary */}
+      <Card style={{ marginTop: SPACE[3] }}>
+        <Text style={[TYPE.label, { marginBottom: SPACE[2] }]}>Payment Summary</Text>
+
+        {fareRows.map(([label, value]) => (
+          <View key={label} style={styles.paymentRow}>
+            <Text style={TYPE.small}>{label}</Text>
+            <Text style={TYPE.callout}>{currency}{value}</Text>
+          </View>
+        ))}
+
+        <View style={styles.totalRow}>
+          <Text style={styles.totalLabel}>Total Paid</Text>
+          <Text style={styles.totalValue}>
+            {currency}{fareTotal.toFixed(2)}
+          </Text>
+        </View>
+      </Card>
+
+      {/* Buttons */}
+      <View style={styles.actions}>
         {isCompleted ? (
-          <EmailReceiptButton rideId={trip.id} style={{ marginBottom: 12, borderRadius: 30, minHeight: 50 }} />
+          <EmailReceiptButton rideId={trip.id} />
         ) : null}
 
-        <TouchableOpacity onPress={bookAgain} style={styles.secondaryBtn}>
-          <Ionicons name="refresh" size={20} color={COLORS.white} />
-          <Text style={styles.primaryBtnText}>Book this trip again</Text>
-        </TouchableOpacity>
+        <Button title="Book this trip again" icon="refresh" onPress={bookAgain} />
 
         {trip.driverId ? (
-          <TouchableOpacity onPress={toggleBlockDriver} style={styles.outlineBtn}>
-            <Ionicons name={isBlocked ? 'person-add-outline' : 'person-remove-outline'} size={20} color={SECONDARY} />
-            <Text style={[styles.primaryBtnText, { color: SECONDARY }]}>
-              {isBlocked ? 'Allow this driver again' : "Don't match me with this driver"}
-            </Text>
-          </TouchableOpacity>
+          <Button
+            title={isBlocked ? 'Allow this driver again' : "Don't match me with this driver"}
+            icon={isBlocked ? 'person-add-outline' : 'person-remove-outline'}
+            variant="secondary"
+            onPress={toggleBlockDriver}
+          />
         ) : null}
 
-        <TouchableOpacity 
-        onPress={() => navigation.navigate('ReportIssueScreen', { 
+        <Button
+          title="Report an Issue"
+          icon="warning-outline"
+          variant="danger"
+          onPress={() => navigation.navigate('ReportIssueScreen', {
             trip: trip,
             reporterType: 'rider'
           })}
-        style={styles.dangerBtn}>
-          <MaterialIcons name="report-problem" size={20} color={COLORS.white} />
-          <Text style={styles.primaryBtnText}>Report an Issue</Text>
-        </TouchableOpacity>
-
-      </ScrollView>
-    </SafeAreaView>
+        />
+      </View>
+    </Screen>
   );
 }
 
 
 const styles = StyleSheet.create({
-
-  container: {
-    flex: 1,
-    backgroundColor: '#F4F6F9',
-  },
-
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    elevation: 3,
-  },
-
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: COLORS.ink,
-  },
-
-  content: {
-    padding: 20,
-  },
+  statusRow: { flexDirection: 'row', alignItems: 'center', marginTop: SPACE[3] },
 
   mapContainer: {
     height: 180,
-    borderRadius: 18,
+    borderRadius: RADIUS.lg,
     overflow: 'hidden',
-    marginBottom: 20,
+    marginTop: SPACE[4],
   },
-
-  map: {
-    flex: 1,
-  },
-
-  statusRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-
-  statusBadge: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-  },
-
-  statusText: {
-    fontSize: 12,
-    fontWeight: '800',
-  },
-
-  dateText: {
-    fontSize: 14,
-    color: COLORS.muted,
-    fontWeight: '500',
-  },
-
-  locationRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-
-  locationText: {
-    marginLeft: 10,
-    flex: 1,
-  },
-
-  locationLabel: {
-    fontSize: 12,
-    color: COLORS.muted,
-  },
-
-  locationValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: COLORS.ink,
-    marginTop: 2,
-  },
-
-  divider: {
-    height: 1,
-    backgroundColor: COLORS.line,
-    marginVertical: 20,
-  },
+  map: { flex: 1 },
 
   driverCard: {
     flexDirection: 'row',
-    backgroundColor: COLORS.white,
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 20,
     alignItems: 'center',
-    elevation: 3,
+    marginTop: SPACE[3],
     minHeight: 87,
   },
-
-  driverImage: {
-    width: 55,
-    height: 55,
-    borderRadius: 28,
-  },
-
-  driverName: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.ink,
-  },
-
-  driverSubtext: {
-    fontSize: 13,
-    color: COLORS.muted,
-    marginTop: 2,
-  },
-
-  driverRating: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-
-  ratingText: {
-    marginLeft: 4,
-    fontWeight: '600',
-    fontSize: 14,
-  },
-
-  statsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 20,
-  },
-
-  statCard: {
-    flex: 0.48,
-    backgroundColor: COLORS.white,
-    borderRadius: 18,
-    padding: 18,
-    alignItems: 'center',
-    elevation: 3,
-  },
-
-  statLabel: {
-    fontSize: 12,
-    color: COLORS.muted,
-  },
-
-  statValue: {
-    fontSize: 22,
-    fontWeight: '800',
-    marginTop: 4,
-    color: COLORS.ink,
-  },
-
-  paymentCard: {
-    backgroundColor: COLORS.white,
-    borderRadius: 18,
-    padding: 18,
-    marginBottom: 20,
-    elevation: 3,
-  },
-
-  paymentTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: SECONDARY,
-    marginBottom: 14,
-  },
+  driverName: { ...TYPE.subhead, fontSize: 17, color: COLORS.midnight },
+  driverRating: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  ratingText: { ...TYPE.callout, color: COLORS.inkSoft },
 
   paymentRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginVertical: 4,
+    alignItems: 'center',
+    paddingVertical: SPACE[2],
   },
-
-  paymentLabel: {
-    fontSize: 14,
-    color: COLORS.muted,
-  },
-
-  paymentValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: COLORS.ink,
-  },
-
   totalRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 14,
-    paddingTop: 14,
-    borderTopWidth: 1,
+    alignItems: 'center',
+    marginTop: SPACE[2],
+    paddingTop: SPACE[3],
+    borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: COLORS.line,
   },
+  totalLabel: { ...TYPE.subhead, color: COLORS.midnight },
+  totalValue: { ...TYPE.figure, fontSize: 20 },
 
-  totalLabel: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.ink,
-  },
-
-  totalValue: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: PRIMARY,
-  },
-
-  paymentMethodCard: {
-    flexDirection: 'row',
-    backgroundColor: COLORS.white,
-    borderRadius: 18,
-    padding: 18,
-    marginBottom: 20,
-    alignItems: 'center',
-    elevation: 3,
-  },
-
-  paymentMethodLabel: {
-    fontSize: 12,
-    color: COLORS.muted,
-  },
-
-  paymentMethodValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: COLORS.ink,
-    marginTop: 2,
-  },
-
-  paymentStatus: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-
-  primaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: SECONDARY,
-    paddingVertical: 14,
-    borderRadius: RADIUS.md,
-    marginBottom: 12,
-  },
-
-  secondaryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: PRIMARY,
-    paddingVertical: 14,
-    borderRadius: RADIUS.md,
-    marginBottom: 12,
-  },
-
-  outlineBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: '#D5DCE6',
-    paddingVertical: 14,
-    borderRadius: RADIUS.md,
-    marginBottom: 12,
-  },
-
-  dangerBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: DANGER,
-    paddingVertical: 14,
-    borderRadius: RADIUS.md,
-    marginBottom: 40,
-  },
-
-  primaryBtnText: {
-    color: COLORS.white,
-    fontWeight: '700',
-    fontSize: 16,
-    marginLeft: 8,
-  },
+  actions: { marginTop: SPACE[6], gap: SPACE[3], paddingBottom: SPACE[4] },
 });

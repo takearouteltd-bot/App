@@ -3,11 +3,9 @@
 // (This screen previously showed placeholder data and saved nothing.)
 import React, { useEffect, useState } from 'react';
 import {
-  SafeAreaView,
   ScrollView,
   View,
   Text,
-  Image,
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
@@ -17,7 +15,8 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../../../config/firebase';
 import { submitChangeRequest, useChangeRequests } from '../../../utils/changeRequests';
 import {
-  COLORS, TYPE, ScreenHeader, Section, Card, ListRow, StatusPill, Button, Field, Loading, formatWhen,
+  COLORS, TYPE, SPACE, Screen, ScreenHeader, Section, Card, ListRow, StatusPill, Button, Field, Loading,
+  Avatar, formatWhen,
 } from '../../../components/ui/kit';
 
 const DETAILS = [
@@ -89,16 +88,16 @@ export default function DriverPersonalInformationScreen({ navigation }) {
 
   if (!driver) {
     return (
-      <SafeAreaView style={styles.safe}>
+      <Screen scroll={false}>
         <Loading />
-      </SafeAreaView>
+      </Screen>
     );
   }
 
   const recent = items.filter((r) => r.kind === 'detail').slice(0, 5);
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen scroll={false}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <ScreenHeader
@@ -107,24 +106,29 @@ export default function DriverPersonalInformationScreen({ navigation }) {
             onBack={() => navigation.goBack()}
           />
 
-          <View style={styles.identity}>
-            {driver.selfieUrl ? (
-              <Image source={{ uri: driver.selfieUrl }} style={styles.avatar} />
-            ) : (
-              <View style={[styles.avatar, styles.avatarEmpty]}>
-                <Text style={styles.initials}>{(valueOf(driver, 'fullName') || 'D').charAt(0).toUpperCase()}</Text>
-              </View>
-            )}
+          <Card tone="dark" style={styles.identity}>
+            <Avatar
+              uri={driver.selfieUrl}
+              name={valueOf(driver, 'fullName') || 'Driver'}
+              size={60}
+              style={styles.avatarRing}
+            />
             <View style={{ flex: 1 }}>
-              <Text style={TYPE.heading}>{valueOf(driver, 'fullName') || 'Driver'}</Text>
-              <Text style={TYPE.small}>
-                {driver.approved ? 'Approved driver' : 'Application under review'}
+              <Text style={[TYPE.heading, { color: COLORS.white }]} numberOfLines={1}>
+                {valueOf(driver, 'fullName') || 'Driver'}
               </Text>
+              <View style={{ flexDirection: 'row', marginTop: SPACE[2] }}>
+                <StatusPill
+                  status={driver.approved ? 'approved' : 'pending'}
+                  label={driver.approved ? 'Approved driver' : 'Application under review'}
+                  dot
+                />
+              </View>
             </View>
-          </View>
+          </Card>
 
           <Section title="Your details">
-            <Card style={{ paddingVertical: 0 }}>
+            <Card flush>
               {DETAILS.map((item, i) => {
                 const pending = pendingFor(item.field);
                 const isEditing = editing === item.field;
@@ -154,7 +158,7 @@ export default function DriverPersonalInformationScreen({ navigation }) {
                           onChangeText={setNote}
                           placeholder="For example, I changed my number"
                         />
-                        <View style={{ flexDirection: 'row', gap: 10 }}>
+                        <View style={{ flexDirection: 'row', gap: SPACE[3] }}>
                           <Button title="Cancel" variant="secondary" onPress={() => setEditing(null)} style={{ flex: 1 }} />
                           <Button title="Send request" onPress={() => send(item)} loading={sending} style={{ flex: 1.4 }} />
                         </View>
@@ -168,7 +172,7 @@ export default function DriverPersonalInformationScreen({ navigation }) {
 
           {recent.length ? (
             <Section title="Recent requests">
-              <Card style={{ paddingVertical: 0 }}>
+              <Card flush>
                 {recent.map((r, i) => (
                   <ListRow
                     key={r.id}
@@ -187,7 +191,7 @@ export default function DriverPersonalInformationScreen({ navigation }) {
           ) : null}
 
           <Section title="Documents">
-            <Card style={{ paddingVertical: 0 }}>
+            <Card flush>
               <ListRow
                 icon="folder-open-outline"
                 title="My documents"
@@ -199,16 +203,14 @@ export default function DriverPersonalInformationScreen({ navigation }) {
           </Section>
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.surface },
-  content: { padding: 20, paddingBottom: 48 },
-  identity: { flexDirection: 'row', alignItems: 'center', gap: 14, marginTop: 20 },
-  avatar: { width: 60, height: 60, borderRadius: 18 },
-  avatarEmpty: { backgroundColor: COLORS.blueSoft, alignItems: 'center', justifyContent: 'center' },
-  initials: { fontSize: 24, fontWeight: '800', color: COLORS.blue },
-  editBox: { paddingBottom: 16, paddingTop: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.line },
+  content: { padding: SPACE[5], paddingBottom: SPACE[12] },
+  identity: { flexDirection: 'row', alignItems: 'center', gap: SPACE[4], marginTop: SPACE[4] },
+  // The initial-on-midnight fallback would vanish on the dark card without a ring.
+  avatarRing: { borderWidth: 2, borderColor: COLORS.lime, overflow: 'hidden' },
+  editBox: { paddingBottom: SPACE[4], paddingTop: SPACE[1], borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.line },
 });

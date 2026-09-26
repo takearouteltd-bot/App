@@ -1,9 +1,9 @@
 import React from 'react';
-import { View, Text, StyleSheet, SafeAreaView } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { money } from '../../../utils/appConfig';
-import { COLORS, TYPE, SPACE, RADIUS, Card, Button } from '../../../components/ui/kit';
+import { COLORS, TYPE, SPACE, Screen, Card, Button, Footer } from '../../../components/ui/kit';
 
 export default function WithdrawalSuccessScreen() {
   const navigation = useNavigation();
@@ -22,10 +22,10 @@ export default function WithdrawalSuccessScreen() {
   });
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <Screen scroll={false}>
       <View style={styles.content}>
         <View style={styles.tick}>
-          <Ionicons name="checkmark" size={38} color={COLORS.white} />
+          <Ionicons name="checkmark" size={40} color={COLORS.midnight} />
         </View>
 
         <Text style={styles.title}>Withdrawal requested</Text>
@@ -38,7 +38,7 @@ export default function WithdrawalSuccessScreen() {
           You will get a notification when it has been paid.
         </Text>
 
-        <Card style={styles.receipt}>
+        <Card flush style={styles.receipt}>
           <Row label="Requested" value={requestedAt} />
           {payoutId ? <Row label="Reference" value={String(payoutId).slice(0, 8).toUpperCase()} /> : null}
           {accountNumber ? <Row label="Paying into" value={accountNumber} /> : null}
@@ -46,10 +46,10 @@ export default function WithdrawalSuccessScreen() {
         </Card>
       </View>
 
-      <View style={styles.footer}>
+      <Footer>
         <Button title="Back to earnings" onPress={() => navigation.replace('EarningsScreen')} />
-      </View>
-    </SafeAreaView>
+      </Footer>
+    </Screen>
   );
 }
 
@@ -65,29 +65,26 @@ function Row({ label, value, last }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.surface, justifyContent: 'space-between' },
-  content: { paddingHorizontal: SPACE[5], paddingTop: SPACE[12], alignItems: 'center' },
+  content: { flex: 1, paddingHorizontal: SPACE[5], paddingTop: SPACE[12], alignItems: 'center' },
 
   tick: {
-    width: 72, height: 72, borderRadius: 36,
-    backgroundColor: COLORS.primary,
+    width: 88, height: 88, borderRadius: 44,
+    backgroundColor: COLORS.lime,
     alignItems: 'center', justifyContent: 'center',
     marginBottom: SPACE[6],
   },
   title: { ...TYPE.title, textAlign: 'center' },
-  amount: { fontSize: 40, fontWeight: '800', color: COLORS.navy, letterSpacing: -1.4, marginTop: SPACE[2] },
+  amount: { ...TYPE.figure, fontSize: 40, letterSpacing: -1.4, marginTop: SPACE[2] },
   body: {
     ...TYPE.body, color: COLORS.muted, textAlign: 'center',
     marginTop: SPACE[4], maxWidth: 320,
   },
 
-  receipt: { alignSelf: 'stretch', marginTop: SPACE[8], paddingVertical: 0 },
+  receipt: { alignSelf: 'stretch', marginTop: SPACE[8] },
   row: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingVertical: SPACE[4], gap: SPACE[4],
   },
   rowLine: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.line },
-  rowValue: { fontSize: 14, fontWeight: '700', color: COLORS.ink, flexShrink: 1, textAlign: 'right' },
-
-  footer: { padding: SPACE[5] },
+  rowValue: { ...TYPE.callout, fontSize: 14, flexShrink: 1, textAlign: 'right' },
 });
