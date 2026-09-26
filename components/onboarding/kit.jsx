@@ -3,8 +3,8 @@
 // steps read as one journey: the same header, the same progress, the same
 // place for the button that moves you on.
 //
-// Built from the app's design system (components/ui/kit). Navy frames the
-// step, green is only ever the way forward.
+// Built from the app's design system (components/ui/kit). Midnight frames
+// the step, lime marks progress and the way forward.
 import React from 'react';
 import {
   ActivityIndicator,
@@ -54,7 +54,7 @@ export function OnboardingFrame({ step, title, subtitle, action, children, foote
 
   return (
     <View style={styles.root}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.navyDeep} />
+      <StatusBar barStyle="light-content" backgroundColor={COLORS.midnight} />
       <SafeAreaView style={styles.headerSafe}>
         <View style={styles.header}>
           {/* The step's icon, large and faint, gives each page its own face. */}
@@ -118,7 +118,7 @@ export function OnboardingFrame({ step, title, subtitle, action, children, foote
   );
 }
 
-/* Five segments: done ones solid green, this one green, the rest faint. */
+/* Five segments: done ones lime, this one white, the rest faint. */
 function Progress({ step }) {
   return (
     <View style={styles.progress} accessibilityLabel={`Step ${step} of ${DRIVER_STEPS.length}`}>
@@ -176,7 +176,7 @@ export function UploadTile({ title, subtitle, icon, url, uploading, onPress, opt
           <MaterialCommunityIcons
             name={isPdf ? 'file-pdf-box' : icon}
             size={26}
-            color={done ? COLORS.success : COLORS.navy}
+            color={done ? COLORS.success : COLORS.midnight}
           />
         )}
       </View>
@@ -213,7 +213,7 @@ export function ChoiceCard({ title, detail, meta, icon, selected, onPress, style
     >
       {icon ? (
         <View style={[styles.choiceIcon, selected && styles.choiceIconSelected]}>
-          <MaterialCommunityIcons name={icon} size={22} color={selected ? COLORS.white : COLORS.navy} />
+          <MaterialCommunityIcons name={icon} size={22} color={selected ? COLORS.lime : COLORS.midnight} />
         </View>
       ) : null}
       <View style={{ flex: 1 }}>
@@ -246,7 +246,7 @@ export function ConsentRow({ checked, onToggle, text, link }) {
       accessibilityState={{ checked: !!checked }}
     >
       <View style={[styles.box, checked && styles.boxOn]}>
-        {checked ? <Ionicons name="checkmark" size={16} color={COLORS.white} /> : null}
+        {checked ? <Ionicons name="checkmark" size={16} color={COLORS.lime} /> : null}
       </View>
       <Text style={styles.consentText}>
         {text}
@@ -265,9 +265,9 @@ export function ConsentRow({ checked, onToggle, text, link }) {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: COLORS.surface },
 
-  headerSafe: { backgroundColor: COLORS.navyDeep },
+  headerSafe: { backgroundColor: COLORS.midnight },
   header: {
-    backgroundColor: COLORS.navyDeep,
+    backgroundColor: COLORS.midnight,
     paddingHorizontal: SPACE[5],
     paddingTop: SPACE[3],
     paddingBottom: SPACE[6],
@@ -290,10 +290,10 @@ const styles = StyleSheet.create({
 
   progress: { flexDirection: 'row', gap: 6, marginTop: SPACE[5] },
   segment: { flex: 1, height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.16)' },
-  segmentDone: { backgroundColor: COLORS.midnight },
-  segmentCurrent: { backgroundColor: COLORS.limeDeep },
+  segmentDone: { backgroundColor: COLORS.lime },
+  segmentCurrent: { backgroundColor: COLORS.white },
 
-  eyebrow: { ...TYPE.label, color: COLORS.limeInk, marginTop: SPACE[5] },
+  eyebrow: { ...TYPE.label, color: COLORS.lime, marginTop: SPACE[5] },
   title: { ...TYPE.title, color: COLORS.white, marginTop: SPACE[1] },
   subtitle: { ...TYPE.body, color: COLORS.onDark, marginTop: SPACE[2] },
 
@@ -323,10 +323,10 @@ const styles = StyleSheet.create({
     padding: SPACE[3],
     marginBottom: SPACE[3],
   },
-  tileDone: { borderStyle: 'solid', borderColor: '#D9F0A0' },
+  tileDone: { borderStyle: 'solid', borderColor: COLORS.limeLine, backgroundColor: COLORS.limeSoft },
   tileThumb: {
     width: 54, height: 54, borderRadius: RADIUS.md,
-    backgroundColor: COLORS.blueSoft,
+    backgroundColor: COLORS.fill,
     alignItems: 'center', justifyContent: 'center',
     overflow: 'hidden',
   },
@@ -352,7 +352,7 @@ const styles = StyleSheet.create({
   choiceSelected: { borderColor: COLORS.midnight, backgroundColor: COLORS.limeSoft },
   choiceIcon: {
     width: 44, height: 44, borderRadius: RADIUS.md,
-    backgroundColor: COLORS.blueSoft,
+    backgroundColor: COLORS.fill,
     alignItems: 'center', justifyContent: 'center',
   },
   choiceIconSelected: { backgroundColor: COLORS.primary },
@@ -362,12 +362,12 @@ const styles = StyleSheet.create({
 
   consent: { flexDirection: 'row', alignItems: 'flex-start', gap: SPACE[3], paddingVertical: SPACE[2] },
   box: {
-    width: 24, height: 24, borderRadius: 7,
+    width: 24, height: 24, borderRadius: 8,
     borderWidth: 2, borderColor: COLORS.lineStrong,
     alignItems: 'center', justifyContent: 'center',
     marginTop: 1,
   },
   boxOn: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
   consentText: { ...TYPE.body, flex: 1, color: COLORS.inkSoft },
-  consentLink: { color: COLORS.blue, fontWeight: '700', textDecorationLine: 'underline' },
+  consentLink: { color: COLORS.midnight, fontWeight: '700', textDecorationLine: 'underline' },
 });

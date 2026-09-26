@@ -225,7 +225,31 @@ export function ScreenHeader(props) {
   return <ScreenHeaderView {...props} onBack={onBack} />;
 }
 
-function ScreenHeaderView({ title, subtitle, onBack, right }) {
+function ScreenHeaderView({ title, subtitle, onBack, right, compact }) {
+  if (compact) {
+    return (
+      <View style={s.compactHeader}>
+        {onBack ? (
+          <TouchableOpacity
+            onPress={onBack}
+            style={s.backBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel="Go back"
+          >
+            <Ionicons name="chevron-back" size={22} color={COLORS.midnight} />
+          </TouchableOpacity>
+        ) : (
+          <View style={{ width: 40 }} />
+        )}
+        <View style={{ flex: 1, alignItems: 'center' }}>
+          <Text style={TYPE.heading} numberOfLines={1}>{title}</Text>
+          {subtitle ? <Text style={TYPE.caption} numberOfLines={1}>{subtitle}</Text> : null}
+        </View>
+        {right || <View style={{ width: 40 }} />}
+      </View>
+    );
+  }
   return (
     <View style={s.header}>
       {(onBack || right) ? (
@@ -281,6 +305,7 @@ export function Card({ children, style, onPress, tone, flush }) {
     : tone === 'danger' ? { backgroundColor: COLORS.redSoft, borderColor: '#FCA5A5' }
     : tone === 'success' ? { backgroundColor: COLORS.limeSoft, borderColor: COLORS.limeLine }
     : tone === 'dark' ? { backgroundColor: COLORS.midnight, borderColor: COLORS.midnight }
+    : tone === 'accent' ? { backgroundColor: COLORS.lime, borderColor: COLORS.lime }
     : null;
   const body = (
     <View style={[s.card, !toneStyle && SHADOW.card, toneStyle && s.cardToned, flush && { paddingVertical: 0 }, toneStyle, style]}>{children}</View>
@@ -315,6 +340,19 @@ export function Sheet({ children, style, grabber = true }) {
       {grabber ? <View style={s.grabber} /> : null}
       {children}
     </View>
+  );
+}
+
+/* The bar that stays at the bottom of the screen with the main action in it.
+   White, a hairline above, and clear of the home indicator. */
+export function Footer({ children, note, style }) {
+  return (
+    <SafeAreaView style={{ backgroundColor: COLORS.white }}>
+      <View style={[s.footer, style]}>
+        {note ? <Text style={[TYPE.caption, { textAlign: 'center', marginBottom: SPACE[2] }]}>{note}</Text> : null}
+        {children}
+      </View>
+    </SafeAreaView>
   );
 }
 
@@ -565,7 +603,7 @@ export function Chip({ label, icon, active, onPress, style }) {
   );
 }
 
-export function Field({ label, hint, error, style, right, ...inputProps }) {
+export function Field({ label, hint, error, style, left, right, ...inputProps }) {
   const [focused, setFocused] = React.useState(false);
   return (
     <View style={[{ marginBottom: SPACE[4] }, style]}>
@@ -577,6 +615,9 @@ export function Field({ label, hint, error, style, right, ...inputProps }) {
           error && { borderColor: COLORS.red },
         ]}
       >
+        {left ? (
+          <Ionicons name={left} size={20} color={COLORS.muted} style={{ marginLeft: SPACE[4], marginRight: -SPACE[1] }} />
+        ) : null}
         <TextInput
           placeholderTextColor={COLORS.faint}
           selectionColor={COLORS.midnight}
@@ -801,6 +842,15 @@ export function formatWhen(ts) {
 
 const s = StyleSheet.create({
   header: { paddingTop: SPACE[2], paddingBottom: SPACE[1] },
+  compactHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[2],
+    paddingHorizontal: SPACE[4], paddingVertical: SPACE[2], minHeight: 56,
+  },
+  footer: {
+    paddingHorizontal: SPACE[5], paddingTop: SPACE[3], paddingBottom: SPACE[3],
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line,
+    backgroundColor: COLORS.white,
+  },
   headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: SPACE[3] },
   backBtn: {
     width: 40, height: 40, borderRadius: 20,

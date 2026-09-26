@@ -124,8 +124,8 @@ const TONES = {
   warning: { icon: 'information-circle', fg: COLORS.amber, bg: COLORS.amberSoft },
   success: { icon: 'checkmark-circle', fg: COLORS.success, bg: COLORS.successSoft },
   danger: { icon: 'warning', fg: COLORS.red, bg: COLORS.redSoft },
-  confirm: { icon: 'help-circle', fg: COLORS.blue, bg: COLORS.blueSoft },
-  info: { icon: 'information-circle', fg: COLORS.blue, bg: COLORS.blueSoft },
+  confirm: { icon: 'help-circle', fg: COLORS.midnight, bg: COLORS.lime },
+  info: { icon: 'information-circle', fg: COLORS.midnight, bg: COLORS.lime },
 };
 
 function toneFor(title, message, buttons) {
@@ -214,7 +214,6 @@ function Dialog({ item, onButton, onBackdrop }) {
   const variantFor = (b) => {
     if (b.style === 'destructive') return 'danger';
     if (b.style === 'cancel') return 'secondary';
-    if (buttons.length === 1) return 'dark';   // an acknowledgement, not an action
     return 'primary';
   };
 
@@ -228,7 +227,7 @@ function Dialog({ item, onButton, onBackdrop }) {
         {/* Swallows taps so pressing the card does not count as outside. */}
         <Pressable onPress={() => {}} accessible={false}>
           <View style={[styles.badge, { backgroundColor: tone.bg }]}>
-            <Ionicons name={tone.icon} size={30} color={tone.fg} />
+            <Ionicons name={tone.icon} size={28} color={tone.fg} />
           </View>
 
           {title ? <Text style={styles.title}>{title}</Text> : null}
@@ -263,14 +262,14 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     borderRadius: RADIUS.xl,
     paddingHorizontal: SPACE[6],
-    paddingTop: SPACE[6],
-    paddingBottom: SPACE[5],
-    ...SHADOW.float,
+    paddingTop: SPACE[7],
+    paddingBottom: SPACE[6],
+    ...SHADOW.sheet,
   },
   badge: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
     alignItems: 'center',
     justifyContent: 'center',
     alignSelf: 'center',
@@ -278,6 +277,8 @@ const styles = StyleSheet.create({
   },
   title: {
     ...TYPE.heading,
+    fontSize: 22,
+    letterSpacing: -0.5,
     textAlign: 'center',
   },
   message: {

@@ -48,10 +48,10 @@ export default function SelectField({ label, value, options, onChange, placehold
                     accessibilityState={{ selected: on }}
                   >
                     <View style={{ flex: 1 }}>
-                      <Text style={[styles.optionText, on && { color: COLORS.navy, fontWeight: '700' }]}>{item.label}</Text>
+                      <Text style={[styles.optionText, on && { color: COLORS.midnight, fontWeight: '700' }]}>{item.label}</Text>
                       {item.detail ? <Text style={TYPE.small}>{item.detail}</Text> : null}
                     </View>
-                    {on ? <Ionicons name="checkmark" size={20} color={COLORS.primary} /> : null}
+                    {on ? <Ionicons name="checkmark-circle" size={22} color={COLORS.limeInk} /> : null}
                   </TouchableOpacity>
                 );
               }}
@@ -89,14 +89,14 @@ export default function SelectField({ label, value, options, onChange, placehold
 }
 
 const styles = StyleSheet.create({
-  label: { fontSize: 13, fontWeight: '600', color: COLORS.navy, marginBottom: SPACE[2] },
+  label: { fontSize: 13, fontWeight: '700', color: COLORS.inkSoft, marginBottom: SPACE[2] },
   box: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[2],
-    minHeight: 50, paddingHorizontal: SPACE[4],
-    borderRadius: RADIUS.md, borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.lineStrong,
-    backgroundColor: COLORS.white,
+    minHeight: 54, paddingHorizontal: SPACE[4],
+    borderRadius: RADIUS.md, borderWidth: 1.5, borderColor: COLORS.fill,
+    backgroundColor: COLORS.fill,
   },
-  value: { flex: 1, fontSize: 15, color: COLORS.ink },
+  value: { flex: 1, fontSize: 16, color: COLORS.ink },
   backdrop: { flex: 1, backgroundColor: COLORS.overlay, justifyContent: 'flex-end' },
   sheet: {
     backgroundColor: COLORS.white,
@@ -104,7 +104,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE[5], paddingTop: SPACE[3], paddingBottom: SPACE[8],
     ...SHADOW.sheet,
   },
-  grabber: { width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.line, alignSelf: 'center', marginBottom: SPACE[4] },
+  grabber: { width: 44, height: 5, borderRadius: 3, backgroundColor: COLORS.lineStrong, alignSelf: 'center', marginBottom: SPACE[4] },
   title: { ...TYPE.heading, marginBottom: SPACE[2] },
   option: {
     flexDirection: 'row', alignItems: 'center', minHeight: 56, paddingVertical: SPACE[3],
