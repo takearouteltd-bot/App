@@ -233,6 +233,21 @@ export default function DriverHomeScreen() {
       return;
     }
 
+    // An expired licence, insurance or MOT means no driving until it is
+    // replaced. The server stops offering jobs to such drivers as well.
+    const expired = documentAlerts.filter((a) => a.status === 'expired');
+    if (newStatus === 'online' && expired.length) {
+      Alert.alert(
+        'Document expired',
+        `${expired[0].label} has expired. Upload a new one to go online.`,
+        [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Update', onPress: () => navigation.navigate('DriverDocuments') },
+        ]
+      );
+      return;
+    }
+
     // Driving needs an active membership; nothing else starts it.
     if (newStatus === 'online' && (!membershipStatus || membershipStatus === 'cancelled')) {
       Alert.alert(
@@ -323,7 +338,8 @@ export default function DriverHomeScreen() {
   };
 
   useEffect(() => {
-    if (!isOnline || !location) return undefined;
+    // No jobs for anyone who is not approved, whatever their status says.
+    if (!isOnline || !location || !isApproved) return undefined;
 
     const q = query(collection(db, 'rides'), where('status', '==', 'searching'));
 
@@ -368,7 +384,7 @@ export default function DriverHomeScreen() {
         return next;
       });
     });
-  }, [isOnline, location, searchRadiusKm, driverId, vehicleType, workingCityId, femaleVerified, animateCard]);
+  }, [isOnline, location, isApproved, searchRadiusKm, driverId, vehicleType, workingCityId, femaleVerified, animateCard]);
 
   // Going offline takes the offer card down with it.
   useEffect(() => {
@@ -477,6 +493,10 @@ export default function DriverHomeScreen() {
 
   const handleAcceptRide = async (ride) => {
     if (isAccepting) return;
+    if (!isApproved) {
+      Alert.alert('Not approved', 'Your application must be approved before you can take jobs.');
+      return;
+    }
     takenOver.current = true;
     setIsAccepting(true);
 

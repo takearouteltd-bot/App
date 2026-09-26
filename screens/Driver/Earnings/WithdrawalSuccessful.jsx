@@ -11,7 +11,8 @@ export default function WithdrawalSuccessScreen() {
 
   // Passed through from the withdrawal that was actually requested. This
   // screen used to show a hardcoded amount, transaction id and date.
-  const { payoutId, amount, accountNumber, accountHolder } = route.params || {};
+  const { payoutId, amount, accountNumber, accountHolder, status } = route.params || {};
+  const sent = status === 'completed';
 
   const requestedAt = new Date().toLocaleString('en-GB', {
     day: 'numeric',
@@ -28,18 +29,19 @@ export default function WithdrawalSuccessScreen() {
           <Ionicons name="checkmark" size={40} color={COLORS.midnight} />
         </View>
 
-        <Text style={styles.title}>Withdrawal requested</Text>
+        <Text style={styles.title}>{sent ? 'Payout sent' : 'Withdrawal requested'}</Text>
         <Text style={styles.amount}>{money(amount)}</Text>
 
         {/* Honest about what happens next: a person reviews it and sends the
             transfer. Nothing has left the bank yet. */}
         <Text style={styles.body}>
-          Our team will check this and send the transfer, usually within 1 to 2 working days.
-          You will get a notification when it has been paid.
+          {sent
+            ? 'The transfer to your bank has been sent. It usually arrives the same day, and always within 1 to 2 working days.'
+            : 'Our team will check this and send the transfer, usually within 1 to 2 working days. You will get a notification when it has been paid.'}
         </Text>
 
         <Card flush style={styles.receipt}>
-          <Row label="Requested" value={requestedAt} />
+          <Row label={sent ? 'Sent' : 'Requested'} value={requestedAt} />
           {payoutId ? <Row label="Reference" value={String(payoutId).slice(0, 8).toUpperCase()} /> : null}
           {accountNumber ? <Row label="Paying into" value={accountNumber} /> : null}
           {accountHolder ? <Row label="Account name" value={accountHolder} last /> : null}

@@ -52,6 +52,9 @@ export default function WithdrawScreen() {
     };
   }, [db, driverId]);
 
+  // Set by an admin: withdrawals go straight to the bank on request.
+  const autoPayout = driver?.autoPayout === true;
+
   const availableBalance = wallet ? wallet.availableBalance || 0 : 0;
   // Minimum set on the dashboard (Settings, Drivers). Also enforced server-side.
   const minimumPayout = appConfig.drivers.minimumPayout;
@@ -93,6 +96,9 @@ export default function WithdrawScreen() {
         amount: result.data?.amount ?? availableBalance,
         accountNumber: maskedAccountNumber,
         accountHolder,
+        // "completed" means it has already been sent; anything else waits
+        // for the team to check it.
+        status: result.data?.status || 'pending_admin',
       });
     } catch (error) {
       console.error('Withdrawal failed:', error);
@@ -172,11 +178,12 @@ export default function WithdrawScreen() {
           </View>
         </Card>
 
-        {/* Payouts are reviewed and sent by hand, so this does not promise a
-            bank transfer that has not happened yet. */}
+        {/* Manual payouts are reviewed and sent by hand, so this does not
+            promise a bank transfer that has not happened yet. */}
         <Text style={[TYPE.small, { marginTop: SPACE[4] }]}>
-          Withdrawals are checked by our team before the transfer is sent, usually within 1 to 2
-          working days.
+          {autoPayout
+            ? 'Sent to your bank as soon as you request it. It usually arrives the same day, and always within 1 to 2 working days.'
+            : 'Withdrawals are checked by our team before the transfer is sent, usually within 1 to 2 working days.'}
         </Text>
       </ScrollView>
 

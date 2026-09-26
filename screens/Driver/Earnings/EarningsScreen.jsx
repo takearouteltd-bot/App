@@ -35,6 +35,8 @@ export default function EarningsScreen() {
   const [loadError, setLoadError] = useState(false);
   // Withdrawals requested but not yet approved by an admin.
   const [awaitingPayout, setAwaitingPayout] = useState(0);
+  const [payouts, setPayouts] = useState([]);
+  const [autoPayout, setAutoPayout] = useState(false);
 
   const driverId = auth.currentUser ? auth.currentUser.uid : null;
   const appConfig = useAppConfig();
@@ -80,27 +82,32 @@ export default function EarningsScreen() {
       }
     );
 
-    const payoutsQuery = query(
-      collection(db, 'driverPayouts'),
-      where('driverId', '==', driverId),
-      where('status', '==', 'pending_admin')
-    );
+    // Every withdrawal, so the list below can say what happened to each.
+    const payoutsQuery = query(collection(db, 'driverPayouts'), where('driverId', '==', driverId));
     const unsubscribePayouts = onSnapshot(
       payoutsQuery,
       (snapshot) => {
+        const rows = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        setPayouts(rows);
         setAwaitingPayout(
-          snapshot.docs.reduce((sum, d) => sum + (Number(d.data().amount) || 0), 0)
+          rows
+            .filter((p) => p.status === 'pending_admin')
+            .reduce((sum, p) => sum + (Number(p.amount) || 0), 0)
         );
       },
-      () => setAwaitingPayout(0)
+      () => {
+        setPayouts([]);
+        setAwaitingPayout(0);
+      }
     );
 
     const driverRef = doc(db, 'drivers', driverId);
-const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
-  if (snapshot.exists()) {
-    setSubscription(snapshot.data().subscription || null);
-  }
-});
+    const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
+      if (snapshot.exists()) {
+        setSubscription(snapshot.data().subscription || null);
+        setAutoPayout(snapshot.data().autoPayout === true);
+      }
+    });
 
     return () => {
       unsubscribeWallet();
@@ -144,14 +151,36 @@ const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
       date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
   };
 
+  const payoutsById = Object.fromEntries(payouts.map((p) => [p.id, p]));
+
+  // What happened to a withdrawal, from the payout record it created.
+  const payoutState = (item) => {
+    if (item.type !== 'payout_request' && item.type !== 'payout') return null;
+    const payout = payoutsById[item.payoutId];
+    if (item.status === 'rejected' || payout?.status === 'rejected') {
+      return { label: 'Returned to balance', detail: payout?.rejectionReason || null, status: 'rejected' };
+    }
+    if (item.status === 'completed' || payout?.status === 'completed') {
+      return { label: payout?.processedBy === 'auto' ? 'Sent to your bank' : 'Paid', detail: null, status: 'approved' };
+    }
+    if (payout?.autoPayout === 'skipped' || payout?.autoPayout === 'failed') {
+      return { label: 'Being sent by our team', detail: 'We could not send this one automatically, so our team will pay it by hand.', status: 'pending' };
+    }
+    return { label: 'In review', detail: null, status: 'pending' };
+  };
+
   const renderTransaction = ({ item, index }) => {
     const amount = Number(item.amount) || 0;
     const isPositive = amount > 0;
     let icon = 'car-outline';
     let title = item.description || item.type;
     if (item.type === 'ride_earning') title = 'Trip earnings';
-    if (item.type === 'payout_request' || item.type === 'payout') icon = 'arrow-down-outline';
+    if (item.type === 'payout_request' || item.type === 'payout') {
+      icon = 'arrow-down-outline';
+      title = 'Withdrawal';
+    }
     if (isSubscription(item)) icon = 'calendar-outline';
+    const state = payoutState(item);
 
     return (
       <View style={[styles.txCard, index === 0 && styles.txCardFirst, index === filteredTransactions.length - 1 && styles.txCardLast]}>
@@ -159,10 +188,10 @@ const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
           icon={icon}
           iconColor={isPositive ? COLORS.limeInk : COLORS.midnight}
           title={title}
-          detail={formatDate(item.createdAt)}
+          detail={state ? `${formatDate(item.createdAt)} · ${state.label}${state.detail ? `: ${state.detail}` : ''}` : formatDate(item.createdAt)}
           last={index === filteredTransactions.length - 1}
           right={
-            <Text style={[styles.txAmount, { color: isPositive ? COLORS.success : COLORS.ink }]}>
+            <Text style={[styles.txAmount, { color: isPositive ? COLORS.success : state?.status === 'rejected' ? COLORS.muted : COLORS.ink }]}>
               {isPositive ? '+' : '-'}{money(Math.abs(amount))}
             </Text>
           }
@@ -190,6 +219,8 @@ const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
         <Text style={styles.heroSub}>
           {totalBalance < minimumPayout
             ? `You can withdraw once you reach ${money(minimumPayout)}.`
+            : autoPayout
+            ? 'Sent straight to your bank when you withdraw.'
             : 'Paid to your bank after admin approval.'}
         </Text>
 

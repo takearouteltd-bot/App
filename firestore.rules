@@ -120,7 +120,8 @@ service cloud.firestore {
         "firstName", "lastName", "fullName", "phoneNumber", "phone",
         "email", "address", "documentExpiry", "approved", "blocked",
         "onboardingStatus", "rejectionReason", "autoPayout",
-        "documentExpiryDetected",
+        "documentExpiryDetected", "stripeRecipientId", "stripePayoutMethodId",
+        "payoutMethodFingerprint",
         "driverLicenseFrontUrl", "driverLicenseBackUrl", "pcoLicenseUrl",
         "vehicleLicenceUrl", "insuranceUrl", "motUrl", "dbsCertificateUrl",
         "accountDetails"
@@ -154,6 +155,9 @@ service cloud.firestore {
           (
             request.auth.uid == driverId &&
             driverKeepsGuardedFields() &&
+            /* Only an approved driver can put themselves online. */
+            !(request.resource.data.status == "online" &&
+              resource.data.approved != true) &&
             (
               resource.data.onboardingComplete != true ||
               !request.resource.data.diff(resource.data).affectedKeys()
@@ -259,6 +263,8 @@ service cloud.firestore {
         request.resource.data.status == "accepted" &&
         request.resource.data.driverId == request.auth.uid &&
         request.resource.data.walletProcessed == false &&
+        get(/databases/$(database)/documents/drivers/$(request.auth.uid))
+          .data.approved == true &&
         myVehicleServes(resource.data);
     }
 

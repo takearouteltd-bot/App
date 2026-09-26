@@ -319,8 +319,6 @@ export default function FareEstimationScreen({ route }) {
 
         cancellation: { by: null, reason: null, at: null },
         rating: { riderToDriver: null, driverToRider: null, feedback: null },
-
-        expiresAt: new Date(Date.now() + 60 * 1000),
       };
 
       const rideRef = await addDoc(collection(db, 'rides'), rideData);

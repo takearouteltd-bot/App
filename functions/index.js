@@ -1309,7 +1309,7 @@ exports.creditDriverWalletOnRideCompletion = functions.firestore
 
 
 exports.requestDriverPayout = functions
-    .runWith({secrets: STRIPE_SECRETS})
+    .runWith({secrets: STRIPE_SECRETS.concat(PAYOUTS_SECRETS)})
     .https.onCall(async (data, context) => {
       const {amount} = data;
       const driverId = context.auth ? context.auth.uid : null;
@@ -1410,19 +1410,18 @@ exports.requestDriverPayout = functions
 
           return {payoutId: payoutId, amount:
         requestedAmount, status: "pending_admin",
-          autoPayout: driver.autoPayout === true,
-          stripeAccountId: driver.stripeAccountId || null};
+          autoPayout: driver.autoPayout === true, driver};
         });
 
         console.log("New payout request:", result.payoutId,
             "Driver:", driverId, "Amount:", requestedAmount);
 
-        // Drivers an admin has switched to automatic payouts are paid by Stripe
-        // transfer straight away; anything that stops that leaves the request
-        // in the admin queue with a note saying why.
+        // Drivers an admin has switched to automatic payouts are paid straight
+        // to their bank; anything that stops that leaves the request in the
+        // admin queue with a note saying why.
         if (result.autoPayout) {
           const outcome = await autoSettlePayout(result.payoutId, driverId,
-              requestedAmount, appConfig.currency, result.stripeAccountId);
+              requestedAmount, appConfig.currency, result.driver);
           return {payoutId: result.payoutId, amount: requestedAmount,
             status: outcome.status};
         }
@@ -1491,46 +1490,225 @@ function settlePayout(transaction, payoutRef, payout, fields, walletTxQuery) {
   });
 }
 
+/* ======================================
+   AUTOMATIC PAYOUTS
+   Drivers an admin switches to automatic payouts are paid straight to the
+   bank details they gave us, through Stripe Global Payouts: the driver is
+   a recipient, their sort code and account number a payout method, and
+   each withdrawal an OutboundPayment from our financial account. Needs:
+     - Global Payouts (Treasury) enabled on the Stripe account
+     - a funded GBP financial account
+     - secret STRIPE_PAYOUTS_KEY: a restricted key with Recipient
+       Configuration, Financial Accounts, Payout Methods, Outbound Payments
+       and Recipient Verifications permissions
+   Anything that stops a payout leaves it in the admin queue with a note.
+====================================== */
+const PAYOUTS_API_VERSION = "2026-08-26.preview";
+const PAYOUTS_SECRETS = ["STRIPE_PAYOUTS_KEY"];
+
+let payoutsClient = null;
 /**
- * Pays a fresh payout request by Stripe transfer to the driver's connected
- * account. On any problem the request stays pending_admin with a note.
+ * Stripe client for the v2 money-management APIs (restricted key).
+ * @return {Object} Stripe client.
+ */
+function getPayoutsStripe() {
+  if (!payoutsClient) {
+    const key = process.env.STRIPE_PAYOUTS_KEY ||
+      process.env.STRIPE_SECRET_KEY;
+    if (!key) throw new Error("STRIPE_PAYOUTS_KEY is not set");
+    payoutsClient = require("stripe")(key);
+  }
+  return payoutsClient;
+}
+
+/**
+ * Calls a v2 endpoint with the preview version, optionally in the context
+ * of a recipient account.
+ * @param {string} method HTTP method.
+ * @param {string} path Path starting with /v2.
+ * @param {Object|null} params Body for POST.
+ * @param {string|null} context Recipient account id for Stripe-Context.
+ * @return {Promise<Object>} Parsed response.
+ */
+function v2(method, path, params, context) {
+  const headers = {};
+  if (context) headers["Stripe-Context"] = context;
+  return getPayoutsStripe().rawRequest(method, path, params || null, {
+    apiVersion: PAYOUTS_API_VERSION,
+    additionalHeaders: headers,
+  });
+}
+
+/**
+ * Stable fingerprint of the bank details a payout method was made from, so
+ * a change of account gets a new method.
+ * @param {Object} accountDetails Driver's accountDetails.
+ * @return {string} Fingerprint.
+ */
+function bankFingerprint(accountDetails) {
+  const digits = (value) => String(value || "").replace(/\D/g, "");
+  return digits(accountDetails.sortCode) + ":" +
+    digits(accountDetails.accountNumber);
+}
+
+let cachedFinancialAccount = null;
+/**
+ * The GBP financial account payouts are sent from.
+ * @return {Promise<string>} Financial account id.
+ */
+async function payoutsFinancialAccount() {
+  if (process.env.STRIPE_FINANCIAL_ACCOUNT) {
+    return process.env.STRIPE_FINANCIAL_ACCOUNT;
+  }
+  if (cachedFinancialAccount) return cachedFinancialAccount;
+  const list = await v2("GET", "/v2/money_management/financial_accounts");
+  const accounts = (list && list.data) || [];
+  const open = accounts.find((a) => a.status === "open") || accounts[0];
+  if (!open) throw new Error("No Stripe financial account found");
+  cachedFinancialAccount = open.id;
+  return open.id;
+}
+
+/**
+ * Makes sure the driver exists as a Global Payouts recipient with a payout
+ * method for their current bank details, creating either as needed and
+ * running Confirmation of Payee on a new bank account.
+ * @param {string} driverId Driver uid.
+ * @param {Object} driver Driver document.
+ * @return {Promise<{recipient: string, payoutMethod: string}>} Ids.
+ */
+async function ensurePayoutRecipient(driverId, driver) {
+  const details = driver.accountDetails || {};
+  if (!details.sortCode || !details.accountNumber) {
+    throw new Error("No bank details on file");
+  }
+  const driverRef = db.collection("drivers").doc(driverId);
+  const patch = {};
+
+  let recipient = driver.stripeRecipientId || null;
+  if (!recipient) {
+    const name = String(driver.fullName || details.accountHolder || "Driver")
+        .trim();
+    const parts = name.split(/\s+/);
+    const account = await v2("POST", "/v2/core/accounts", {
+      display_name: name,
+      contact_email: driver.email || undefined,
+      identity: {
+        country: "gb",
+        entity_type: "individual",
+        individual: {
+          given_name: parts[0],
+          surname: parts.slice(1).join(" ") || parts[0],
+        },
+      },
+      configuration: {
+        recipient: {
+          capabilities: {bank_accounts: {local: {requested: true}}},
+        },
+      },
+      metadata: {driverId},
+      include: ["configuration.recipient", "requirements"],
+    });
+    recipient = account.id;
+    patch.stripeRecipientId = recipient;
+  }
+
+  const fingerprint = bankFingerprint(details);
+  let payoutMethod = driver.stripePayoutMethodId || null;
+  if (!payoutMethod || driver.payoutMethodFingerprint !== fingerprint) {
+    const sortCode = String(details.sortCode).replace(/\D/g, "");
+    const accountNumber = String(details.accountNumber).replace(/\D/g, "");
+    const intent = await v2("POST",
+        "/v2/money_management/outbound_setup_intents", {
+          payout_method_data: {
+            type: "bank_account",
+            bank_account: {
+              country: "GB",
+              account_number: accountNumber,
+              routing_number: sortCode,
+            },
+          },
+          usage_intent: "payment",
+        }, recipient);
+    payoutMethod = intent.payout_method && intent.payout_method.id;
+    if (!payoutMethod) {
+      throw new Error("Stripe did not return a payout method");
+    }
+
+    // UK payouts need Confirmation of Payee: the bank checks the account
+    // holder's name. Only an exact match is paid automatically; anything
+    // else stays with the admin, who can see what the bank said.
+    const holder = String(details.accountHolder || driver.fullName || "")
+        .trim();
+    const cop = await v2("POST",
+        `/v2/core/vault/gb_bank_accounts/${payoutMethod}` +
+        "/initiate_confirmation_of_payee",
+        {name: holder, business_type: "personal"}, recipient);
+    const result = (cop.confirmation_of_payee || {}).result || {};
+    if (result.match_result !== "match") {
+      throw new Error("Bank name check: " +
+        (result.message || `${result.match_result || "no result"} for ` +
+          `"${holder}"`));
+    }
+    patch.stripePayoutMethodId = payoutMethod;
+    patch.payoutMethodFingerprint = fingerprint;
+  }
+
+  if (Object.keys(patch).length) await driverRef.set(patch, {merge: true});
+  return {recipient, payoutMethod};
+}
+
+/**
+ * Pays a fresh payout request straight to the driver's bank. On any
+ * problem the request stays pending_admin with a note saying why.
  * @param {string} payoutId Payout document id.
  * @param {string} driverId Driver uid.
  * @param {number} amount Major units.
  * @param {string} currency ISO code.
- * @param {string|null} stripeAccountId Connected account, if any.
+ * @param {Object} driver Driver document as read at request time.
  * @return {Promise<{status: string}>} Resulting payout status.
  */
-async function autoSettlePayout(payoutId, driverId, amount, currency,
-    stripeAccountId) {
+async function autoSettlePayout(payoutId, driverId, amount, currency, driver) {
   const payoutRef = db.collection("driverPayouts").doc(payoutId);
-  const leaveForAdmin = async (note) => {
+  const leaveForAdmin = async (note, outcome) => {
     await payoutRef.update({
-      autoPayout: "skipped",
+      autoPayout: outcome || "skipped",
       autoPayoutNote: note,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     return {status: "pending_admin"};
   };
 
-  if (!stripeAccountId) {
-    return leaveForAdmin("The driver has not connected a Stripe account.");
+  if (String(currency || "GBP").toUpperCase() !== "GBP") {
+    return leaveForAdmin("Automatic payouts are only available in GBP.");
+  }
+
+  let target;
+  try {
+    target = await ensurePayoutRecipient(driverId, driver);
+  } catch (error) {
+    console.error("Payout recipient setup failed:", payoutId, error);
+    return leaveForAdmin(
+        error.message || "Could not set up the bank account.", "failed");
   }
 
   try {
-    const account = await stripe.accounts.retrieve(stripeAccountId);
-    if (!account.payouts_enabled) {
-      return leaveForAdmin(
-          "The driver's Stripe account has not finished onboarding.");
-    }
-
-    const transfer = await stripe.transfers.create({
-      amount: Math.round(amount * 100),
-      currency: String(currency || "GBP").toLowerCase(),
-      destination: stripeAccountId,
-      description: "TakeARoute payout " + payoutId,
-      metadata: {payoutId, driverId},
-    }, {idempotencyKey: "payout_" + payoutId});
+    const payment = await v2("POST",
+        "/v2/money_management/outbound_payments", {
+          from: {
+            financial_account: await payoutsFinancialAccount(),
+            currency: "gbp",
+          },
+          to: {
+            recipient: target.recipient,
+            payout_method: target.payoutMethod,
+            currency: "gbp",
+          },
+          amount: {value: Math.round(amount * 100), currency: "gbp"},
+          description: "TakeARoute payout " + payoutId,
+          statement_descriptor: "TakeARoute payout",
+          metadata: {payoutId, driverId},
+        });
 
     const walletTxQuery = await db
         .collection("driverWallets").doc(driverId)
@@ -1544,11 +1722,12 @@ async function autoSettlePayout(payoutId, driverId, amount, currency,
       const payout = snap.data();
       if (!snap.exists || payout.status !== "pending_admin") return;
       settlePayout(transaction, payoutRef, payout, {
-        method: "stripe_transfer",
+        method: "bank_transfer",
         processedBy: "auto",
         processedAt: admin.firestore.FieldValue.serverTimestamp(),
-        transactionReference: transfer.id,
-        adminNotes: "Paid automatically by Stripe transfer.",
+        transactionReference: payment.id,
+        expectedArrival: payment.expected_arrival_date || null,
+        adminNotes: "Sent automatically to the driver's bank.",
         autoPayout: "completed",
       }, walletTxQuery);
     });
@@ -1562,13 +1741,94 @@ async function autoSettlePayout(payoutId, driverId, amount, currency,
     return {status: "completed"};
   } catch (error) {
     console.error("Automatic payout failed:", payoutId, error);
-    await payoutRef.update({
-      autoPayout: "failed",
-      autoPayoutNote: error.message || "Stripe transfer failed.",
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-    return {status: "pending_admin"};
+    return leaveForAdmin(
+        error.message || "The bank transfer could not be sent.", "failed");
   }
+}
+
+/**
+ * Stripe tells us when an automatic payout posts, fails or is returned.
+ * Point a v2 (thin) event destination at this function for the
+ * outbound_payment events, with the secret STRIPE_PAYOUT_WEBHOOK_SECRET.
+ */
+exports.stripePayoutWebhook = functions
+    .runWith({
+      secrets: PAYOUTS_SECRETS.concat(["STRIPE_PAYOUT_WEBHOOK_SECRET"]),
+    })
+    .https.onRequest(async (req, res) => {
+      let notification;
+      try {
+        notification = getPayoutsStripe().parseEventNotification(
+            req.rawBody, req.headers["stripe-signature"],
+            process.env.STRIPE_PAYOUT_WEBHOOK_SECRET);
+      } catch (err) {
+        console.log("Payout webhook signature failed:", err.message);
+        return res.status(400).send("Webhook Error");
+      }
+      try {
+        const type = String(notification.type || "");
+        const objectId = notification.related_object ?
+          notification.related_object.id : null;
+        if (!type.includes("outbound_payment.") || !objectId) {
+          return res.status(200).send("ignored");
+        }
+        const outcome = type.split(".").pop();
+        const match = await db.collection("driverPayouts")
+            .where("transactionReference", "==", objectId).limit(1).get();
+        if (match.empty) return res.status(200).send("no payout");
+        const payoutRef = match.docs[0].ref;
+        const payout = match.docs[0].data();
+        const now = admin.firestore.FieldValue.serverTimestamp();
+
+        if (outcome === "posted") {
+          await payoutRef.update({settledAt: now, updatedAt: now});
+        } else if (["failed", "returned", "canceled"].includes(outcome)) {
+          // The money did not reach the driver: back to the admin queue,
+          // and the wallet's paid-out total no longer counts it.
+          await db.runTransaction(async (transaction) => {
+            transaction.update(payoutRef, {
+              status: "pending_admin",
+              autoPayout: "failed",
+              autoPayoutNote: `The bank transfer was ${outcome}. ` +
+                "Check the bank details and pay it manually.",
+              transactionReference: null,
+              completedAt: null,
+              updatedAt: now,
+            });
+            transaction.update(
+                db.collection("driverWallets").doc(payout.driverId), {
+                  totalWithdrawn: admin.firestore.FieldValue
+                      .increment(-(payout.amount || 0)),
+                  updatedAt: now,
+                });
+          });
+          await sendPush([payout.driverId], {
+            title: "Payout delayed",
+            body: "Your bank returned the transfer. Our team will sort it.",
+            channelId: "general",
+            data: {type: "payout"},
+          });
+        }
+        return res.status(200).send("ok");
+      } catch (error) {
+        console.error("Payout webhook failed:", error);
+        return res.status(500).send("error");
+      }
+    });
+
+/**
+ * True when any of a driver's dated documents has passed its expiry.
+ * @param {Object} driver Driver document.
+ * @return {boolean} Expired.
+ */
+function hasExpiredDocument(driver) {
+  const expiry = (driver && driver.documentExpiry) || {};
+  const today = new Date().toISOString().slice(0, 10);
+  return Object.values(expiry).some((raw) => {
+    const value = raw && raw.toDate ?
+      raw.toDate().toISOString().slice(0, 10) : String(raw || "");
+    return /^\d{4}-\d{2}-\d{2}$/.test(value) && value < today;
+  });
 }
 
 exports.completeDriverPayout = functions.https.onCall(async (data, context) => {
@@ -2071,6 +2331,10 @@ exports.activateDriverMembership = functions
         throw new functions.https.HttpsError("not-found",
             "Driver profile not found.");
       }
+      if (snap.data().approved !== true) {
+        throw new functions.https.HttpsError("failed-precondition",
+            "Your application has not been approved yet.");
+      }
       const current = (snap.data().subscription || {}).status;
       if (["active", "past_due"].includes(current)) {
         return {alreadyActive: true};
@@ -2105,6 +2369,12 @@ exports.payDriverMembership = functions
       if (!context.auth) {
         throw new functions.https.HttpsError("unauthenticated",
             "Please sign in.");
+      }
+      const driverSnap = await db.collection("drivers")
+          .doc(context.auth.uid).get();
+      if (!driverSnap.exists || driverSnap.data().approved !== true) {
+        throw new functions.https.HttpsError("failed-precondition",
+            "Your application has not been approved yet.");
       }
       const result = await collectMembership(context.auth.uid,
           {cardOnly: data && data.cardOnly === true});
@@ -2255,6 +2525,7 @@ async function offerRideToDrivers(rideId, ride) {
   online.forEach((snap) => {
     const d = snap.data();
     if (skip.has(snap.id) || d.blocked === true || d.approved !== true ||
+        hasExpiredDocument(d) ||
         d.isOnRide === true) {
       return;
     }

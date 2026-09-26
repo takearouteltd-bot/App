@@ -119,8 +119,14 @@ export default function DriverPersonalInformationScreen({ navigation }) {
               </Text>
               <View style={{ flexDirection: 'row', marginTop: SPACE[2] }}>
                 <StatusPill
-                  status={driver.approved ? 'approved' : 'pending'}
-                  label={driver.approved ? 'Approved driver' : 'Application under review'}
+                  status={driver.approved ? 'approved' : driver.onboardingStatus === 'rejected' ? 'rejected' : 'pending'}
+                  label={
+                    driver.approved
+                      ? 'Approved driver'
+                      : driver.onboardingStatus === 'rejected'
+                      ? 'Application not approved'
+                      : 'Application under review'
+                  }
                   dot
                 />
               </View>

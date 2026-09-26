@@ -111,7 +111,7 @@ export default function VehicleInformationScreen({ navigation }) {
           items={[
             { value: formatValue(seats, "-"), label: "Seats" },
             { value: formatValue(year, "-"), label: "Year" },
-            { value: driver?.approved ? "Live" : "Review", label: "Status" },
+            { value: driver?.approved ? "Live" : driver?.onboardingStatus === "rejected" ? "Declined" : "Review", label: "Status" },
           ]}
         />
       </Card>
@@ -150,8 +150,8 @@ export default function VehicleInformationScreen({ navigation }) {
       <Section title="Status">
         <Card>
           <StatusPill
-            status={driver?.approved ? "approved" : "pending"}
-            label={driver?.approved ? "Approved Vehicle" : "Pending Review"}
+            status={driver?.approved ? "approved" : driver?.onboardingStatus === "rejected" ? "rejected" : "pending"}
+            label={driver?.approved ? "Approved Vehicle" : driver?.onboardingStatus === "rejected" ? "Not approved" : "Pending Review"}
             dot
           />
           <Text style={[TYPE.body, { color: COLORS.muted, marginTop: SPACE[3] }]}>

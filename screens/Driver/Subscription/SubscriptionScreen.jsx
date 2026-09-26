@@ -20,7 +20,7 @@ import {
   Loading,
 } from '../../../components/ui/kit';
 
-export default function SubscriptionScreen({ setOnboardingStatus }) {
+export default function SubscriptionScreen() {
   // Price comes from the admin dashboard (Settings, Subscription).
   const appConfig = useAppConfig();
   const MONTHLY_PRICE = appConfig.subscription.monthlyPrice;
@@ -28,6 +28,7 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
   const [subscription, setSubscription] = useState(null);
+  const [approval, setApproval] = useState(null);
   const navigation = useNavigation();
   const driverId = auth.currentUser?.uid;
 
@@ -79,6 +80,7 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
     try {
       const snap = await getDoc(doc(db, 'drivers', driverId));
       setSubscription(snap.exists() ? snap.data().subscription || null : null);
+      setApproval(snap.exists() ? { approved: snap.data().approved === true, rejected: snap.data().onboardingStatus === 'rejected', reason: snap.data().rejectionReason || '' } : null);
     } catch (err) {
       console.log('Error fetching subscription:', err);
     } finally {
@@ -102,8 +104,6 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
     try {
       const activate = httpsCallable(functions, 'activateDriverMembership');
       const { data } = await activate({});
-
-      setOnboardingStatus?.('complete');
 
       Alert.alert(
         'Membership active',
@@ -325,18 +325,32 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
       />
 
       <View style={styles.gap}>
-        <Banner
-          tone="info"
-          body={`If your wallet already holds ${money(MONTHLY_PRICE)} we take it now. If not, we charge your saved card. Card rides you complete top up your wallet for next month; cash fares stay with you and do not count.`}
-        />
+        {approval && !approval.approved ? (
+          <Banner
+            tone={approval.rejected ? 'danger' : 'warning'}
+            title={approval.rejected ? 'Application not approved' : 'Application under review'}
+            body={
+              approval.rejected
+                ? approval.reason || 'Your application was not approved, so a membership cannot be started.'
+                : 'You can activate your membership as soon as your application has been approved.'
+            }
+          />
+        ) : (
+          <Banner
+            tone="info"
+            body={`If your wallet already holds ${money(MONTHLY_PRICE)} we take it now. If not, we charge your saved card. Card rides you complete top up your wallet for next month; cash fares stay with you and do not count.`}
+          />
+        )}
       </View>
 
-      <Button
-        title="Activate and start driving"
-        onPress={handleActivate}
-        loading={loading}
-        style={{ marginTop: SPACE[6] }}
-      />
+      {approval && !approval.approved ? null : (
+        <Button
+          title="Activate and start driving"
+          onPress={handleActivate}
+          loading={loading}
+          style={{ marginTop: SPACE[6] }}
+        />
+      )}
     </Screen>
   );
 }
