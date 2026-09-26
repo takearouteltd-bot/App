@@ -14,7 +14,7 @@ import { getAuth } from "firebase/auth";
 import { doc, getDoc, getFirestore } from "firebase/firestore";
 import { COLORS } from '../../../components/ui/kit';
 
-const PRIMARY = COLORS.green;
+const PRIMARY = COLORS.primary;
 const SECONDARY = COLORS.blue;
 const BG = COLORS.surface;
 const VEHICLE_TYPE_META = {
@@ -274,7 +274,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   heroBadge: {
-    backgroundColor: "rgba(121,181,49,0.14)",
+    backgroundColor: COLORS.limeSoft,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 999,
@@ -355,7 +355,7 @@ const styles = StyleSheet.create({
     width: 46,
     height: 46,
     borderRadius: 14,
-    backgroundColor: "rgba(121,181,49,0.12)",
+    backgroundColor: COLORS.limeSoft,
     justifyContent: "center",
     alignItems: "center",
     marginRight: 12,

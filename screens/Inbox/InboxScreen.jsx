@@ -139,6 +139,6 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.surface },
   content: { padding: 20, paddingBottom: 48 },
   card: { marginBottom: 12, overflow: "hidden" },
-  directMark: { position: "absolute", left: 0, top: 0, bottom: 0, width: 4, backgroundColor: COLORS.green },
+  directMark: { position: "absolute", left: 0, top: 0, bottom: 0, width: 4, backgroundColor: COLORS.limeDeep },
   title: { fontSize: 16, fontWeight: "700", color: COLORS.navy },
 });

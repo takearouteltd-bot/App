@@ -31,7 +31,7 @@ import {
 import { db } from '../../config/firebase';
 import { COLORS } from '../../components/ui/kit';
 
-const PRIMARY = COLORS.green;
+const PRIMARY = COLORS.primary;
 const SECONDARY = COLORS.blue;
 
 // Predefined quick messages for safer driving
@@ -436,7 +436,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   quickMessageChip: {
-    backgroundColor: '#EEF2FF',
+    backgroundColor: '#EEF0F4',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 16,

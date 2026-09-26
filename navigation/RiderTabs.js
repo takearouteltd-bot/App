@@ -9,26 +9,22 @@ import PaymentsMethodScreen from "../screens/Rider/PaymentMethods/PaymentMethods
 import RiderPaymentStack from "./Rider/RiderPaymentStack";
 import RiderTripsStack from "./Rider/RiderTripsStack";
 import RiderProfileStack from "./Rider/RiderProfileStack";
-import { COLORS } from '../components/ui/kit';
+import { TAB_BAR_OPTIONS, TabIcon } from '../components/ui/kit';
 
 const Tab = createBottomTabNavigator();
-const PRIMARY = COLORS.green;
 
 export default function RiderTabs() {
   return (
     <Tab.Navigator
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: PRIMARY,
-      }}
+      screenOptions={TAB_BAR_OPTIONS}
     >
       <Tab.Screen
         name="Home"
         component={RiderHomeStack}
         options={{
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="home-outline" size={size} color={color} />
-          ),
+          tabBarIcon: ({ color, focused }) => (
+              <TabIcon name="home-outline" focused={focused} color={color} />
+            ),
         }}
       />
 
@@ -36,9 +32,9 @@ export default function RiderTabs() {
         name="Trips"
         component={RiderTripsStack}
         options={{
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="time-outline" size={size} color={color} />
-          ),
+          tabBarIcon: ({ color, focused }) => (
+              <TabIcon name="time-outline" focused={focused} color={color} />
+            ),
         }}
       />
 
@@ -46,9 +42,9 @@ export default function RiderTabs() {
         name="Wallet"
         component={RiderPaymentStack}
         options={{
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="wallet-outline" size={size} color={color} />
-          ),
+          tabBarIcon: ({ color, focused }) => (
+              <TabIcon name="wallet-outline" focused={focused} color={color} />
+            ),
         }}
       />
 
@@ -59,9 +55,9 @@ export default function RiderTabs() {
         name="Profile"
         component={RiderProfileStack}
         options={{
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="person-outline" size={size} color={color} />
-          ),
+          tabBarIcon: ({ color, focused }) => (
+              <TabIcon name="person-outline" focused={focused} color={color} />
+            ),
         }}
       />
     </Tab.Navigator>

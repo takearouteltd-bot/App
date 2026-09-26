@@ -16,7 +16,7 @@ import nativeAuth from "@react-native-firebase/auth";
 import { setConfirmation } from "../../store/phoneAuthStore";
 import { COLORS, RADIUS } from '../../components/ui/kit';
 
-const PRIMARY = COLORS.green;
+const PRIMARY = COLORS.primary;
 const DARK = COLORS.ink;
 
 const UK_DIAL_CODE = "+44";

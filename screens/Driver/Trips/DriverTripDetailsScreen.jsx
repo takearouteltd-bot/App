@@ -17,7 +17,7 @@ import { db } from '../../../config/firebase';
 import { currencySymbol } from '../../../utils/appConfig';
 import { COLORS, Avatar } from '../../../components/ui/kit';
 
-const PRIMARY = COLORS.green;
+const PRIMARY = COLORS.primary;
 const SECONDARY = COLORS.blue;
 const DANGER = COLORS.red;
 
@@ -167,13 +167,13 @@ export default function DriverTripDetailsScreen() {
           <View style={[
             styles.statusBadge,
             {
-              backgroundColor: isCompleted ? COLORS.greenSoft : isCancelled ? '#FDECEC' : '#E6F0FA',
+              backgroundColor: isCompleted ? COLORS.limeSoft : isCancelled ? '#FDECEC' : '#EEF0F4',
             }
           ]}>
             <Text style={[
               styles.statusText,
               {
-                color: isCompleted ? PRIMARY : isCancelled ? DANGER : SECONDARY,
+                color: isCompleted ? COLORS.success : isCancelled ? DANGER : SECONDARY,
               }
             ]}>
               {status}

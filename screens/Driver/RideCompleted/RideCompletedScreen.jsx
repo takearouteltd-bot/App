@@ -77,7 +77,7 @@ export default function RideCompletedScreen() {
         <Card style={{ marginTop: 16 }}>
           <View style={styles.route}>
             <View style={styles.rail}>
-              <View style={[styles.dot, { backgroundColor: COLORS.green }]} />
+              <View style={[styles.dot, { backgroundColor: COLORS.lime }]} />
               <View style={styles.line} />
               <View style={[styles.dot, styles.square]} />
             </View>

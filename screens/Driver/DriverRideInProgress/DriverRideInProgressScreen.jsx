@@ -275,7 +275,7 @@ export default function DriverRideInProgressScreen() {
   if (!ride || !driverLocation) {
     return (
       <SafeAreaView style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.green} />
+        <ActivityIndicator size="large" color={COLORS.primary} />
         <Text style={[TYPE.small, { marginTop: SPACE[4] }]}>Loading the job…</Text>
       </SafeAreaView>
     );
@@ -320,7 +320,7 @@ export default function DriverRideInProgressScreen() {
 
         {isCoord(pickupLocation) ? (
           <Marker coordinate={pickupLocation} anchor={{ x: 0.5, y: 1 }}>
-            <Ionicons name="location" size={32} color={COLORS.green} />
+            <Ionicons name="location" size={32} color={COLORS.primary} />
           </Marker>
         ) : null}
 
@@ -330,7 +330,7 @@ export default function DriverRideInProgressScreen() {
           destination={pickupLocation}
           apikey={GOOGLE_MAPS_API_KEY}
           strokeWidth={4}
-          strokeColor={COLORS.green}
+          strokeColor={COLORS.primary}
           onReady={(result) => {
             setEta(Math.ceil(result.duration));
             setDistance(result.distance.toFixed(1));
@@ -398,7 +398,7 @@ export default function DriverRideInProgressScreen() {
           accessibilityRole="button"
         >
           {loadingAction ? (
-            <ActivityIndicator color={COLORS.white} />
+            <ActivityIndicator color={COLORS.onPrimary} />
           ) : (
             <Text style={styles.actionText}>{action.label}</Text>
           )}
@@ -537,11 +537,11 @@ const styles = StyleSheet.create({
   fare: { fontSize: 24, fontWeight: '800', color: COLORS.navy, letterSpacing: -0.6 },
 
   action: {
-    minHeight: 54, borderRadius: RADIUS.md,
-    backgroundColor: COLORS.green,
+    minHeight: 54, borderRadius: 999,
+    backgroundColor: COLORS.primary,
     alignItems: 'center', justifyContent: 'center',
   },
-  actionText: { fontSize: 16, fontWeight: '800', color: COLORS.white, letterSpacing: -0.2 },
+  actionText: { fontSize: 16, fontWeight: '800', color: COLORS.onPrimary, letterSpacing: -0.2 },
 
   riderCard: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[3],

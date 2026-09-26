@@ -5,15 +5,18 @@
 //
 // The rules this file encodes:
 //
-//   Colour means something. Green is go — the action that moves a journey
-//   forward, and never decoration. Navy is structure: headings, surfaces you
-//   stand on. Amber asks for attention, red stops you. Anything that is not
-//   carrying meaning is grey.
+//   Midnight and lime. Midnight is the brand's weight: headings, the main
+//   button, map routes. Lime is the spark, taken from the arrow in the logo:
+//   the live dot, the pickup pin, what is selected, the words on the main
+//   button. Lime is never text on white (it cannot be read there); use
+//   limeInk for that. Amber asks for attention, red stops you. Anything that
+//   is not carrying meaning is grey.
 //
-//   Borders, not shadows. A hairline border reads crisper on both platforms
-//   than a soft shadow, and stops the screen turning into floating cards.
-//   Shadow is kept for the two things that genuinely float: bottom sheets and
-//   the buttons that sit over a map.
+//   Soft cards. Cards are white on a pale grey page and lift with a faint
+//   shadow rather than an outline. Sheets and map buttons float higher.
+//
+//   One scheme. The app is light whatever the phone is set to (app.json and
+//   plugins/withLightOnly.js), so every colour here can be relied on.
 //
 //   One rhythm. Spacing is a 4pt scale, radius has four steps, type has nine.
 //   If a value is not on the scale it is a mistake, not a decision.
@@ -41,45 +44,57 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 ====================================================================== */
 
 export const COLORS = {
-  // Brand. These two are also the app icon, the splash, the receipt email
-  // header and the notification colour in app.json. Change them here and
-  // those have to change too.
-  green: '#79B531',
-  greenDeep: '#5E9021',
-  greenSoft: '#EEF6E4',
-  navy: '#17375E',
-  navyDeep: '#0E2440',
-  navyLine: '#2B4A70',
-  blue: '#235594',
-  blueSoft: '#E9EFF8',
+  // Brand. Also the splash, notification colour (app.json) and the receipt
+  // email header (functions). Change them here and those have to change too.
+  midnight: '#0B0F1A',
+  midnightSoft: '#171C2A',
+  midnightLine: '#2A3142',
+  lime: '#B8F03A',       // fills, and anything on midnight
+  limeDeep: '#86C814',   // small lime marks that sit on white: dots, switches
+  limeInk: '#3D6A00',    // lime as readable text on a light surface
+  limeSoft: '#F2FADF',
+  limeLine: '#D9F0A0',
+
+  // What the main action is drawn in, and what goes on top of it.
+  primary: '#0B0F1A',
+  onPrimary: '#B8F03A',
+
+  // Older names, kept so every screen picks up the new palette.
+  navy: '#0B0F1A',
+  navyDeep: '#05070D',
+  navyLine: '#2A3142',
+  blue: '#3A4256',
+  blueSoft: '#EEF0F4',
+  greenSoft: '#F2FADF',
 
   // Text, darkest to lightest.
-  ink: '#1F2937',
-  inkSoft: '#4B5563',
-  muted: '#6B7280',
-  faint: '#9CA3AF',
+  ink: '#111522',
+  inkSoft: '#474E5E',
+  muted: '#6B7180',
+  faint: '#9AA0AC',
 
   // Surfaces and rules.
   white: '#FFFFFF',
-  surface: '#F5F7FA',
-  raised: '#FBFCFD',
-  line: '#E5E7EB',
-  lineStrong: '#D1D5DB',
+  surface: '#F3F4F6',
+  raised: '#FAFAFB',
+  fill: '#EDEFF2',       // inputs, segmented controls, secondary buttons
+  line: '#E6E8EC',
+  lineStrong: '#D3D7DE',
 
   // States.
   amber: '#B45309',
   amberSoft: '#FEF3C7',
-  red: '#B91C1C',
-  redSoft: '#FEE2E2',
-  success: '#3F6F12',
-  successSoft: '#EEF6E4',
+  red: '#C8102E',
+  redSoft: '#FDE6E9',
+  success: '#3D6A00',
+  successSoft: '#F2FADF',
 
-  // Ratings. Gold reads as a star; the brand green does not.
+  // Ratings.
   star: '#F5B300',
 
   // Map and overlay.
-  overlay: 'rgba(15, 23, 42, 0.45)',
-  onDark: '#C9D6EA',
+  overlay: 'rgba(11, 15, 26, 0.5)',
+  onDark: '#AEB5C4',
 };
 
 // 4pt scale. SPACE[4] is 16 and is the default gutter.
@@ -88,15 +103,24 @@ export const SPACE = {
 };
 
 export const RADIUS = {
-  sm: 10,   // chips, small controls
-  md: 14,   // buttons, inputs
-  lg: 18,   // cards
-  xl: 28,   // bottom sheets
+  sm: 12,   // chips, small controls
+  md: 16,   // inputs, small buttons
+  lg: 24,   // cards
+  xl: 32,   // bottom sheets
   pill: 999,
 };
 
-// Used only where something genuinely floats above the content.
+// Cards lift a little; sheets and map buttons float.
 export const SHADOW = {
+  card: Platform.select({
+    ios: {
+      shadowColor: '#0B0F1A',
+      shadowOpacity: 0.06,
+      shadowRadius: 14,
+      shadowOffset: { width: 0, height: 4 },
+    },
+    android: { elevation: 2 },
+  }),
   sheet: Platform.select({
     ios: {
       shadowColor: '#0B1220',
@@ -120,9 +144,9 @@ export const SHADOW = {
 // Nine steps, tightening as they grow. Negative tracking on the large sizes is
 // what stops big numbers looking like a spreadsheet.
 export const TYPE = {
-  display: { fontSize: 36, fontWeight: '800', color: COLORS.navy, letterSpacing: -1.1 },
-  title: { fontSize: 26, fontWeight: '800', color: COLORS.navy, letterSpacing: -0.6 },
-  heading: { fontSize: 19, fontWeight: '700', color: COLORS.navy, letterSpacing: -0.3 },
+  display: { fontSize: 40, fontWeight: '800', color: COLORS.midnight, letterSpacing: -1.4 },
+  title: { fontSize: 30, fontWeight: '800', color: COLORS.midnight, letterSpacing: -0.9 },
+  heading: { fontSize: 20, fontWeight: '800', color: COLORS.midnight, letterSpacing: -0.4 },
   subhead: { fontSize: 16, fontWeight: '600', color: COLORS.ink, letterSpacing: -0.1 },
   body: { fontSize: 15, lineHeight: 22, color: COLORS.ink },
   callout: { fontSize: 15, fontWeight: '600', color: COLORS.ink },
@@ -137,7 +161,7 @@ export const TYPE = {
     textTransform: 'uppercase',
   },
   // Tabular-ish figures for money and counts.
-  figure: { fontSize: 22, fontWeight: '800', color: COLORS.navy, letterSpacing: -0.5 },
+  figure: { fontSize: 24, fontWeight: '800', color: COLORS.midnight, letterSpacing: -0.7 },
 };
 
 /* ======================================================================
@@ -214,7 +238,7 @@ function ScreenHeaderView({ title, subtitle, onBack, right }) {
               accessibilityRole="button"
               accessibilityLabel="Go back"
             >
-              <Ionicons name="chevron-back" size={24} color={COLORS.navy} />
+              <Ionicons name="chevron-back" size={22} color={COLORS.midnight} />
             </TouchableOpacity>
           ) : (
             <View style={{ width: 40 }} />
@@ -255,15 +279,15 @@ export function Card({ children, style, onPress, tone, flush }) {
   const toneStyle =
     tone === 'warning' ? { backgroundColor: COLORS.amberSoft, borderColor: '#FCD34D' }
     : tone === 'danger' ? { backgroundColor: COLORS.redSoft, borderColor: '#FCA5A5' }
-    : tone === 'success' ? { backgroundColor: COLORS.greenSoft, borderColor: '#C7E3A5' }
-    : tone === 'dark' ? { backgroundColor: COLORS.navy, borderColor: COLORS.navy }
+    : tone === 'success' ? { backgroundColor: COLORS.limeSoft, borderColor: COLORS.limeLine }
+    : tone === 'dark' ? { backgroundColor: COLORS.midnight, borderColor: COLORS.midnight }
     : null;
   const body = (
-    <View style={[s.card, flush && { paddingVertical: 0 }, toneStyle, style]}>{children}</View>
+    <View style={[s.card, !toneStyle && SHADOW.card, toneStyle && s.cardToned, flush && { paddingVertical: 0 }, toneStyle, style]}>{children}</View>
   );
   if (!onPress) return body;
   return (
-    <TouchableOpacity activeOpacity={0.8} onPress={onPress}>
+    <TouchableOpacity activeOpacity={0.85} onPress={onPress}>
       {body}
     </TouchableOpacity>
   );
@@ -383,7 +407,7 @@ export function PresenceDot({ online, size = 14 }) {
         borderRadius: size / 2,
         borderWidth: 3,
         borderColor: COLORS.surface,
-        backgroundColor: online ? COLORS.green : COLORS.faint,
+        backgroundColor: online ? COLORS.limeDeep : COLORS.faint,
       }}
     />
   );
@@ -396,20 +420,20 @@ export function PresenceDot({ online, size = 14 }) {
 const PILL = {
   open: { label: 'Received', bg: COLORS.blueSoft, fg: COLORS.blue },
   in_review: { label: 'Investigating', bg: COLORS.amberSoft, fg: COLORS.amber },
-  resolved: { label: 'Closed', bg: COLORS.greenSoft, fg: COLORS.success },
+  resolved: { label: 'Closed', bg: COLORS.limeSoft, fg: COLORS.success },
   pending: { label: 'Waiting for approval', bg: COLORS.amberSoft, fg: COLORS.amber },
-  approved: { label: 'Approved', bg: COLORS.greenSoft, fg: COLORS.success },
+  approved: { label: 'Approved', bg: COLORS.limeSoft, fg: COLORS.success },
   rejected: { label: 'Not approved', bg: COLORS.redSoft, fg: COLORS.red },
   expired: { label: 'Expired', bg: COLORS.redSoft, fg: COLORS.red },
   expiring: { label: 'Expiring soon', bg: COLORS.amberSoft, fg: COLORS.amber },
-  valid: { label: 'Valid', bg: COLORS.greenSoft, fg: COLORS.success },
-  missing: { label: 'No date set', bg: COLORS.surface, fg: COLORS.muted },
-  online: { label: 'Online', bg: COLORS.greenSoft, fg: COLORS.success },
-  offline: { label: 'Offline', bg: COLORS.surface, fg: COLORS.muted },
+  valid: { label: 'Valid', bg: COLORS.limeSoft, fg: COLORS.success },
+  missing: { label: 'No date set', bg: COLORS.fill, fg: COLORS.muted },
+  online: { label: 'Online', bg: COLORS.midnight, fg: COLORS.lime },
+  offline: { label: 'Offline', bg: COLORS.fill, fg: COLORS.muted },
 };
 
 export function StatusPill({ status, label, dot }) {
-  const p = PILL[status] || { label: label || status, bg: COLORS.surface, fg: COLORS.muted };
+  const p = PILL[status] || { label: label || status, bg: COLORS.fill, fg: COLORS.muted };
   return (
     <View style={[s.pill, { backgroundColor: p.bg }]}>
       {dot ? <View style={[s.pillDot, { backgroundColor: p.fg }]} /> : null}
@@ -423,8 +447,8 @@ export function Banner({ tone = 'info', title, body, action, icon }) {
   const t =
     tone === 'warning' ? { bg: COLORS.amberSoft, border: '#FCD34D', fg: COLORS.amber, icon: 'alert-circle' }
     : tone === 'danger' ? { bg: COLORS.redSoft, border: '#FCA5A5', fg: COLORS.red, icon: 'warning' }
-    : tone === 'success' ? { bg: COLORS.greenSoft, border: '#C7E3A5', fg: COLORS.success, icon: 'checkmark-circle' }
-    : { bg: COLORS.blueSoft, border: '#BFD3EC', fg: COLORS.blue, icon: 'information-circle' };
+    : tone === 'success' ? { bg: COLORS.limeSoft, border: COLORS.limeLine, fg: COLORS.success, icon: 'checkmark-circle' }
+    : { bg: COLORS.blueSoft, border: COLORS.line, fg: COLORS.midnight, icon: 'information-circle' };
   return (
     <View style={[s.banner, { backgroundColor: t.bg, borderColor: t.border }]}>
       <Ionicons name={icon || t.icon} size={20} color={t.fg} style={{ marginTop: 1 }} />
@@ -443,11 +467,12 @@ export function Banner({ tone = 'info', title, body, action, icon }) {
 
 export function Button({ title, onPress, variant = 'primary', loading, disabled, icon, style, size }) {
   const v =
-    variant === 'secondary' ? { bg: COLORS.white, fg: COLORS.navy, border: COLORS.lineStrong }
+    variant === 'secondary' ? { bg: COLORS.fill, fg: COLORS.midnight, border: COLORS.fill }
     : variant === 'danger' ? { bg: COLORS.red, fg: COLORS.white, border: COLORS.red }
-    : variant === 'ghost' ? { bg: 'transparent', fg: COLORS.blue, border: 'transparent' }
-    : variant === 'dark' ? { bg: COLORS.navy, fg: COLORS.white, border: COLORS.navy }
-    : { bg: COLORS.green, fg: COLORS.white, border: COLORS.green };
+    : variant === 'ghost' ? { bg: 'transparent', fg: COLORS.midnight, border: 'transparent' }
+    : variant === 'dark' ? { bg: COLORS.midnight, fg: COLORS.white, border: COLORS.midnight }
+    : variant === 'accent' ? { bg: COLORS.lime, fg: COLORS.midnight, border: COLORS.lime }
+    : { bg: COLORS.primary, fg: COLORS.onPrimary, border: COLORS.primary };
   const off = disabled || loading;
   const small = size === 'small';
   return (
@@ -459,7 +484,7 @@ export function Button({ title, onPress, variant = 'primary', loading, disabled,
       accessibilityState={{ disabled: !!off, busy: !!loading }}
       style={[
         s.btn,
-        small && { minHeight: 42, paddingHorizontal: SPACE[4], borderRadius: RADIUS.sm },
+        small && { minHeight: 42, paddingHorizontal: SPACE[4] },
         { backgroundColor: v.bg, borderColor: v.border, opacity: off ? 0.5 : 1 },
         style,
       ]}
@@ -492,11 +517,11 @@ export function IconButton({ icon, onPress, tone, size = 44, accessibilityLabel 
           width: size,
           height: size,
           borderRadius: size / 2,
-          backgroundColor: dark ? COLORS.navy : COLORS.white,
+          backgroundColor: dark ? COLORS.midnight : COLORS.white,
         },
       ]}
     >
-      <Ionicons name={icon} size={20} color={dark ? COLORS.white : COLORS.navy} />
+      <Ionicons name={icon} size={20} color={dark ? COLORS.lime : COLORS.midnight} />
     </TouchableOpacity>
   );
 }
@@ -530,10 +555,10 @@ export function Chip({ label, icon, active, onPress, style }) {
       onPress={onPress}
       activeOpacity={0.8}
       disabled={!onPress}
-      style={[s.chip, active && { backgroundColor: COLORS.navy, borderColor: COLORS.navy }, style]}
+      style={[s.chip, active && { backgroundColor: COLORS.midnight, borderColor: COLORS.midnight }, style]}
     >
       {icon ? (
-        <Ionicons name={icon} size={15} color={active ? COLORS.white : COLORS.inkSoft} />
+        <Ionicons name={icon} size={15} color={active ? COLORS.lime : COLORS.inkSoft} />
       ) : null}
       <Text style={[s.chipText, active && { color: COLORS.white }]}>{label}</Text>
     </TouchableOpacity>
@@ -541,14 +566,24 @@ export function Chip({ label, icon, active, onPress, style }) {
 }
 
 export function Field({ label, hint, error, style, right, ...inputProps }) {
+  const [focused, setFocused] = React.useState(false);
   return (
     <View style={[{ marginBottom: SPACE[4] }, style]}>
       {label ? <Text style={s.fieldLabel}>{label}</Text> : null}
-      <View style={[s.inputWrap, error && { borderColor: COLORS.red }]}>
+      <View
+        style={[
+          s.inputWrap,
+          focused && { borderColor: COLORS.midnight, backgroundColor: COLORS.white },
+          error && { borderColor: COLORS.red },
+        ]}
+      >
         <TextInput
           placeholderTextColor={COLORS.faint}
+          selectionColor={COLORS.midnight}
           style={[s.input, inputProps.multiline && { minHeight: 104, textAlignVertical: 'top' }]}
           {...inputProps}
+          onFocus={(e) => { setFocused(true); inputProps.onFocus && inputProps.onFocus(e); }}
+          onBlur={(e) => { setFocused(false); inputProps.onBlur && inputProps.onBlur(e); }}
         />
         {right ? <View style={{ paddingRight: SPACE[3] }}>{right}</View> : null}
       </View>
@@ -572,7 +607,7 @@ export function RouteLine({ pickup, dropoff, compact }) {
     <View style={{ gap: compact ? SPACE[2] : SPACE[3] }}>
       <View style={s.routeRow}>
         <View style={s.routeGutter}>
-          <View style={[s.routeDot, { backgroundColor: COLORS.green }]} />
+          <View style={[s.routeDot, { backgroundColor: COLORS.lime }]} />
           <View style={s.routeStem} />
         </View>
         <View style={{ flex: 1 }}>
@@ -584,7 +619,7 @@ export function RouteLine({ pickup, dropoff, compact }) {
       </View>
       <View style={s.routeRow}>
         <View style={s.routeGutter}>
-          <View style={[s.routeSquare, { backgroundColor: COLORS.navy }]} />
+          <View style={[s.routeSquare, { backgroundColor: COLORS.midnight }]} />
         </View>
         <View style={{ flex: 1 }}>
           <Text style={TYPE.label}>Dropoff</Text>
@@ -605,7 +640,7 @@ export function EmptyState({ icon = 'albums-outline', title, body, action }) {
   return (
     <View style={s.empty}>
       <View style={s.emptyIcon}>
-        <Ionicons name={icon} size={28} color={COLORS.blue} />
+        <Ionicons name={icon} size={28} color={COLORS.midnight} />
       </View>
       <Text style={[TYPE.heading, { textAlign: 'center' }]}>{title}</Text>
       {body ? (
@@ -621,7 +656,7 @@ export function EmptyState({ icon = 'albums-outline', title, body, action }) {
 export function Loading({ label }) {
   return (
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: SPACE[10] }}>
-      <ActivityIndicator color={COLORS.green} size="large" />
+      <ActivityIndicator color={COLORS.midnight} size="large" />
       {label ? <Text style={[TYPE.small, { marginTop: SPACE[4] }]}>{label}</Text> : null}
     </View>
   );
@@ -637,13 +672,49 @@ export function Skeleton({ lines = 3 }) {
           style={{
             height: 12,
             borderRadius: 6,
-            backgroundColor: COLORS.line,
+            backgroundColor: COLORS.fill,
             marginTop: i === 0 ? 0 : SPACE[3],
             width: i === lines - 1 ? '55%' : '100%',
           }}
         />
       ))}
     </Card>
+  );
+}
+
+/* ======================================================================
+   TAB BAR
+   Shared by the rider and driver tabs. The active tab sits in a lime pill;
+   the rest are quiet grey outlines.
+====================================================================== */
+
+export const TAB_BAR_OPTIONS = {
+  headerShown: false,
+  tabBarActiveTintColor: COLORS.midnight,
+  tabBarInactiveTintColor: COLORS.faint,
+  tabBarLabelStyle: { fontSize: 11, fontWeight: '700', marginTop: 2 },
+  tabBarStyle: {
+    backgroundColor: COLORS.white,
+    borderTopWidth: 0,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#0B0F1A',
+        shadowOpacity: 0.08,
+        shadowRadius: 16,
+        shadowOffset: { width: 0, height: -4 },
+      },
+      android: { elevation: 12 },
+    }),
+  },
+};
+
+/* `name` is the outline icon; the filled version shows when active. */
+export function TabIcon({ name, focused, color }) {
+  const icon = focused ? name.replace(/-outline$/, '') : name;
+  return (
+    <View style={[s.tabIcon, focused && { backgroundColor: COLORS.lime }]}>
+      <Ionicons name={icon} size={20} color={focused ? COLORS.midnight : color} />
+    </View>
   );
 }
 
@@ -732,7 +803,9 @@ const s = StyleSheet.create({
   header: { paddingTop: SPACE[2], paddingBottom: SPACE[1] },
   headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: SPACE[3] },
   backBtn: {
-    width: 40, height: 40, marginLeft: -SPACE[2],
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: COLORS.white,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.line,
     alignItems: 'center', justifyContent: 'center',
   },
   sectionHead: {
@@ -744,10 +817,9 @@ const s = StyleSheet.create({
   card: {
     backgroundColor: COLORS.white,
     borderRadius: RADIUS.lg,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: COLORS.line,
-    padding: SPACE[4],
+    padding: SPACE[5],
   },
+  cardToned: { borderWidth: 1 },
 
   sheet: {
     backgroundColor: COLORS.white,
@@ -758,14 +830,14 @@ const s = StyleSheet.create({
     paddingBottom: SPACE[8],
   },
   grabber: {
-    width: 40, height: 4, borderRadius: 2, backgroundColor: COLORS.line,
+    width: 44, height: 5, borderRadius: 3, backgroundColor: COLORS.lineStrong,
     alignSelf: 'center', marginBottom: SPACE[4],
   },
 
   row: { flexDirection: 'row', alignItems: 'center', minHeight: 56, paddingVertical: SPACE[3], gap: SPACE[3] },
   rowLine: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.line },
-  rowIcon: { width: 38, height: 38, borderRadius: RADIUS.sm, alignItems: 'center', justifyContent: 'center' },
-  rowTitle: { fontSize: 15, fontWeight: '600', color: COLORS.ink },
+  rowIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  rowTitle: { fontSize: 16, fontWeight: '600', color: COLORS.ink, letterSpacing: -0.2 },
 
   avatarBadge: { position: 'absolute', right: -2, bottom: -2 },
 
@@ -779,67 +851,67 @@ const s = StyleSheet.create({
     borderRadius: RADIUS.pill, alignSelf: 'flex-start',
   },
   pillDot: { width: 6, height: 6, borderRadius: 3 },
-  pillText: { fontSize: 12, fontWeight: '700' },
+  pillText: { fontSize: 12, fontWeight: '700', letterSpacing: 0.1 },
 
   banner: {
     flexDirection: 'row', gap: SPACE[3],
-    borderRadius: RADIUS.lg, borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: RADIUS.lg, borderWidth: 1,
     padding: SPACE[4],
   },
 
   btn: {
-    minHeight: 54,
-    borderRadius: RADIUS.md,
-    borderWidth: StyleSheet.hairlineWidth,
+    minHeight: 56,
+    borderRadius: RADIUS.pill,
+    borderWidth: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: SPACE[5],
   },
-  btnText: { fontSize: 16, fontWeight: '700', letterSpacing: -0.2 },
+  btnText: { fontSize: 16, fontWeight: '800', letterSpacing: -0.2 },
 
   iconBtn: { alignItems: 'center', justifyContent: 'center' },
 
   segmented: {
     flexDirection: 'row',
-    backgroundColor: COLORS.line,
-    borderRadius: RADIUS.md,
-    padding: 3,
-    gap: 3,
+    backgroundColor: COLORS.fill,
+    borderRadius: RADIUS.pill,
+    padding: 4,
+    gap: 4,
   },
   segment: {
-    flex: 1, minHeight: 40, borderRadius: RADIUS.sm,
+    flex: 1, minHeight: 40, borderRadius: RADIUS.pill,
     alignItems: 'center', justifyContent: 'center',
   },
-  segmentActive: { backgroundColor: COLORS.white },
+  segmentActive: { backgroundColor: COLORS.midnight },
   segmentText: { fontSize: 14, fontWeight: '600', color: COLORS.muted },
-  segmentTextActive: { color: COLORS.navy },
+  segmentTextActive: { color: COLORS.lime },
 
   chip: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[2],
-    paddingHorizontal: SPACE[4], height: 38,
+    paddingHorizontal: SPACE[4], height: 40,
     borderRadius: RADIUS.pill,
-    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.lineStrong,
+    borderWidth: 1, borderColor: COLORS.line,
     backgroundColor: COLORS.white,
   },
   chipText: { fontSize: 14, fontWeight: '600', color: COLORS.inkSoft },
 
-  fieldLabel: { fontSize: 13, fontWeight: '600', color: COLORS.navy, marginBottom: SPACE[2] },
+  fieldLabel: { fontSize: 13, fontWeight: '700', color: COLORS.inkSoft, marginBottom: SPACE[2] },
   inputWrap: {
     flexDirection: 'row', alignItems: 'center',
-    borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.lineStrong,
-    borderRadius: RADIUS.md, backgroundColor: COLORS.white,
+    borderWidth: 1.5, borderColor: COLORS.fill,
+    borderRadius: RADIUS.md, backgroundColor: COLORS.fill,
   },
   input: {
     flex: 1,
     paddingHorizontal: SPACE[4], paddingVertical: SPACE[3],
-    minHeight: 50, fontSize: 15, color: COLORS.ink,
+    minHeight: 54, fontSize: 16, color: COLORS.ink,
   },
 
   routeRow: { flexDirection: 'row', gap: SPACE[3] },
   routeGutter: { width: 12, alignItems: 'center', paddingTop: 5 },
-  routeDot: { width: 11, height: 11, borderRadius: 6 },
-  routeSquare: { width: 11, height: 11, borderRadius: 3 },
+  routeDot: { width: 12, height: 12, borderRadius: 6, borderWidth: 2.5, borderColor: COLORS.midnight },
+  routeSquare: { width: 12, height: 12, borderRadius: 3 },
   routeStem: { flex: 1, width: StyleSheet.hairlineWidth * 3, backgroundColor: COLORS.line, marginTop: 4, minHeight: 18 },
 
   mapOff: {
@@ -849,9 +921,14 @@ const s = StyleSheet.create({
     padding: SPACE[5],
   },
 
+  tabIcon: {
+    width: 52, height: 28, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+  },
+
   empty: { alignItems: 'center', paddingVertical: SPACE[12], paddingHorizontal: SPACE[6] },
   emptyIcon: {
-    width: 64, height: 64, borderRadius: RADIUS.lg, backgroundColor: COLORS.blueSoft,
+    width: 72, height: 72, borderRadius: 36, backgroundColor: COLORS.lime,
     alignItems: 'center', justifyContent: 'center', marginBottom: SPACE[4],
   },
 });

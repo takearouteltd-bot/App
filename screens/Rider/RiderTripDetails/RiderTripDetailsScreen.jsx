@@ -19,7 +19,7 @@ import { currencySymbol } from '../../../utils/appConfig';
 import EmailReceiptButton from '../../../components/EmailReceiptButton';
 import { COLORS, Avatar, RADIUS } from '../../../components/ui/kit';
 
-const PRIMARY = COLORS.green;
+const PRIMARY = COLORS.primary;
 const SECONDARY = COLORS.blue;
 const DANGER = COLORS.red;
 
@@ -247,13 +247,13 @@ export default function RiderTripDetailsScreen() {
           <View style={[
             styles.statusBadge,
             {
-              backgroundColor: isCompleted ? COLORS.greenSoft : isCancelled ? '#FDECEC' : '#E6F0FA',
+              backgroundColor: isCompleted ? COLORS.limeSoft : isCancelled ? '#FDECEC' : '#EEF0F4',
             }
           ]}>
             <Text style={[
               styles.statusText,
               {
-                color: isCompleted ? PRIMARY : isCancelled ? DANGER : SECONDARY,
+                color: isCompleted ? COLORS.success : isCancelled ? DANGER : SECONDARY,
               }
             ]}>
               {status}
@@ -379,7 +379,7 @@ export default function RiderTripDetailsScreen() {
           </View>
           <Text style={[
             styles.paymentStatus,
-            { color: payment.status === 'paid' ? PRIMARY : DANGER }
+            { color: payment.status === 'paid' ? COLORS.success : DANGER }
           ]}>
             {payment.status?.toUpperCase() || 'PENDING'}
           </Text>

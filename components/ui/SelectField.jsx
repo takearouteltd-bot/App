@@ -51,7 +51,7 @@ export default function SelectField({ label, value, options, onChange, placehold
                       <Text style={[styles.optionText, on && { color: COLORS.navy, fontWeight: '700' }]}>{item.label}</Text>
                       {item.detail ? <Text style={TYPE.small}>{item.detail}</Text> : null}
                     </View>
-                    {on ? <Ionicons name="checkmark" size={20} color={COLORS.green} /> : null}
+                    {on ? <Ionicons name="checkmark" size={20} color={COLORS.primary} /> : null}
                   </TouchableOpacity>
                 );
               }}

@@ -134,7 +134,7 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
   if (checking) {
     return (
       <SafeAreaView style={[styles.safe, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.green} />
+        <ActivityIndicator size="large" color={COLORS.primary} />
       </SafeAreaView>
     );
   }
@@ -261,19 +261,19 @@ export default function SubscriptionScreen({ setOnboardingStatus }) {
         <Card flush style={{ marginTop: SPACE[4] }}>
           <ListRow
             icon="cash-outline"
-            iconColor={COLORS.green}
+            iconColor={COLORS.primary}
             title="You keep the whole fare"
             detail="No commission is taken from any ride"
           />
           <ListRow
             icon="infinite-outline"
-            iconColor={COLORS.green}
+            iconColor={COLORS.primary}
             title="No limit on jobs"
             detail="Take as much work as you like"
           />
           <ListRow
             icon="wallet-outline"
-            iconColor={COLORS.green}
+            iconColor={COLORS.primary}
             title="Paid from your earnings"
             detail="Nothing to pay up front"
             last

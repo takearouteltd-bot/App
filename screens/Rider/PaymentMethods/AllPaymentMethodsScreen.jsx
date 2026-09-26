@@ -194,7 +194,7 @@ export default function AllPaymentMethodsScreen({ navigation }) {
   if (loading) {
     return (
       <SafeAreaView style={[styles.safe, styles.centered]}>
-        <ActivityIndicator color={COLORS.green} size="large" />
+        <ActivityIndicator color={COLORS.primary} size="large" />
       </SafeAreaView>
     );
   }

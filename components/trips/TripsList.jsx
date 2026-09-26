@@ -35,7 +35,7 @@ function whenLabel(date) {
 }
 
 const STATUS = {
-  completed: { label: 'Completed', fg: COLORS.success, bg: COLORS.greenSoft },
+  completed: { label: 'Completed', fg: COLORS.success, bg: COLORS.limeSoft },
   cancelled: { label: 'Cancelled', fg: COLORS.red, bg: COLORS.redSoft },
   canceled: { label: 'Cancelled', fg: COLORS.red, bg: COLORS.redSoft },
   ongoing: { label: 'On the way', fg: COLORS.blue, bg: COLORS.blueSoft },
@@ -60,7 +60,7 @@ function TripRow({ trip, role, onPress }) {
       {/* Route: pickup dot, line, drop-off square */}
       <View style={styles.route}>
         <View style={styles.rail}>
-          <View style={[styles.dot, { backgroundColor: COLORS.green }]} />
+          <View style={[styles.dot, { backgroundColor: COLORS.lime }]} />
           <View style={styles.line} />
           <View style={[styles.dot, styles.square, { backgroundColor: COLORS.navy }]} />
         </View>

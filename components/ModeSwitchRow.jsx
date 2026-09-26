@@ -65,7 +65,7 @@ export default function ModeSwitchRow({ uid, currentRole }) {
 
   const copy = describeMode(target, record);
   const icon = target === 'driver' ? 'car-sport-outline' : 'person-outline';
-  const iconColor = copy.tone === 'warning' ? COLORS.amber : COLORS.green;
+  const iconColor = copy.tone === 'warning' ? COLORS.amber : COLORS.primary;
 
   return (
     <View>

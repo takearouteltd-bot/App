@@ -70,7 +70,7 @@ const styles = StyleSheet.create({
 
   tick: {
     width: 72, height: 72, borderRadius: 36,
-    backgroundColor: COLORS.green,
+    backgroundColor: COLORS.primary,
     alignItems: 'center', justifyContent: 'center',
     marginBottom: SPACE[6],
   },

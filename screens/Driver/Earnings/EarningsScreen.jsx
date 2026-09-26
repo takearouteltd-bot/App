@@ -112,7 +112,7 @@ const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
 
     return (
       <View style={styles.txRow}>
-        <View style={[styles.txIcon, { backgroundColor: isPositive ? COLORS.greenSoft : COLORS.blueSoft }]}>
+        <View style={[styles.txIcon, { backgroundColor: isPositive ? COLORS.limeSoft : COLORS.blueSoft }]}>
           <Ionicons name={icon} size={18} color={isPositive ? COLORS.success : COLORS.blue} />
         </View>
         <View style={{ flex: 1 }}>

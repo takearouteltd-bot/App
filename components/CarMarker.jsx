@@ -11,12 +11,16 @@ import { Marker } from 'react-native-maps';
 import { COLORS } from './ui/kit';
 
 export function CarShape({ tone = 'navy', size = 1 }) {
-  const body = tone === 'green' ? COLORS.greenDeep : COLORS.navy;
+  // "green" is the passenger's own driver: lime with dark glass, so it stands
+  // out from the midnight cars around it.
+  const mine = tone === 'green';
+  const body = mine ? COLORS.lime : COLORS.midnight;
+  const glass = mine ? { backgroundColor: COLORS.midnight } : null;
   return (
-    <View style={[styles.car, { backgroundColor: body, transform: [{ scale: size }] }]}>
-      <View style={styles.windscreen} />
+    <View style={[styles.car, { backgroundColor: body, transform: [{ scale: size }] }, mine && { borderColor: COLORS.midnight }]}>
+      <View style={[styles.windscreen, glass]} />
       <View style={styles.roof} />
-      <View style={styles.rearWindow} />
+      <View style={[styles.rearWindow, glass]} />
       <View style={[styles.light, styles.lightLeft]} />
       <View style={[styles.light, styles.lightRight]} />
     </View>
@@ -71,7 +75,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 4,
     borderBottomLeftRadius: 1,
     borderBottomRightRadius: 1,
-    backgroundColor: '#A9C8EA',
+    backgroundColor: '#D3D7DE',
   },
   roof: {
     position: 'absolute',
@@ -87,7 +91,7 @@ const styles = StyleSheet.create({
     width: 11,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#A9C8EA',
+    backgroundColor: '#D3D7DE',
   },
   light: { position: 'absolute', top: 1, width: 4, height: 2, borderRadius: 1, backgroundColor: '#FFF6C7' },
   lightLeft: { left: 2 },

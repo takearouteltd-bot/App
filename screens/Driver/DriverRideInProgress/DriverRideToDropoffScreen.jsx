@@ -336,7 +336,7 @@ export default function DriverRideToDropoffScreen() {
   if (!ride || !isCoord(driverLocation) || !isCoord(ride.dropoffLocation)) {
     return (
       <SafeAreaView style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.green} />
+        <ActivityIndicator size="large" color={COLORS.primary} />
         <Text style={[TYPE.small, { marginTop: SPACE[4] }]}>
           {ride ? 'Waiting for your location…' : 'Loading the trip…'}
         </Text>
@@ -392,7 +392,7 @@ export default function DriverRideToDropoffScreen() {
         ) : null}
 
         {routeCoords.length ? (
-          <Polyline coordinates={routeCoords} strokeColor={COLORS.green} strokeWidth={4} />
+          <Polyline coordinates={routeCoords} strokeColor={COLORS.primary} strokeWidth={4} />
         ) : null}
       </MapView>
 
@@ -616,15 +616,15 @@ const styles = StyleSheet.create({
   contact: { flexDirection: 'row', gap: SPACE[2] },
 
   complete: {
-    minHeight: 54, borderRadius: RADIUS.md,
-    backgroundColor: COLORS.green,
+    minHeight: 54, borderRadius: 999,
+    backgroundColor: COLORS.primary,
     alignItems: 'center', justifyContent: 'center',
   },
   completeIdle: {
     backgroundColor: COLORS.white,
     borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.lineStrong,
   },
-  completeText: { fontSize: 16, fontWeight: '800', color: COLORS.white, letterSpacing: -0.2 },
+  completeText: { fontSize: 16, fontWeight: '800', color: COLORS.onPrimary, letterSpacing: -0.2 },
 
   secondary: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACE[2],

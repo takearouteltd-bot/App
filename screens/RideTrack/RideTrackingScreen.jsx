@@ -217,7 +217,7 @@ export default function RideTrackingScreen() {
   if (!rideData) {
     return (
       <SafeAreaView style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.green} />
+        <ActivityIndicator size="large" color={COLORS.primary} />
         <Text style={[TYPE.small, { marginTop: SPACE[4] }]}>Loading your ride…</Text>
       </SafeAreaView>
     );
@@ -281,7 +281,7 @@ export default function RideTrackingScreen() {
             waypoints={beforePickup ? [] : remainingStops(rideData)}
             apikey={GOOGLE_MAPS_API_KEY}
             strokeWidth={4}
-            strokeColor={COLORS.green}
+            strokeColor={COLORS.primary}
           />
         ) : null}
       </MapView>
@@ -381,7 +381,7 @@ const styles = StyleSheet.create({
 
   pickupMarker: {
     width: 16, height: 16, borderRadius: 8,
-    backgroundColor: COLORS.green, borderWidth: 3, borderColor: COLORS.white,
+    backgroundColor: COLORS.lime, borderWidth: 3, borderColor: COLORS.midnight,
   },
   driverMarkerWrap: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center' },
   driverPulse: {
@@ -418,7 +418,7 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.md, borderWidth: StyleSheet.hairlineWidth,
     padding: SPACE[3], marginTop: SPACE[4],
   },
-  waitingFree: { backgroundColor: COLORS.blueSoft, borderColor: '#BFD3EC' },
+  waitingFree: { backgroundColor: COLORS.blueSoft, borderColor: '#E6E8EC' },
   waitingCharged: { backgroundColor: COLORS.amberSoft, borderColor: '#FCD34D' },
   waitingLabel: { fontSize: 14, fontWeight: '700' },
 

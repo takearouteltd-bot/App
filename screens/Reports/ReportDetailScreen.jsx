@@ -105,7 +105,7 @@ export default function ReportDetailScreen({ navigation, route }) {
               const done = i <= stepIndex;
               return (
                 <View key={s.key} style={styles.step}>
-                  <View style={[styles.stepBar, done && { backgroundColor: closed ? COLORS.green : COLORS.blue }]} />
+                  <View style={[styles.stepBar, done && { backgroundColor: closed ? COLORS.primary : COLORS.blue }]} />
                   <Text style={[styles.stepLabel, done && { color: COLORS.navy, fontWeight: '700' }]}>{s.label}</Text>
                 </View>
               );
@@ -197,7 +197,7 @@ const styles = StyleSheet.create({
     flex: 1, maxHeight: 120, minHeight: 44, borderWidth: 1, borderColor: COLORS.line, borderRadius: 14,
     paddingHorizontal: 14, paddingTop: 11, paddingBottom: 11, fontSize: 15, color: COLORS.ink,
   },
-  sendBtn: { width: 44, height: 44, borderRadius: 14, backgroundColor: COLORS.green, alignItems: 'center', justifyContent: 'center' },
+  sendBtn: { width: 44, height: 44, borderRadius: 14, backgroundColor: COLORS.primary, alignItems: 'center', justifyContent: 'center' },
   closedBar: {
     flexDirection: 'row', alignItems: 'center', padding: 16,
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line, backgroundColor: COLORS.white,

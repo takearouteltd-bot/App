@@ -131,7 +131,7 @@ export default function PaymentsMethodScreen({ navigation }) {
 
   const statusTone = (status) =>
     status === 'captured'
-      ? { bg: COLORS.greenSoft, fg: COLORS.success, label: 'Paid' }
+      ? { bg: COLORS.limeSoft, fg: COLORS.success, label: 'Paid' }
       : status === 'authorized'
       ? { bg: COLORS.blueSoft, fg: COLORS.blue, label: 'Held' }
       : status === 'canceled'
@@ -146,7 +146,7 @@ export default function PaymentsMethodScreen({ navigation }) {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.green} />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />
         }
       >
         <ScreenHeader title="Payment" subtitle="The card your rides are charged to." />
@@ -188,7 +188,7 @@ export default function PaymentsMethodScreen({ navigation }) {
         <Card flush style={{ marginTop: SPACE[4] }}>
           <ListRow
             icon="add-circle-outline"
-            iconColor={COLORS.green}
+            iconColor={COLORS.primary}
             title={card ? 'Add another card' : 'Add a card'}
             detail="Credit or debit"
             onPress={() => navigation.navigate('AddPaymentMethod')}
@@ -207,7 +207,7 @@ export default function PaymentsMethodScreen({ navigation }) {
         <Text style={[TYPE.label, { marginTop: SPACE[7], marginBottom: SPACE[3] }]}>Payments</Text>
 
         {loading ? (
-          <ActivityIndicator color={COLORS.green} style={{ marginTop: SPACE[6] }} />
+          <ActivityIndicator color={COLORS.primary} style={{ marginTop: SPACE[6] }} />
         ) : transactions.length === 0 ? (
           <EmptyState
             icon="receipt-outline"

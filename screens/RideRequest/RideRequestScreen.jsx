@@ -221,7 +221,7 @@ export default function RideRequestScreen() {
   if (!rideData) {
     return (
       <SafeAreaView style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.green} />
+        <ActivityIndicator size="large" color={COLORS.primary} />
         <Text style={[TYPE.small, { marginTop: SPACE[4] }]}>Loading your ride…</Text>
       </SafeAreaView>
     );
@@ -270,7 +270,7 @@ export default function RideRequestScreen() {
               destination={dropoffLocation}
               apikey={GOOGLE_MAPS_API_KEY}
               strokeWidth={4}
-              strokeColor={COLORS.green}
+              strokeColor={COLORS.primary}
             />
           ) : null}
         </MapView>
@@ -448,7 +448,7 @@ const styles = StyleSheet.create({
   bid: { alignSelf: 'stretch', marginTop: SPACE[4] },
   bidRow: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
-    padding: SPACE[4], borderRadius: RADIUS.md, backgroundColor: COLORS.greenSoft,
+    padding: SPACE[4], borderRadius: RADIUS.md, backgroundColor: COLORS.limeSoft,
   },
   bidValue: { fontSize: 24, fontWeight: '800', color: COLORS.navy, letterSpacing: -0.5, marginTop: 2 },
   raise: {
@@ -469,10 +469,10 @@ const styles = StyleSheet.create({
   offerInitial: { fontSize: 16, fontWeight: '800', color: COLORS.navy },
   offerName: { ...TYPE.callout, color: COLORS.navy },
   takeOffer: {
-    minWidth: 84, height: 42, paddingHorizontal: SPACE[3], borderRadius: RADIUS.sm,
-    backgroundColor: COLORS.green, alignItems: 'center', justifyContent: 'center',
+    minWidth: 84, height: 42, paddingHorizontal: SPACE[3], borderRadius: 999,
+    backgroundColor: COLORS.primary, alignItems: 'center', justifyContent: 'center',
   },
-  takeOfferText: { fontSize: 15, fontWeight: '800', color: COLORS.white },
+  takeOfferText: { fontSize: 15, fontWeight: '800', color: COLORS.onPrimary },
   widen: {
     alignSelf: 'stretch', marginTop: SPACE[4], padding: SPACE[4],
     borderRadius: RADIUS.md, backgroundColor: COLORS.amberSoft,
@@ -481,7 +481,7 @@ const styles = StyleSheet.create({
   widenBody: { ...TYPE.small, color: COLORS.inkSoft, marginTop: SPACE[1] },
   widenRow: { flexDirection: 'row', gap: SPACE[3], marginTop: SPACE[3] },
   widenButton: {
-    flex: 1, height: 44, borderRadius: RADIUS.sm, backgroundColor: COLORS.green,
+    flex: 1, height: 44, borderRadius: RADIUS.sm, backgroundColor: COLORS.primary,
     alignItems: 'center', justifyContent: 'center',
   },
   widenSecondary: { backgroundColor: COLORS.white, borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.lineStrong },
@@ -491,7 +491,7 @@ const styles = StyleSheet.create({
 
   originMarker: {
     width: 16, height: 16, borderRadius: 8,
-    backgroundColor: COLORS.green, borderWidth: 3, borderColor: COLORS.white,
+    backgroundColor: COLORS.lime, borderWidth: 3, borderColor: COLORS.midnight,
   },
 
   topBar: { position: 'absolute', top: SPACE[3], left: SPACE[5] },
@@ -512,7 +512,7 @@ const styles = StyleSheet.create({
   radar: { width: 96, height: 96, alignItems: 'center', justifyContent: 'center' },
   halo: {
     position: 'absolute', width: 96, height: 96, borderRadius: 48,
-    backgroundColor: COLORS.green,
+    backgroundColor: COLORS.primary,
   },
   radarCore: {
     width: 62, height: 62, borderRadius: 31,
@@ -543,7 +543,7 @@ const styles = StyleSheet.create({
   accepted: { paddingBottom: SPACE[2] },
   foundRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[3] },
   foundTick: {
-    width: 30, height: 30, borderRadius: 15, backgroundColor: COLORS.green,
+    width: 30, height: 30, borderRadius: 15, backgroundColor: COLORS.primary,
     alignItems: 'center', justifyContent: 'center',
   },
   foundText: { ...TYPE.heading },

@@ -12,25 +12,21 @@ import SubscriptionScreen from "../screens/Driver/Subscription/SubscriptionScree
 import DriverSubscriptionStack from "./Driver/DriverSubscriptionStack";
 import DriverProfileScreen from "../screens/Driver/DriverProfile/DriverProfileScreen";
 import DriverProfileStack from "./Driver/DriverProfileStack";
-import { COLORS } from '../components/ui/kit';
+import { TAB_BAR_OPTIONS, TabIcon } from '../components/ui/kit';
 
 const Tab = createBottomTabNavigator();
-const PRIMARY = COLORS.green;
 
 export default function DriverTabs() {
     return (
       <Tab.Navigator
-        screenOptions={{
-          headerShown: false,
-          tabBarActiveTintColor: PRIMARY,
-        }}
+        screenOptions={TAB_BAR_OPTIONS}
       >
         <Tab.Screen
           name="Home"
           component={DriverStack}
           options={{
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="car-outline" size={size} color={color} />
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon name="car-outline" focused={focused} color={color} />
             ),
           }}
         />
@@ -39,8 +35,8 @@ export default function DriverTabs() {
           name="Trips"
           component={DriverTripsStack}
           options={{
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="map-outline" size={size} color={color} />
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon name="map-outline" focused={focused} color={color} />
             ),
           }}
         />
@@ -50,8 +46,8 @@ export default function DriverTabs() {
           component={DriverEarningsStack}
 
           options={{
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="cash-outline" size={size} color={color} />
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon name="cash-outline" focused={focused} color={color} />
             ),
           }}
         />
@@ -60,8 +56,8 @@ export default function DriverTabs() {
           name="Membership"
           component={DriverSubscriptionStack}
           options={{
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="star-outline" size={size} color={color} />
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon name="star-outline" focused={focused} color={color} />
             ),
           }}
         />
@@ -69,8 +65,8 @@ export default function DriverTabs() {
           name="Account"
           component={DriverProfileStack}
           options={{
-            tabBarIcon: ({ color, size }) => (
-              <Ionicons name="person-outline" size={size} color={color} />
+            tabBarIcon: ({ color, focused }) => (
+              <TabIcon name="person-outline" focused={focused} color={color} />
             ),
           }}
         />

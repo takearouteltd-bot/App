@@ -13,7 +13,7 @@ export default function RiderNavigator({ onboardingStatus, setOnboardingStatus }
   if (!onboardingStatus || onboardingStatus === "not_started") {
     return (
       <SafeAreaView style={{ flex:1, justifyContent:"center", alignItems:"center" }}>
-        <ActivityIndicator size={'small'} color={COLORS.green} />
+        <ActivityIndicator size={'small'} color={COLORS.primary} />
       </SafeAreaView>
     );
   }

@@ -37,7 +37,7 @@ import { uriToBlob } from "../../../helpers/uploadPicker";
 import { db, auth, storage } from "../../../config/firebase";
 import { COLORS } from '../../../components/ui/kit';
 
-const PRIMARY = COLORS.green;
+const PRIMARY = COLORS.primary;
 const SECONDARY = COLORS.blue;
 const BG = COLORS.surface;
 
@@ -736,7 +736,7 @@ const styles = StyleSheet.create({
 
   // Pending Email Card
   pendingCard: {
-    backgroundColor: "#EBF2FA",
+    backgroundColor: "#EEF0F4",
     borderRadius: 12,
     padding: 16,
     borderLeftWidth: 4,
@@ -830,7 +830,7 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
     marginHorizontal: 20,
     marginTop: 10,
-    backgroundColor: "#F0F7E6",
+    backgroundColor: "#F2FADF",
     padding: 14,
     borderRadius: 12,
     gap: 10,
@@ -866,7 +866,7 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: "#EBF2FA",
+    backgroundColor: "#EEF0F4",
     justifyContent: "center",
     alignItems: "center",
     marginBottom: 16,

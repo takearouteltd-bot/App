@@ -75,7 +75,7 @@ export default function EnableLocationScreen({ setOnboardingStatus }) {
 
       <View style={styles.body}>
         <View style={styles.icon}>
-          <Ionicons name="location" size={40} color={COLORS.green} />
+          <Ionicons name="location" size={40} color={COLORS.primary} />
         </View>
 
         <Text style={styles.title}>Turn on location</Text>
@@ -121,7 +121,7 @@ const styles = StyleSheet.create({
   body: { flex: 1, justifyContent: 'center', paddingHorizontal: SPACE[6] },
   icon: {
     width: 80, height: 80, borderRadius: 26,
-    backgroundColor: COLORS.greenSoft,
+    backgroundColor: COLORS.limeSoft,
     alignItems: 'center', justifyContent: 'center',
     marginBottom: SPACE[6],
   },

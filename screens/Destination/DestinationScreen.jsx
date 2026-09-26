@@ -279,7 +279,7 @@ const styles = StyleSheet.create({
 
   journey: { flexDirection: 'row', gap: SPACE[3], paddingHorizontal: SPACE[5], zIndex: 10 },
   gutter: { width: 12, alignItems: 'center', paddingTop: 22 },
-  dotGreen: { width: 11, height: 11, borderRadius: 6, backgroundColor: COLORS.green },
+  dotGreen: { width: 11, height: 11, borderRadius: 6, backgroundColor: COLORS.limeDeep },
   stem: { flex: 1, width: 2, backgroundColor: COLORS.line, marginVertical: 4, minHeight: 34 },
   square: { width: 11, height: 11, borderRadius: 3, backgroundColor: COLORS.navy },
 

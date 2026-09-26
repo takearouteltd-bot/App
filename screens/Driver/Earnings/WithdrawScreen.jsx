@@ -100,7 +100,7 @@ export default function WithdrawScreen() {
   if (loading) {
     return (
       <SafeAreaView style={[styles.safe, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.green} />
+        <ActivityIndicator size="large" color={COLORS.primary} />
       </SafeAreaView>
     );
   }

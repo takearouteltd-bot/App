@@ -33,7 +33,7 @@ import { useCities } from '../../../utils/cities';
 import { openTerms, openPrivacy } from '../../../utils/legal';
 import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocuments';
 
-const PRIMARY = COLORS.green;
+const PRIMARY = COLORS.primary;
 const SECONDARY = COLORS.blue;
 const DANGER = COLORS.red;
 const BG = COLORS.surface;
@@ -190,7 +190,7 @@ export default function DriverProfileScreen() {
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.green} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
       >
         {/* Identity */}
         <View style={styles.identity}>
@@ -202,7 +202,7 @@ export default function DriverProfileScreen() {
                 <Text style={styles.initial}>{(driver?.fullName || driver?.firstName || "D").charAt(0).toUpperCase()}</Text>
               </View>
             )}
-            <View style={[styles.presence, { backgroundColor: isOnline ? COLORS.green : COLORS.faint }]} />
+            <View style={[styles.presence, { backgroundColor: isOnline ? COLORS.limeDeep : COLORS.faint }]} />
           </View>
           <Text style={styles.name}>{driver?.fullName || [driver?.firstName, driver?.lastName].filter(Boolean).join(" ") || "Driver"}</Text>
           <View style={{ marginTop: 8 }}>

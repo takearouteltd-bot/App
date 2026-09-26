@@ -52,7 +52,7 @@ export default function SafetyButton({ role = 'rider', rideId, style }) {
           {contact?.phone ? (
             <ListRow
               icon="person-outline"
-              iconColor={COLORS.green}
+              iconColor={COLORS.primary}
               title={`Call ${contact.name || 'emergency contact'}`}
               detail={contact.relationship || 'Your emergency contact'}
               onPress={() => call(contact.phone)}

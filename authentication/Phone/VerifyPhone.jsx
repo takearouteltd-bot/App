@@ -24,7 +24,7 @@ import {
 } from "../../store/phoneAuthStore";
 import { COLORS } from '../../components/ui/kit';
 
-const PRIMARY = COLORS.green;
+const PRIMARY = COLORS.primary;
 const DARK = COLORS.ink;
 
 const EMPTY_OTP = ["", "", "", "", "", ""];
@@ -290,7 +290,7 @@ const styles = StyleSheet.create({
   },
   otpInputFilled: {
     borderColor: PRIMARY,
-    backgroundColor: "#f0fce8",
+    backgroundColor: "#F2FADF",
   },
   resendBtn: { alignSelf: "center", marginBottom: 30 },
   resendText: { color: DARK, fontWeight: "bold", fontSize: 14 },

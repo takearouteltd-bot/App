@@ -133,7 +133,7 @@ export default function PreferencesScreen() {
                   <Switch
                     value={femaleOnly}
                     onValueChange={toggleFemaleOnly}
-                    trackColor={{ false: COLORS.line, true: COLORS.green }}
+                    trackColor={{ false: COLORS.line, true: COLORS.limeDeep }}
                     thumbColor={COLORS.white}
                   />
                 }
@@ -154,7 +154,7 @@ export default function PreferencesScreen() {
                 value={pushOn}
                 onValueChange={togglePush}
                 disabled={saving}
-                trackColor={{ false: COLORS.line, true: COLORS.green }}
+                trackColor={{ false: COLORS.line, true: COLORS.limeDeep }}
                 thumbColor={COLORS.white}
               />
             }

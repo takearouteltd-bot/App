@@ -645,7 +645,7 @@ export default function DriverHomeScreen() {
   if (checkingRide) {
     return (
       <SafeAreaView style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.green} />
+        <ActivityIndicator size="large" color={COLORS.primary} />
         <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>Checking for an active job…</Text>
       </SafeAreaView>
     );
@@ -654,7 +654,7 @@ export default function DriverHomeScreen() {
   if (loading || !location) {
     return (
       <SafeAreaView style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.green} />
+        <ActivityIndicator size="large" color={COLORS.primary} />
         <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>Finding your location…</Text>
       </SafeAreaView>
     );
@@ -693,7 +693,7 @@ export default function DriverHomeScreen() {
             {isOnline ? (
               <Animated.View style={[styles.presenceHalo, { transform: [{ scale: pulseAnim }] }]} />
             ) : null}
-            <View style={[styles.presenceDot, { backgroundColor: isOnline ? COLORS.green : COLORS.faint }]} />
+            <View style={[styles.presenceDot, { backgroundColor: isOnline ? COLORS.limeDeep : COLORS.faint }]} />
           </View>
 
           <View style={{ flex: 1 }}>
@@ -783,7 +783,7 @@ export default function DriverHomeScreen() {
 
           {isOnline ? (
             <View style={styles.waiting}>
-              <ActivityIndicator size="small" color={COLORS.green} />
+              <ActivityIndicator size="small" color={COLORS.primary} />
               <Text style={styles.waitingText}>Waiting for jobs nearby</Text>
             </View>
           ) : null}
@@ -928,19 +928,19 @@ const styles = StyleSheet.create({
   presence: { width: 26, height: 26, alignItems: 'center', justifyContent: 'center' },
   presenceHalo: {
     position: 'absolute', width: 26, height: 26, borderRadius: 13,
-    backgroundColor: COLORS.green, opacity: 0.22,
+    backgroundColor: COLORS.lime, opacity: 0.45,
   },
   presenceDot: { width: 11, height: 11, borderRadius: 6 },
   presenceTitle: { fontSize: 16, fontWeight: '800', color: COLORS.navy, letterSpacing: -0.3 },
 
   goBtn: {
-    minWidth: 76, height: 42, borderRadius: RADIUS.sm,
+    minWidth: 76, height: 44, borderRadius: RADIUS.pill,
     alignItems: 'center', justifyContent: 'center',
     borderWidth: StyleSheet.hairlineWidth,
   },
-  goBtnOn: { backgroundColor: COLORS.green, borderColor: COLORS.green },
+  goBtnOn: { backgroundColor: COLORS.lime, borderColor: COLORS.lime },
   goBtnOff: { backgroundColor: COLORS.white, borderColor: COLORS.lineStrong },
-  goBtnText: { fontSize: 15, fontWeight: '800', color: COLORS.white, letterSpacing: -0.2 },
+  goBtnText: { fontSize: 15, fontWeight: '800', color: COLORS.midnight, letterSpacing: -0.2 },
 
   docAlert: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
@@ -1001,23 +1001,23 @@ const styles = StyleSheet.create({
 
   offerRoute: { flexDirection: 'row', gap: SPACE[3], paddingVertical: SPACE[5] },
   gutter: { width: 12, alignItems: 'center', paddingTop: 20 },
-  dotGreen: { width: 11, height: 11, borderRadius: 6, backgroundColor: COLORS.green },
+  dotGreen: { width: 11, height: 11, borderRadius: 6, backgroundColor: COLORS.limeDeep },
   stem: { flex: 1, width: 2, backgroundColor: COLORS.line, marginVertical: 4, minHeight: 34 },
   square: { width: 11, height: 11, borderRadius: 3, backgroundColor: COLORS.navy },
   addr: { ...TYPE.callout, marginTop: 2 },
   away: { ...TYPE.small, marginTop: 2 },
 
   accept: {
-    minHeight: 54, borderRadius: RADIUS.md,
-    backgroundColor: COLORS.green,
+    minHeight: 54, borderRadius: 999,
+    backgroundColor: COLORS.primary,
     alignItems: 'center', justifyContent: 'center',
   },
-  acceptText: { fontSize: 16, fontWeight: '800', color: COLORS.white, letterSpacing: -0.2 },
+  acceptText: { fontSize: 16, fontWeight: '800', color: COLORS.onPrimary, letterSpacing: -0.2 },
   decline: { alignItems: 'center', paddingVertical: SPACE[4] },
   counterRow: { flexDirection: 'row', gap: SPACE[2], marginTop: SPACE[3] },
   counterChip: {
     flex: 1, height: 44, borderRadius: RADIUS.sm,
-    borderWidth: 1.5, borderColor: COLORS.green, backgroundColor: COLORS.greenSoft,
+    borderWidth: 2, borderColor: COLORS.midnight, backgroundColor: COLORS.limeSoft,
     alignItems: 'center', justifyContent: 'center',
   },
   counterChipText: { fontSize: 15, fontWeight: '800', color: COLORS.navy },

@@ -318,7 +318,7 @@ export default function EmailAuthScreen({
             disabled={loading}
           >
             {loading ? (
-              <ActivityIndicator color={COLORS.white} />
+              <ActivityIndicator color={COLORS.onPrimary} />
             ) : (
               <Text style={styles.buttonText}>
                 {isLogin ? "Login" : "Create Account"}
@@ -372,7 +372,7 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   toggleText: { fontSize: 15, fontWeight: "600", color: COLORS.faint },
-  toggleTextActive: { color: COLORS.green },
+  toggleTextActive: { color: COLORS.primary },
 
   inputWrapper: { marginBottom: 18 },
   label: { fontSize: 14, fontWeight: "600", color: COLORS.inkSoft, marginBottom: 8 },
@@ -390,15 +390,15 @@ const styles = StyleSheet.create({
   input: { flex: 1, fontSize: 15, color: COLORS.ink },
 
   button: {
-    backgroundColor: COLORS.green,
+    backgroundColor: COLORS.primary,
     paddingVertical: 18,
-    borderRadius: 12,
+    borderRadius: 999,
     alignItems: "center",
     marginBottom: 20,
   },
-  buttonText: { color: COLORS.white, fontSize: 17, fontWeight: "bold" },
+  buttonText: { color: COLORS.onPrimary, fontSize: 17, fontWeight: "bold" },
 
   switchBtn: { alignItems: "center" },
   switchText: { color: COLORS.muted, fontSize: 14 },
-  switchTextBold: { color: COLORS.green, fontWeight: "bold" },
+  switchTextBold: { color: COLORS.primary, fontWeight: "bold" },
 });

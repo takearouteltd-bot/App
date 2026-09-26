@@ -111,7 +111,7 @@ const handleContinue = async () => {
             <Ionicons
               name="car-sport"
               size={28}
-              color={selected === "driver" ? COLORS.white : "#22c55e"}
+              color={selected === "driver" ? COLORS.white : "#0B0F1A"}
             />
             <View style={{ marginLeft: 15 }}>
               <Text
@@ -146,7 +146,7 @@ const handleContinue = async () => {
             <Ionicons
               name="person"
               size={28}
-              color={selected === "rider" ? COLORS.white : "#22c55e"}
+              color={selected === "rider" ? COLORS.white : "#0B0F1A"}
             />
             <View style={{ marginLeft: 15 }}>
               <Text
@@ -178,7 +178,7 @@ const handleContinue = async () => {
           onPress={handleContinue}
         >
           {loading ? (
-            <ActivityIndicator color={COLORS.white} />
+            <ActivityIndicator color={COLORS.onPrimary} />
           ) : (
             <Text style={styles.buttonText}>Continue</Text>
           )}
@@ -211,7 +211,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   selectedCard: {
-    backgroundColor: "#A1D77C",
+    backgroundColor: "#0B0F1A",
   },
   optionContent: {
     flexDirection: "row",
@@ -228,14 +228,14 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   button: {
-    backgroundColor: COLORS.green,
+    backgroundColor: COLORS.primary,
     paddingVertical: 18,
-    borderRadius: 12,
+    borderRadius: 999,
     alignItems: "center",
     marginBottom: 30,
   },
   buttonText: {
-    color: COLORS.white,
+    color: COLORS.onPrimary,
     fontSize: 18,
     fontWeight: "bold",
   },

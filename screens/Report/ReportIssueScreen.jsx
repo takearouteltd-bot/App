@@ -24,7 +24,7 @@ import {
 } from 'firebase/firestore';
 import { COLORS } from '../../components/ui/kit';
 
-const PRIMARY = COLORS.green;
+const PRIMARY = COLORS.primary;
 const SECONDARY = COLORS.blue;
 const DANGER = COLORS.red;
 const WARNING = COLORS.amber;

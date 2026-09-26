@@ -157,7 +157,7 @@ export default function PickupPickerScreen() {
           />
         ) : (
           <View style={[StyleSheet.absoluteFill, styles.mapLoading]}>
-            <ActivityIndicator size="large" color={COLORS.green} />
+            <ActivityIndicator size="large" color={COLORS.primary} />
           </View>
         )}
 
@@ -258,14 +258,14 @@ const styles = StyleSheet.create({
   },
   pin: {
     width: 26, height: 26, borderRadius: 13,
-    backgroundColor: COLORS.green,
+    backgroundColor: COLORS.primary,
     borderWidth: 3, borderColor: COLORS.white,
     alignItems: 'center', justifyContent: 'center',
     marginBottom: -2,
     ...SHADOW.float,
   },
   pinDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: COLORS.white },
-  pinStem: { width: 2, height: 16, backgroundColor: COLORS.green },
+  pinStem: { width: 2, height: 16, backgroundColor: COLORS.primary },
   pinShadow: {
     width: 10, height: 4, borderRadius: 2,
     backgroundColor: 'rgba(15,23,42,0.28)',
@@ -308,7 +308,7 @@ const styles = StyleSheet.create({
     ...SHADOW.sheet,
   },
   addressRow: { flexDirection: 'row', alignItems: 'flex-start', gap: SPACE[3], marginTop: SPACE[2] },
-  addressDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.green, marginTop: 6 },
+  addressDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.limeDeep, marginTop: 6 },
   address: { flex: 1, fontSize: 17, fontWeight: '700', color: COLORS.navy, letterSpacing: -0.3 },
   hint: { ...TYPE.small, marginTop: SPACE[3] },
 });

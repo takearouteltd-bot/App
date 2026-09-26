@@ -2343,18 +2343,18 @@ function buildReceipt(ride, rideId, extra) {
     `${Math.ceil(ride.route.durationMinutes)} min` : "";
 
   const html = `<!doctype html>
-<html><body style="margin:0;background:#F5F7FA;
+<html><body style="margin:0;background:#F3F4F6;
   font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
   <div style="max-width:560px;margin:0 auto;padding:24px 16px;">
-    <div style="background:#17375E;border-radius:18px;padding:24px;">
-      <div style="color:#C9D6EA;font-size:14px;">TakeARoute receipt</div>
-      <div style="color:#fff;font-size:34px;font-weight:800;margin-top:6px;">
+    <div style="background:#0B0F1A;border-radius:24px;padding:24px;">
+      <div style="color:#AEB5C4;font-size:14px;">TakeARoute receipt</div>
+      <div style="color:#B8F03A;font-size:34px;font-weight:800;margin-top:6px;">
         ${escapeHtml(emailMoney(total, currency))}</div>
-      <div style="color:#C9D6EA;font-size:13px;margin-top:4px;">
+      <div style="color:#AEB5C4;font-size:13px;margin-top:4px;">
         ${escapeHtml(date)}, ${escapeHtml(time)}</div>
     </div>
 
-    <div style="background:#fff;border:1px solid #E5E7EB;border-radius:18px;
+    <div style="background:#fff;border:1px solid #E5E7EB;border-radius:24px;
       padding:20px;margin-top:14px;">
       <div style="font-size:15px;color:#1F2937;font-weight:600;">
         ${escapeHtml(pickup)}</div>
@@ -2365,15 +2365,15 @@ function buildReceipt(ride, rideId, extra) {
         ${escapeHtml([distance, duration].filter(Boolean).join(", "))}</div>
     </div>
 
-    <div style="background:#fff;border:1px solid #E5E7EB;border-radius:18px;
+    <div style="background:#fff;border:1px solid #E5E7EB;border-radius:24px;
       padding:20px;margin-top:14px;">
       <table style="width:100%;border-collapse:collapse;">${rowsHtml}
         <tr><td colspan="2" style="border-top:1px solid #E5E7EB;
           padding-top:10px;"></td></tr>
         <tr>
-          <td style="color:#17375E;font-size:16px;font-weight:700;">
+          <td style="color:#0B0F1A;font-size:16px;font-weight:700;">
             Total paid</td>
-          <td style="text-align:right;color:#17375E;font-size:16px;
+          <td style="text-align:right;color:#0B0F1A;font-size:16px;
             font-weight:800;">${escapeHtml(emailMoney(total, currency))}</td>
         </tr>
       </table>
@@ -2383,7 +2383,7 @@ function buildReceipt(ride, rideId, extra) {
       </div>
     </div>
 
-    <div style="background:#fff;border:1px solid #E5E7EB;border-radius:18px;
+    <div style="background:#fff;border:1px solid #E5E7EB;border-radius:24px;
       padding:20px;margin-top:14px;">
       <div style="color:#6B7280;font-size:12px;font-weight:700;
         text-transform:uppercase;">Your driver</div>

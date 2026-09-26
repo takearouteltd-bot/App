@@ -195,7 +195,7 @@ const styles = StyleSheet.create({
   item: { flexDirection: "row", alignItems: "center", gap: SPACE[3], minHeight: 68, paddingVertical: SPACE[3] },
   itemLine: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.line },
   itemIcon: { width: 38, height: 38, borderRadius: 19, alignItems: "center", justifyContent: "center" },
-  itemIconDone: { backgroundColor: COLORS.green },
+  itemIconDone: { backgroundColor: COLORS.primary },
   itemIconTodo: { backgroundColor: COLORS.amberSoft },
   itemTitle: { ...TYPE.callout, color: COLORS.navy },
   itemDetail: { ...TYPE.small, marginTop: 2 },

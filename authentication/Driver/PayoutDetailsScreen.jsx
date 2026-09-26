@@ -164,7 +164,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: SPACE[2],
     alignSelf: "flex-start",
-    backgroundColor: COLORS.greenSoft,
+    backgroundColor: COLORS.limeSoft,
     paddingHorizontal: SPACE[3],
     paddingVertical: SPACE[2],
     borderRadius: RADIUS.pill,

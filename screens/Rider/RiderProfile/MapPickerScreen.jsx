@@ -19,16 +19,16 @@ import { collection, addDoc, serverTimestamp } from "firebase/firestore";
 import { auth, db } from "../../../config/firebase";
 import { COLORS } from '../../../components/ui/kit';
 
-const PRIMARY = COLORS.green;
+const PRIMARY = COLORS.primary;
 const SECONDARY = COLORS.blue;
 const BG = COLORS.surface;
 
 const GOOGLE_PLACES_API_KEY = "AIzaSyBtmcvJE-m_v44Z2lLDm8wDgI6GGYLXimQ";
 
 const PLACE_TYPES = {
-  home: { icon: "home", label: "Home", color: "#E3F2FD", iconColor: SECONDARY },
+  home: { icon: "home", label: "Home", color: "#EEF0F4", iconColor: SECONDARY },
   work: { icon: "briefcase", label: "Work", color: "#FFF3E0", iconColor: "#F57C00" },
-  other: { icon: "location", label: "Saved", color: "#E8F5E9", iconColor: PRIMARY },
+  other: { icon: "location", label: "Saved", color: "#F2FADF", iconColor: PRIMARY },
 };
 
 export default function MapPickerScreen() {

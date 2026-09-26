@@ -21,7 +21,7 @@ import { COLORS, TYPE, Card, ListRow, Button, Loading } from '../../../component
 import ModeSwitchRow from '../../../components/ModeSwitchRow';
 import { openTerms, openPrivacy } from '../../../utils/legal';
 
-const PRIMARY = COLORS.green;
+const PRIMARY = COLORS.primary;
 const SECONDARY = COLORS.blue;
 const DANGER = COLORS.red;
 const BG = COLORS.surface;
@@ -181,7 +181,7 @@ const fetchRiderData = useCallback(async () => {
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.green} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
       >
         {/* Identity. The photo is the one large element on the screen. */}
         <View style={styles.identity}>

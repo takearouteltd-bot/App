@@ -197,7 +197,7 @@ export default function RideInProgressScreen() {
   if (!ride) {
     return (
       <SafeAreaView style={[styles.container, styles.centered]}>
-        <ActivityIndicator size="large" color={COLORS.green} />
+        <ActivityIndicator size="large" color={COLORS.primary} />
         <Text style={[TYPE.small, { marginTop: SPACE[4] }]}>Loading your ride…</Text>
       </SafeAreaView>
     );
@@ -251,7 +251,7 @@ export default function RideInProgressScreen() {
             waypoints={remainingStops(ride)}
             apikey={GOOGLE_MAPS_API_KEY}
             strokeWidth={4}
-            strokeColor={COLORS.green}
+            strokeColor={COLORS.primary}
           />
         ) : null}
       </MapView>
@@ -341,7 +341,7 @@ const styles = StyleSheet.create({
 
   pickupMarker: {
     width: 14, height: 14, borderRadius: 7,
-    backgroundColor: COLORS.green, borderWidth: 3, borderColor: COLORS.white,
+    backgroundColor: COLORS.lime, borderWidth: 3, borderColor: COLORS.midnight,
   },
   driverMarkerWrap: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center' },
   driverPulse: {

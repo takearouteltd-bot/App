@@ -104,7 +104,7 @@ export default function RiderRideCompletedScreen() {
         <Card style={{ marginTop: 16 }}>
           <View style={styles.route}>
             <View style={styles.rail}>
-              <View style={[styles.dot, { backgroundColor: COLORS.green }]} />
+              <View style={[styles.dot, { backgroundColor: COLORS.lime }]} />
               <View style={styles.line} />
               <View style={[styles.dot, styles.square]} />
             </View>
@@ -167,7 +167,7 @@ const styles = StyleSheet.create({
   heroLabel: { fontSize: 15, fontWeight: '600', color: COLORS.onDark },
   heroAmount: { fontSize: 48, fontWeight: '800', color: COLORS.white, letterSpacing: -1.5, marginTop: 6 },
   heroSub: { fontSize: 13, color: COLORS.onDark, marginTop: 6, lineHeight: 18 },
-  pendingBar: { height: 3, borderRadius: 2, backgroundColor: COLORS.green, opacity: 0.7, marginTop: 18, width: '40%' },
+  pendingBar: { height: 3, borderRadius: 2, backgroundColor: COLORS.limeDeep, opacity: 0.7, marginTop: 18, width: '40%' },
   route: { flexDirection: 'row', gap: 12 },
   rail: { alignItems: 'center', paddingTop: 5 },
   dot: { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.navy },

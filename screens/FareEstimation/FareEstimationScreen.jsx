@@ -398,7 +398,7 @@ export default function FareEstimationScreen({ route }) {
             waypoints={stops.map((s) => ({ latitude: s.latitude, longitude: s.longitude }))}
             apikey={GOOGLE_MAPS_API_KEY}
             strokeWidth={4}
-            strokeColor={COLORS.green}
+            strokeColor={COLORS.primary}
             onReady={(result) => {
               setDistance(result.distance);
               setDuration(result.duration);
@@ -495,7 +495,7 @@ export default function FareEstimationScreen({ route }) {
                   <MaterialCommunityIcons
                     name={item.icon}
                     size={26}
-                    color={active ? COLORS.green : COLORS.muted}
+                    color={active ? COLORS.primary : COLORS.muted}
                   />
                   <Text style={[styles.className, active && { color: COLORS.navy }]}>
                     {item.label}
@@ -602,7 +602,7 @@ export default function FareEstimationScreen({ route }) {
               <Ionicons
                 name={femaleOnly ? 'checkbox' : 'square-outline'}
                 size={22}
-                color={femaleOnly ? COLORS.green : COLORS.lineStrong}
+                color={femaleOnly ? COLORS.primary : COLORS.lineStrong}
               />
             </TouchableOpacity>
           ) : null}
@@ -610,7 +610,7 @@ export default function FareEstimationScreen({ route }) {
           {/* Promo */}
           {promoApplied ? (
             <View style={styles.promoRow}>
-              <Ionicons name="pricetag" size={18} color={COLORS.green} />
+              <Ionicons name="pricetag" size={18} color={COLORS.primary} />
               <Text style={styles.promoApplied}>
                 {promoCode} · {Math.round(discount * 100)}% off
               </Text>
@@ -634,7 +634,7 @@ export default function FareEstimationScreen({ route }) {
               />
               <TouchableOpacity onPress={applyPromo} disabled={promoChecking || !promoInput.trim()}>
                 {promoChecking ? (
-                  <ActivityIndicator size="small" color={COLORS.green} />
+                  <ActivityIndicator size="small" color={COLORS.primary} />
                 ) : (
                   <Text
                     style={[styles.promoApply, !promoInput.trim() && { color: COLORS.faint }]}
@@ -674,7 +674,7 @@ export default function FareEstimationScreen({ route }) {
                 <Row
                   label={`Promo ${promoCode}`}
                   value={`-${money(fare.discountAmount)}`}
-                  tone={COLORS.green}
+                  tone={COLORS.primary}
                 />
               ) : null}
               <View style={styles.breakdownLine} />
@@ -694,7 +694,7 @@ export default function FareEstimationScreen({ route }) {
           accessibilityRole="button"
         >
           {loading ? (
-            <ActivityIndicator color={COLORS.white} />
+            <ActivityIndicator color={COLORS.onPrimary} />
           ) : (
             <>
               <Text style={styles.confirmText}>
@@ -734,7 +734,7 @@ const styles = StyleSheet.create({
   mapWrap: { flex: 1 },
   originMarker: {
     width: 16, height: 16, borderRadius: 8,
-    backgroundColor: COLORS.green, borderWidth: 3, borderColor: COLORS.white,
+    backgroundColor: COLORS.lime, borderWidth: 3, borderColor: COLORS.midnight,
   },
   topBar: {
     position: 'absolute', top: SPACE[3], left: SPACE[5], right: SPACE[5],
@@ -771,7 +771,7 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.line,
     backgroundColor: COLORS.white, gap: 2,
   },
-  classCardActive: { borderColor: COLORS.green, borderWidth: 1.5, backgroundColor: COLORS.greenSoft },
+  classCardActive: { borderColor: COLORS.midnight, borderWidth: 2, backgroundColor: COLORS.limeSoft },
   className: { fontSize: 15, fontWeight: '700', color: COLORS.inkSoft, marginTop: SPACE[2] },
   classSeats: { ...TYPE.caption },
   classFare: { fontSize: 17, fontWeight: '800', color: COLORS.inkSoft, marginTop: SPACE[1], letterSpacing: -0.3 },
@@ -801,7 +801,7 @@ const styles = StyleSheet.create({
   offerBox: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
     padding: SPACE[4], marginBottom: SPACE[4],
-    borderRadius: RADIUS.md, backgroundColor: COLORS.greenSoft,
+    borderRadius: RADIUS.md, backgroundColor: COLORS.limeSoft,
   },
   offerValue: { fontSize: 26, fontWeight: '800', color: COLORS.navy, letterSpacing: -0.6, marginVertical: 2 },
   offerStep: {
@@ -814,7 +814,7 @@ const styles = StyleSheet.create({
     height: 44, borderRadius: RADIUS.md,
     borderWidth: StyleSheet.hairlineWidth, borderColor: COLORS.line,
   },
-  payOptionOn: { borderColor: COLORS.green, borderWidth: 1.5, backgroundColor: COLORS.greenSoft },
+  payOptionOn: { borderColor: COLORS.midnight, borderWidth: 2, backgroundColor: COLORS.limeSoft },
   payOptionText: { fontSize: 15, fontWeight: '700', color: COLORS.muted },
 
   surge: {
@@ -850,11 +850,11 @@ const styles = StyleSheet.create({
 
   confirm: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    backgroundColor: COLORS.green,
-    borderRadius: RADIUS.md,
+    backgroundColor: COLORS.primary,
+    borderRadius: 999,
     minHeight: 56, paddingHorizontal: SPACE[5],
     marginTop: SPACE[4],
   },
-  confirmText: { fontSize: 16, fontWeight: '700', color: COLORS.white, letterSpacing: -0.2 },
+  confirmText: { fontSize: 16, fontWeight: '700', color: COLORS.onPrimary, letterSpacing: -0.2 },
   confirmPrice: { fontSize: 17, fontWeight: '800', color: COLORS.white, letterSpacing: -0.3 },
 });

@@ -357,7 +357,7 @@ export default function HomeScreen() {
         </MapView>
       ) : (
         <View style={[StyleSheet.absoluteFill, styles.mapLoading]}>
-          <ActivityIndicator size="large" color={COLORS.green} />
+          <ActivityIndicator size="large" color={COLORS.primary} />
         </View>
       )}
 
@@ -437,7 +437,7 @@ export default function HomeScreen() {
               <Ionicons name="search" size={20} color={COLORS.navy} />
               <Text style={styles.searchText}>Where to?</Text>
               <View style={styles.searchGo}>
-                <Ionicons name="arrow-forward" size={18} color={COLORS.white} />
+                <Ionicons name="arrow-forward" size={18} color={COLORS.onPrimary} />
               </View>
             </TouchableOpacity>
           </View>
@@ -498,11 +498,11 @@ const styles = StyleSheet.create({
   markerHalo: {
     position: 'absolute',
     width: 44, height: 44, borderRadius: 22,
-    backgroundColor: COLORS.green, opacity: 0.18,
+    backgroundColor: COLORS.lime, opacity: 0.45,
   },
   markerDot: {
     width: 16, height: 16, borderRadius: 8,
-    backgroundColor: COLORS.green,
+    backgroundColor: COLORS.primary,
     borderWidth: 3, borderColor: COLORS.white,
   },
 
@@ -515,7 +515,7 @@ const styles = StyleSheet.create({
     maxWidth: '100%',
     ...SHADOW.float,
   },
-  locationDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.green },
+  locationDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.limeDeep },
   locationText: { ...TYPE.small, color: COLORS.ink, fontWeight: '600', flexShrink: 1 },
 
   recenter: { position: 'absolute', right: SPACE[5], top: -(44 + SPACE[4]) },
@@ -533,7 +533,7 @@ const styles = StyleSheet.create({
     marginBottom: SPACE[4],
   },
   activePulseWrap: { width: 22, alignItems: 'center', justifyContent: 'center' },
-  activePulse: { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.green },
+  activePulse: { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.limeDeep },
   activeTitle: { fontSize: 16, fontWeight: '700', color: COLORS.white, letterSpacing: -0.2 },
   activeDetail: { ...TYPE.small, color: COLORS.onDark, marginTop: 2 },
 
@@ -548,7 +548,7 @@ const styles = StyleSheet.create({
   searchText: { flex: 1, fontSize: 19, fontWeight: '700', color: COLORS.navy, letterSpacing: -0.4 },
   searchGo: {
     width: 44, height: 44, borderRadius: RADIUS.sm,
-    backgroundColor: COLORS.green,
+    backgroundColor: COLORS.primary,
     alignItems: 'center', justifyContent: 'center',
   },
 

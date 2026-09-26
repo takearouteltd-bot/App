@@ -169,7 +169,7 @@ export function UploadTile({ title, subtitle, icon, url, uploading, onPress, opt
     >
       <View style={[styles.tileThumb, done && styles.tileThumbDone]}>
         {uploading ? (
-          <ActivityIndicator color={COLORS.green} />
+          <ActivityIndicator color={COLORS.primary} />
         ) : done && !isPdf ? (
           <Image source={{ uri: url }} style={styles.tileImage} />
         ) : (
@@ -194,7 +194,7 @@ export function UploadTile({ title, subtitle, icon, url, uploading, onPress, opt
       <Ionicons
         name={done ? 'checkmark-circle' : 'cloud-upload-outline'}
         size={24}
-        color={done ? COLORS.green : COLORS.faint}
+        color={done ? COLORS.limeInk : COLORS.faint}
       />
     </TouchableOpacity>
   );
@@ -224,7 +224,7 @@ export function ChoiceCard({ title, detail, meta, icon, selected, onPress, style
       <Ionicons
         name={selected ? 'radio-button-on' : 'radio-button-off'}
         size={22}
-        color={selected ? COLORS.green : COLORS.lineStrong}
+        color={selected ? COLORS.primary : COLORS.lineStrong}
       />
     </TouchableOpacity>
   );
@@ -290,10 +290,10 @@ const styles = StyleSheet.create({
 
   progress: { flexDirection: 'row', gap: 6, marginTop: SPACE[5] },
   segment: { flex: 1, height: 5, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.16)' },
-  segmentDone: { backgroundColor: COLORS.greenDeep },
-  segmentCurrent: { backgroundColor: COLORS.green },
+  segmentDone: { backgroundColor: COLORS.midnight },
+  segmentCurrent: { backgroundColor: COLORS.limeDeep },
 
-  eyebrow: { ...TYPE.label, color: COLORS.green, marginTop: SPACE[5] },
+  eyebrow: { ...TYPE.label, color: COLORS.limeInk, marginTop: SPACE[5] },
   title: { ...TYPE.title, color: COLORS.white, marginTop: SPACE[1] },
   subtitle: { ...TYPE.body, color: COLORS.onDark, marginTop: SPACE[2] },
 
@@ -323,14 +323,14 @@ const styles = StyleSheet.create({
     padding: SPACE[3],
     marginBottom: SPACE[3],
   },
-  tileDone: { borderStyle: 'solid', borderColor: '#C7E3A5' },
+  tileDone: { borderStyle: 'solid', borderColor: '#D9F0A0' },
   tileThumb: {
     width: 54, height: 54, borderRadius: RADIUS.md,
     backgroundColor: COLORS.blueSoft,
     alignItems: 'center', justifyContent: 'center',
     overflow: 'hidden',
   },
-  tileThumbDone: { backgroundColor: COLORS.greenSoft },
+  tileThumbDone: { backgroundColor: COLORS.limeSoft },
   tileImage: { width: 54, height: 54 },
   tileTitleRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[2] },
   tileTitle: { ...TYPE.callout, color: COLORS.navy },
@@ -349,13 +349,13 @@ const styles = StyleSheet.create({
     padding: SPACE[3],
     marginBottom: SPACE[3],
   },
-  choiceSelected: { borderColor: COLORS.green, backgroundColor: COLORS.greenSoft },
+  choiceSelected: { borderColor: COLORS.midnight, backgroundColor: COLORS.limeSoft },
   choiceIcon: {
     width: 44, height: 44, borderRadius: RADIUS.md,
     backgroundColor: COLORS.blueSoft,
     alignItems: 'center', justifyContent: 'center',
   },
-  choiceIconSelected: { backgroundColor: COLORS.green },
+  choiceIconSelected: { backgroundColor: COLORS.primary },
   choiceTitle: { ...TYPE.callout, color: COLORS.navy },
   choiceDetail: { ...TYPE.small, marginTop: 2 },
   choiceMeta: { ...TYPE.caption, color: COLORS.muted, fontWeight: '600' },
@@ -367,7 +367,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     marginTop: 1,
   },
-  boxOn: { backgroundColor: COLORS.green, borderColor: COLORS.green },
+  boxOn: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
   consentText: { ...TYPE.body, flex: 1, color: COLORS.inkSoft },
   consentLink: { color: COLORS.blue, fontWeight: '700', textDecorationLine: 'underline' },
 });
