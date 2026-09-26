@@ -1513,9 +1513,13 @@ let payoutsClient = null;
  */
 function getPayoutsStripe() {
   if (!payoutsClient) {
-    const key = process.env.STRIPE_PAYOUTS_KEY ||
-      process.env.STRIPE_SECRET_KEY;
-    if (!key) throw new Error("STRIPE_PAYOUTS_KEY is not set");
+    // The secret exists as a placeholder until a restricted key is set, so
+    // deploys work before Global Payouts is switched on.
+    const key = process.env.STRIPE_PAYOUTS_KEY || "";
+    if (!/^(rk|sk)_(live|test)_/.test(key)) {
+      throw new Error("Automatic payouts are not switched on yet " +
+        "(set the STRIPE_PAYOUTS_KEY secret).");
+    }
     payoutsClient = require("stripe")(key);
   }
   return payoutsClient;
@@ -1758,6 +1762,10 @@ exports.stripePayoutWebhook = functions
     .https.onRequest(async (req, res) => {
       let notification;
       try {
+        const secret = process.env.STRIPE_PAYOUT_WEBHOOK_SECRET || "";
+        if (!secret.startsWith("whsec_")) {
+          throw new Error("STRIPE_PAYOUT_WEBHOOK_SECRET is not set");
+        }
         notification = getPayoutsStripe().parseEventNotification(
             req.rawBody, req.headers["stripe-signature"],
             process.env.STRIPE_PAYOUT_WEBHOOK_SECRET);
