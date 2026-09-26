@@ -17,6 +17,10 @@ const db = admin.firestore();
 // Stripe's key lives in Google Secret Manager, like the Resend and Twilio
 // ones. Every function that touches Stripe declares it below.
 const STRIPE_SECRETS = ["STRIPE_SECRET_KEY"];
+// Global Payouts (automatic driver payouts) uses a restricted key and the
+// preview API version; see AUTOMATIC PAYOUTS below.
+const PAYOUTS_API_VERSION = "2026-08-26.preview";
+const PAYOUTS_SECRETS = ["STRIPE_PAYOUTS_KEY"];
 
 // The Stripe client is created on first use, not at load time, so the file
 // can be analysed and deployed even when the key is only present at run time.
@@ -1503,9 +1507,6 @@ function settlePayout(transaction, payoutRef, payout, fields, walletTxQuery) {
        and Recipient Verifications permissions
    Anything that stops a payout leaves it in the admin queue with a note.
 ====================================== */
-const PAYOUTS_API_VERSION = "2026-08-26.preview";
-const PAYOUTS_SECRETS = ["STRIPE_PAYOUTS_KEY"];
-
 let payoutsClient = null;
 /**
  * Stripe client for the v2 money-management APIs (restricted key).
