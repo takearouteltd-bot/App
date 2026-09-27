@@ -24,7 +24,7 @@ import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import { signOut } from 'firebase/auth';
 import { arrayRemove, arrayUnion, doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
-import { getMessaging, getToken, registerDeviceForRemoteMessages } from '@react-native-firebase/messaging';
+import { getMessaging, getToken, onMessage, registerDeviceForRemoteMessages } from '@react-native-firebase/messaging';
 import { auth, db } from '../config/firebase';
 
 // Show notifications while the app is open too.
@@ -162,6 +162,32 @@ export async function hasPushToken(uid) {
   } catch (error) {
     return false;
   }
+}
+
+// Android hands a push that arrives while the app is open to
+// @react-native-firebase/messaging instead of showing it, so job offers and
+// trip updates came in silently whenever the app was on screen. This shows
+// each one on its own channel, which plays that channel's sound (the job
+// chime for offers). iOS shows foreground pushes itself. Returns a cleanup.
+export function showPushesWhileOpen() {
+  if (Platform.OS !== 'android' || !Device.isDevice) return () => {};
+  return onMessage(getMessaging(), async (message) => {
+    try {
+      const note = message?.notification;
+      if (!note?.title && !note?.body) return;
+      await ensureChannels();
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: note.title || 'TakeARoute',
+          body: note.body || '',
+          data: message.data || {},
+        },
+        trigger: { channelId: note.android?.channelId || 'general' },
+      });
+    } catch (error) {
+      console.log('Foreground push error:', error);
+    }
+  });
 }
 
 // Clears job alerts still showing, e.g. after the driver accepts a job.

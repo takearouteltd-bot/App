@@ -22,6 +22,7 @@ import { useDriverPosition } from '../../../utils/driverLocation';
 
 import { currencySymbol } from '../../../utils/appConfig';
 import SafetyButton from '../../../components/SafetyButton';
+import PaymentTypeBanner from '../../../components/PaymentTypeBanner';
 import { confirmMaskedCall } from '../../../utils/calling';
 import { useWaitingClock } from '../../../utils/useWaitingClock';
 import {
@@ -441,6 +442,8 @@ export default function DriverRideInProgressScreen() {
             {Number(fare?.total || 0).toFixed(2)}
           </Text>
         </View>
+
+        <PaymentTypeBanner method={ride.paymentMethod} style={{ marginBottom: SPACE[4] }} />
 
         {/* Stays reachable even with the sheet collapsed. */}
         <Button

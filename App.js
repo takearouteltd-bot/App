@@ -19,6 +19,7 @@ import { startAppConfigSync } from "./utils/appConfig";
 import {
   registerForPushNotifications,
   onNotificationOpened,
+  showPushesWhileOpen,
   takeLaunchNotification,
   signOutEverywhere,
 } from "./utils/notifications";
@@ -269,6 +270,7 @@ export default function App() {
   }, []);
 
   useEffect(() => onNotificationOpened(openFromNotification), [openFromNotification]);
+  useEffect(() => showPushesWhileOpen(), []);
 
   // Once navigation and the role are both ready: the tap that launched the
   // app from cold, then any tap that arrived while it was still loading.

@@ -51,8 +51,19 @@ function sharedDetails(source) {
   if (d.fullName) out.fullName = d.fullName;
   if (d.phoneNumber) out.phoneNumber = d.phoneNumber;
   if (d.email) out.email = d.email;
-  if (d.profileImage) out.profileImage = d.profileImage;
+  if (d.phoneVerifiedAt) out.phoneVerifiedAt = d.phoneVerifiedAt;
+  // Drivers have no profile photo of their own; their selfie is what the
+  // driver screens show, so it follows them into passenger mode.
+  const photo = d.profileImage || d.selfieUrl;
+  if (photo) out.profileImage = photo;
   return out;
+}
+
+// A driver who has finished their application has already given us their name
+// and let the app use their location, so passenger mode needs nothing more
+// from them: no profile or location steps.
+function isFinishedDriver(source) {
+  return !!source && source.onboardingComplete === true && !!source.fullName;
 }
 
 // Creates riders/{uid} if it is missing and makes sure a Stripe customer
@@ -62,6 +73,7 @@ function sharedDetails(source) {
 export async function ensureRiderProfile(uid, carryOver) {
   const riderRef = doc(db, 'riders', uid);
   let snap = await getDoc(riderRef);
+  const skipSignup = isFinishedDriver(carryOver);
 
   if (!snap.exists()) {
     await setDoc(
@@ -69,12 +81,28 @@ export async function ensureRiderProfile(uid, carryOver) {
       {
         createdAt: serverTimestamp(),
         fullName: '',
-        locationEnabled: false,
-        onboardingComplete: false,
+        locationEnabled: skipSignup,
+        onboardingComplete: skipSignup,
+        ...(skipSignup ? { onBoardingStep: 'complete' } : {}),
         ...sharedDetails(carryOver),
       },
       { merge: true }
     );
+    snap = await getDoc(riderRef);
+  } else if (skipSignup && !snap.data()?.onboardingComplete) {
+    // A passenger profile started earlier and left half done: fill in the
+    // gaps from the driver record instead of sending them back through it.
+    const current = snap.data() || {};
+    const fill = {};
+    for (const [key, value] of Object.entries(sharedDetails(carryOver))) {
+      if (!current[key]) fill[key] = value;
+    }
+    await updateDoc(riderRef, {
+      ...fill,
+      locationEnabled: true,
+      onboardingComplete: true,
+      onBoardingStep: 'complete',
+    });
     snap = await getDoc(riderRef);
   }
 

@@ -6,10 +6,11 @@
 // reports anything that stops it. On success App.js swaps the navigator, so
 // this component is unmounted rather than navigating anywhere itself.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { Alert } from './ui/alert';
 import { useFocusEffect } from '@react-navigation/native';
-import { COLORS, Card, ListRow } from './ui/kit';
+import { COLORS, RADIUS, SPACE, Card, ListRow } from './ui/kit';
 import { describeMode, loadModeRecord, otherMode, switchMode } from '../utils/modeSwitch';
 
 export default function ModeSwitchRow({ uid, currentRole }) {
@@ -64,6 +65,27 @@ export default function ModeSwitchRow({ uid, currentRole }) {
   if (!uid || loading) return null;
 
   const copy = describeMode(target, record);
+
+  // Drivers get a bold black box they can spot at a glance.
+  if (target === 'rider') {
+    return (
+      <TouchableOpacity
+        style={[styles.passengerBox, switching && { opacity: 0.7 }]}
+        onPress={switching ? undefined : onPress}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel="Switch to passenger mode"
+      >
+        <Ionicons name="person-outline" size={22} color={COLORS.lime} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.passengerTitle}>PASSENGER MODE</Text>
+          <Text style={styles.passengerDetail}>{switching ? 'Switching…' : copy.detail}</Text>
+        </View>
+        <Ionicons name="chevron-forward" size={20} color={COLORS.lime} />
+      </TouchableOpacity>
+    );
+  }
+
   const icon = target === 'driver' ? 'car-sport-outline' : 'person-outline';
   const iconColor = copy.tone === 'warning' ? COLORS.amber : COLORS.midnight;
 
@@ -82,3 +104,17 @@ export default function ModeSwitchRow({ uid, currentRole }) {
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  passengerBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACE[3],
+    backgroundColor: COLORS.midnight,
+    borderRadius: RADIUS.lg,
+    paddingVertical: SPACE[4],
+    paddingHorizontal: SPACE[5],
+  },
+  passengerTitle: { color: COLORS.lime, fontSize: 17, fontWeight: '800', letterSpacing: 1.2 },
+  passengerDetail: { color: COLORS.faint, fontSize: 13, marginTop: 2 },
+});

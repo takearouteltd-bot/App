@@ -37,6 +37,7 @@ import { canServe, classLabel } from '../../../constants/vehicleClasses';
 import { servesCity } from '../../../utils/cities';
 import { biddingEnabled, counterSteps, offerSeconds, sendCounterOffer } from '../../../utils/bidding';
 import { clearJobAlerts } from '../../../utils/notifications';
+import PaymentTypeBanner from '../../../components/PaymentTypeBanner';
 import {
   COLORS, TYPE, SPACE, RADIUS, SHADOW,
   Button, Chip, Banner, RouteLine, Loading, Sheet, EmptyState,
@@ -806,10 +807,10 @@ export default function DriverHomeScreen() {
       {currentRide ? (
         <Animated.View style={[styles.offerWrap, { transform: [{ translateX: slideAnim }] }]}>
           <Sheet style={styles.offer} grabber={false}>
+            <PaymentTypeBanner method={currentRide.paymentMethod} style={{ marginBottom: SPACE[4] }} />
             <View style={styles.offerTop}>
               <View style={styles.tags}>
                 <Chip label={classLabel(currentRide.rideType)} active />
-                {currentRide.paymentMethod === 'cash' ? <Chip label="Cash" icon="cash-outline" /> : null}
                 {currentRide.stops?.length ? (
                   <Chip
                     label={`${currentRide.stops.length} stop${currentRide.stops.length === 1 ? '' : 's'}`}
