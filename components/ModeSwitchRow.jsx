@@ -10,7 +10,7 @@ import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Alert } from './ui/alert';
 import { useFocusEffect } from '@react-navigation/native';
-import { COLORS, RADIUS, SPACE, Card, ListRow } from './ui/kit';
+import { COLORS, RADIUS, SPACE } from './ui/kit';
 import { describeMode, loadModeRecord, otherMode, switchMode } from '../utils/modeSwitch';
 
 export default function ModeSwitchRow({ uid, currentRole }) {
@@ -66,47 +66,34 @@ export default function ModeSwitchRow({ uid, currentRole }) {
 
   const copy = describeMode(target, record);
 
-  // Drivers get a bold black box they can spot at a glance.
-  if (target === 'rider') {
-    return (
-      <TouchableOpacity
-        style={[styles.passengerBox, switching && { opacity: 0.7 }]}
-        onPress={switching ? undefined : onPress}
-        activeOpacity={0.85}
-        accessibilityRole="button"
-        accessibilityLabel="Switch to passenger mode"
-      >
-        <Ionicons name="person-outline" size={22} color={COLORS.lime} />
-        <View style={{ flex: 1 }}>
-          <Text style={styles.passengerTitle}>PASSENGER MODE</Text>
-          <Text style={styles.passengerDetail}>{switching ? 'Switching…' : copy.detail}</Text>
-        </View>
-        <Ionicons name="chevron-forward" size={20} color={COLORS.lime} />
-      </TouchableOpacity>
-    );
-  }
-
+  // Both modes get the same bold black box, easy to spot at a glance.
+  const label = target === 'rider' ? 'PASSENGER MODE' : 'DRIVER MODE';
   const icon = target === 'driver' ? 'car-sport-outline' : 'person-outline';
-  const iconColor = copy.tone === 'warning' ? COLORS.amber : COLORS.midnight;
+  // A driver application still in progress or under review.
+  const pending = copy.tone === 'warning';
 
   return (
-    <View>
-      <Card flush>
-        <ListRow
-          icon={icon}
-          iconColor={iconColor}
-          title={copy.title}
-          detail={switching ? 'Switching…' : copy.detail}
-          onPress={switching ? undefined : onPress}
-          last
-        />
-      </Card>
-    </View>
+    <TouchableOpacity
+      style={[styles.box, switching && { opacity: 0.7 }]}
+      onPress={switching ? undefined : onPress}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel={copy.title}
+    >
+      <Ionicons name={icon} size={22} color={COLORS.lime} />
+      <View style={{ flex: 1 }}>
+        <Text style={styles.title}>{label}</Text>
+        <Text style={[styles.detail, pending && styles.detailPending]}>
+          {switching ? 'Switching…' : copy.detail}
+        </Text>
+      </View>
+      <Ionicons name="chevron-forward" size={20} color={COLORS.lime} />
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
-  passengerBox: {
+  box: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: SPACE[3],
@@ -115,6 +102,7 @@ const styles = StyleSheet.create({
     paddingVertical: SPACE[4],
     paddingHorizontal: SPACE[5],
   },
-  passengerTitle: { color: COLORS.lime, fontSize: 17, fontWeight: '800', letterSpacing: 1.2 },
-  passengerDetail: { color: COLORS.faint, fontSize: 13, marginTop: 2 },
+  title: { color: COLORS.lime, fontSize: 17, fontWeight: '800', letterSpacing: 1.2 },
+  detail: { color: COLORS.faint, fontSize: 13, marginTop: 2 },
+  detailPending: { color: '#FCD34D' },
 });

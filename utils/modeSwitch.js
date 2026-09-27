@@ -253,7 +253,7 @@ export function describeMode(target, record) {
   if (!record) {
     return {
       title: 'Start driving with TakeARoute',
-      detail: 'Earn on your schedule.',
+      detail: 'Start driving and earn on your schedule.',
       confirmTitle: 'Start driving with TakeARoute?',
       confirmBody:
         'We will ask for your licence, insurance and vehicle details, and an admin reviews them before you can take jobs. You can switch back to passenger mode any time.',
