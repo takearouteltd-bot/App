@@ -49,8 +49,23 @@ export default function DestinationSearchScreen({ navigation, route }) {
 
     const recentRef = collection(db, 'riders', auth.currentUser.uid, 'recentSearches');
     return onSnapshot(
-      query(recentRef, orderBy('searchedAt', 'desc'), limit(8)),
-      (snapshot) => setRecentSearches(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      query(recentRef, orderBy('searchedAt', 'desc'), limit(30)),
+      (snapshot) => {
+        // Older entries were saved under other keys (and picking a recent can
+        // save it again by coordinates), so the same place could be listed
+        // several times. Keep only the newest of each name.
+        const seen = new Set();
+        const unique = [];
+        snapshot.docs.forEach((d) => {
+          const item = { id: d.id, ...d.data() };
+          const name = String(item.description || item.address || '').trim().toLowerCase();
+          const key = name || item.id;
+          if (seen.has(key)) return;
+          seen.add(key);
+          unique.push(item);
+        });
+        setRecentSearches(unique.slice(0, 8));
+      },
       (error) => {
         if (error.code === 'permission-denied') return;
         console.error('Recent searches error:', error);

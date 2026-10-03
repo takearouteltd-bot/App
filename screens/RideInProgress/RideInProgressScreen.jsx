@@ -51,6 +51,10 @@ export default function RideInProgressScreen() {
   const [driverData, setDriverData] = useState(null);
   const [driverLocation, setDriverLocation] = useState(null);
   const [ending, setEnding] = useState(false);
+  // "Follow trip": the sheet shrinks to one line and the map follows the car.
+  const [following, setFollowing] = useState(false);
+  const [etaMinutes, setEtaMinutes] = useState(null);
+  const [sheetHeight, setSheetHeight] = useState(360);
 
   useEffect(() => {
     if (!rideId) return undefined;
@@ -115,13 +119,26 @@ export default function RideInProgressScreen() {
      location exists, which left the map at 0,0 off West Africa. */
   const recenterMap = () => {
     if (!ride) return;
-    const coords = validCoords(ride.pickupLocation, ride.dropoffLocation, driverLocation);
+    // Once moving, what matters is the car and where it's going, not where
+    // the trip started.
+    const coords = driverLocation
+      ? validCoords(driverLocation, ...remainingStops(ride), ride.dropoffLocation)
+      : validCoords(ride.pickupLocation, ride.dropoffLocation);
     if (!coords.length) return;
     mapRef.current?.fitToCoordinates(coords, {
-      edgePadding: { top: 120, right: 60, bottom: 360, left: 60 },
+      edgePadding: { top: 130, right: 70, bottom: sheetHeight + 50, left: 70 },
       animated: true,
     });
   };
+
+  const lastFollow = useRef(0);
+  useEffect(() => {
+    if (!following || !driverLocation) return;
+    const now = Date.now();
+    if (now - lastFollow.current < 4000) return;
+    lastFollow.current = now;
+    recenterMap();
+  }, [following, driverLocation, sheetHeight]);
 
   const hasFitDriver = useRef(false);
   useEffect(() => {
@@ -238,8 +255,9 @@ export default function RideInProgressScreen() {
             origin={routeFrom}
             destination={dropoffLocation}
             waypoints={remainingStops(ride)}
-            strokeWidth={4}
-            strokeColor={COLORS.primary}
+            strokeWidth={5}
+            strokeColor={COLORS.midnight}
+            onReady={(r) => setEtaMinutes(Math.max(1, Math.round(r.duration)))}
           />
         ) : null}
       </MapView>
@@ -257,13 +275,38 @@ export default function RideInProgressScreen() {
         </View>
       </View>
 
-      <Sheet style={styles.sheet}>
+      {following ? (
+        <View style={styles.sheet} onLayout={(e) => setSheetHeight(e.nativeEvent.layout.height)}>
+          <Sheet>
+            <View style={styles.followRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.followTitle} numberOfLines={1}>
+                  {etaMinutes ? `Arriving in ${etaMinutes} min` : 'On your way'}
+                </Text>
+                <Text style={TYPE.small} numberOfLines={1}>
+                  {dropoffLocation?.address || 'To your destination'}
+                </Text>
+              </View>
+              <IconButton
+                icon="chevron-up"
+                tone="dark"
+                onPress={() => setFollowing(false)}
+                accessibilityLabel="Show trip details"
+              />
+            </View>
+          </Sheet>
+        </View>
+      ) : (
+      <View style={styles.sheet} onLayout={(e) => setSheetHeight(e.nativeEvent.layout.height)}>
+      <Sheet>
         <View style={styles.headRow}>
           <View style={{ flex: 1 }}>
             <Text style={TYPE.label}>Your ride</Text>
             <Text style={TYPE.title}>On your way</Text>
             <Text style={[TYPE.small, { marginTop: SPACE[1] }]}>
-              Your driver is taking you to the dropoff.
+              {etaMinutes
+                ? `About ${etaMinutes} min to your destination.`
+                : 'Your driver is taking you to the dropoff.'}
             </Text>
           </View>
           {fare ? (
@@ -334,6 +377,18 @@ export default function RideInProgressScreen() {
           />
         </View>
 
+        {driverLocation ? (
+          <Button
+            title="Follow trip"
+            icon="navigate"
+            style={{ marginTop: SPACE[4] }}
+            onPress={() => {
+              lastFollow.current = 0;
+              setFollowing(true);
+            }}
+          />
+        ) : null}
+
         <TouchableOpacity
           style={[styles.endEarly, ending && { opacity: 0.5 }]}
           onPress={handleEndEarly}
@@ -346,6 +401,8 @@ export default function RideInProgressScreen() {
           </Text>
         </TouchableOpacity>
       </Sheet>
+      </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -365,6 +422,8 @@ const styles = StyleSheet.create({
   topRight: { flexDirection: 'row', gap: SPACE[2] },
 
   sheet: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  followRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[3], paddingBottom: SPACE[2] },
+  followTitle: { ...TYPE.subhead, fontSize: 18, color: COLORS.midnight },
 
   headRow: { flexDirection: 'row', alignItems: 'flex-start', gap: SPACE[4] },
   fareBox: { alignItems: 'flex-end' },
