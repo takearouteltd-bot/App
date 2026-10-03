@@ -10,8 +10,16 @@
 // Before this lived here it lived on the driver home screen, which is
 // replaced by the ride screens when a job starts, so the car froze at its
 // accept-time position for the whole trip.
+//
+// The watcher only runs while the app is on screen. During a job the driver
+// usually switches to Google Maps to navigate, so while they have a job a
+// background task (with an Android notification and the iOS location
+// indicator) keeps writing drivers/{uid}; otherwise the passenger's map
+// shows the car frozen where the driver left the app.
 import { useEffect, useState } from 'react';
 import * as Location from 'expo-location';
+import * as TaskManager from 'expo-task-manager';
+import { getAuth } from 'firebase/auth';
 import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
@@ -67,6 +75,61 @@ async function writeDriverLocation(driverId, coords) {
     );
   } catch (error) {
     console.log('Location update error:', error);
+  }
+}
+
+/* ------------------------------------------------- background (on a job) */
+
+const JOB_LOCATION_TASK = 'takearoute-job-location';
+let jobDriverId = null;
+
+// Defined when this module loads (App imports it at startup), as the task
+// manager requires, so it exists when the OS wakes the task.
+TaskManager.defineTask(JOB_LOCATION_TASK, async ({ data, error }) => {
+  if (error) {
+    console.log('Background location error:', error.message || error);
+    return;
+  }
+  const fixes = data?.locations;
+  if (!fixes?.length) return;
+  const fix = fixes[fixes.length - 1];
+  const driverId = jobDriverId || getAuth().currentUser?.uid;
+  if (!driverId) return;
+  update({ coords: fix.coords, status: 'granted' });
+  await writeDriverLocation(driverId, fix.coords);
+});
+
+async function startJobSharing(driverId) {
+  jobDriverId = driverId;
+  try {
+    if (await Location.hasStartedLocationUpdatesAsync(JOB_LOCATION_TASK)) return;
+    await Location.startLocationUpdatesAsync(JOB_LOCATION_TASK, {
+      accuracy: Location.Accuracy.High,
+      timeInterval: 4000,
+      distanceInterval: 10,
+      activityType: Location.ActivityType.AutomotiveNavigation,
+      pausesUpdatesAutomatically: false,
+      showsBackgroundLocationIndicator: true,
+      foregroundService: {
+        notificationTitle: 'Sharing your location with your passenger',
+        notificationBody: 'Until this trip ends, so they can see you coming.',
+        notificationColor: '#B8F03A',
+      },
+    });
+  } catch (error) {
+    // Still covered while the app is open (the watcher above).
+    console.log('Could not start background location:', error?.message || error);
+  }
+}
+
+async function stopJobSharing() {
+  jobDriverId = null;
+  try {
+    if (await Location.hasStartedLocationUpdatesAsync(JOB_LOCATION_TASK)) {
+      await Location.stopLocationUpdatesAsync(JOB_LOCATION_TASK);
+    }
+  } catch (error) {
+    console.log('Could not stop background location:', error?.message || error);
   }
 }
 
@@ -144,7 +207,7 @@ export async function requestDriverPosition(driverId) {
 export function useDriverLocationPublisher(driverId, enabled = true) {
   // Online, free and vehicle class, from the driver record: decides whether
   // the public position is published.
-  const [presence, setPresence] = useState({ isFree: false, vehicleType: null });
+  const [presence, setPresence] = useState({ isFree: false, onRide: false, vehicleType: null });
   const position = useDriverPosition();
 
   useEffect(() => {
@@ -165,12 +228,23 @@ export function useDriverLocationPublisher(driverId, enabled = true) {
         const data = snap.data();
         setPresence({
           isFree: data.status === 'online' && data.isOnRide !== true,
+          onRide: data.isOnRide === true,
           vehicleType: data.vehicleType || null,
         });
       },
       () => {}
     );
   }, [driverId, enabled]);
+
+  // Keep the passenger's map live while the driver is in another app.
+  const onRide = presence.onRide;
+  useEffect(() => {
+    if (!driverId || !enabled || !onRide) return undefined;
+    startJobSharing(driverId);
+    return () => {
+      stopJobSharing();
+    };
+  }, [driverId, enabled, onRide]);
 
   /* Passengers see nearby cars on their home map. They must never read the
      driver record itself (name, phone, documents), so an online driver also

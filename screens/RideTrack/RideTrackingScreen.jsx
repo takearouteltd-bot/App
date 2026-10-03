@@ -60,6 +60,11 @@ export default function RideTrackingScreen() {
   const [driverData, setDriverData] = useState(null);
   const [driverLocation, setDriverLocation] = useState(null);
   const waiting = useWaitingClock(rideData);
+  // "Track driver": the sheet shrinks to one line so the map shows the car
+  // coming to the pickup, and the map follows it.
+  const [tracking, setTracking] = useState(false);
+  const [etaMinutes, setEtaMinutes] = useState(null);
+  const [sheetHeight, setSheetHeight] = useState(380);
 
   const hasNavigatedToProgress = useRef(false);
   // One driver listener at a time. Previously a new one was opened on every
@@ -158,12 +163,33 @@ export default function RideTrackingScreen() {
      It now starts on the pickup and fits without the driver if needed. */
   const recenterMap = () => {
     if (!rideData) return;
-    const coords = validCoords(rideData.pickupLocation, rideData.dropoffLocation, driverLocation);
+    const coming = rideData.status === 'accepted' || rideData.status === 'arrived';
+    // Before pickup only the driver and the pickup matter; the destination
+    // would zoom the map out until the car is a dot.
+    const coords = coming && driverLocation
+      ? validCoords(driverLocation, rideData.pickupLocation)
+      : validCoords(rideData.pickupLocation, rideData.dropoffLocation, driverLocation);
     if (!coords.length) return;
     mapRef.current?.fitToCoordinates(coords, {
-      edgePadding: { top: 120, right: 60, bottom: 380, left: 60 },
+      edgePadding: { top: 130, right: 70, bottom: sheetHeight + 50, left: 70 },
       animated: true,
     });
+  };
+
+  // While tracking, keep the car and the pickup in view as the car moves
+  // (at most every 4 s, so the map isn't constantly animating).
+  const lastFollow = useRef(0);
+  useEffect(() => {
+    if (!tracking || !driverLocation) return;
+    const now = Date.now();
+    if (now - lastFollow.current < 4000) return;
+    lastFollow.current = now;
+    recenterMap();
+  }, [tracking, driverLocation, sheetHeight]);
+
+  const startTracking = () => {
+    lastFollow.current = 0;
+    setTracking(true);
   };
 
   const hasFitDriver = useRef(false);
@@ -283,8 +309,9 @@ export default function RideTrackingScreen() {
             origin={routeFrom}
             destination={routeTo}
             waypoints={beforePickup ? [] : remainingStops(rideData)}
-            strokeWidth={4}
-            strokeColor={COLORS.primary}
+            strokeWidth={5}
+            strokeColor={COLORS.midnight}
+            onReady={(r) => setEtaMinutes(beforePickup ? Math.max(1, Math.round(r.duration)) : null)}
           />
         ) : null}
       </MapView>
@@ -302,10 +329,54 @@ export default function RideTrackingScreen() {
         </View>
       </View>
 
-      <Sheet style={styles.sheet}>
+      {tracking ? (
+        <View style={styles.sheet} onLayout={(e) => setSheetHeight(e.nativeEvent.layout.height)}>
+          <Sheet>
+            <View style={styles.trackRow}>
+              <Avatar uri={driverData?.selfieUrl} name={driverData?.fullName} size={44} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.trackTitle} numberOfLines={1}>
+                  {status === 'arrived'
+                    ? 'Your driver has arrived'
+                    : etaMinutes
+                      ? `Arriving in ${etaMinutes} min`
+                      : state.title}
+                </Text>
+                <Text style={TYPE.small} numberOfLines={1}>
+                  {[driverData?.fullName, driverData?.registrationNumber?.toUpperCase()]
+                    .filter(Boolean)
+                    .join(' · ') || 'Your driver'}
+                </Text>
+              </View>
+              <IconButton icon="call-outline" onPress={handleCall} accessibilityLabel="Call your driver" />
+              <IconButton
+                icon="chevron-up"
+                tone="dark"
+                onPress={() => setTracking(false)}
+                accessibilityLabel="Show ride details"
+              />
+            </View>
+          </Sheet>
+        </View>
+      ) : (
+      <View style={styles.sheet} onLayout={(e) => setSheetHeight(e.nativeEvent.layout.height)}>
+      <Sheet>
         <Text style={TYPE.label}>Your ride</Text>
         <Text style={TYPE.title}>{state.title}</Text>
-        <Text style={[TYPE.small, { marginTop: SPACE[1] }]}>{state.detail}</Text>
+        <Text style={[TYPE.small, { marginTop: SPACE[1] }]}>
+          {beforePickup && etaMinutes && status === 'accepted'
+            ? `About ${etaMinutes} min away. ${state.detail}`
+            : state.detail}
+        </Text>
+
+        {beforePickup && driverLocation ? (
+          <Button
+            title="Track driver"
+            icon="navigate"
+            style={{ marginTop: SPACE[4] }}
+            onPress={startTracking}
+          />
+        ) : null}
 
         {waiting ? (
           <View style={{ marginTop: SPACE[4] }}>
@@ -391,6 +462,8 @@ export default function RideTrackingScreen() {
           </TouchableOpacity>
         ) : null}
       </Sheet>
+      </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -410,6 +483,8 @@ const styles = StyleSheet.create({
   topRight: { flexDirection: 'row', gap: SPACE[2] },
 
   sheet: { position: 'absolute', left: 0, right: 0, bottom: 0 },
+  trackRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[3], paddingBottom: SPACE[2] },
+  trackTitle: { ...TYPE.subhead, fontSize: 18, color: COLORS.midnight },
 
   driverCard: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[3],

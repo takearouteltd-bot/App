@@ -50,6 +50,15 @@
       "@react-native-firebase/auth",
       "@react-native-firebase/messaging",
       [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "TakeARoute uses your location to find rides near you and, for drivers, to show passengers where you are.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true,
+          "isAndroidBackgroundLocationEnabled": false
+        }
+      ],
+      [
         "expo-build-properties",
         {
           "ios": {
