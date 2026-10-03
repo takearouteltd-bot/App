@@ -53,6 +53,11 @@ export default function RideRequestScreen() {
   const cancelledByMe = useRef(false);
   const handoverTimer = useRef(null);
 
+  // The search sheet starts as one line so the map stays visible; it opens
+  // by itself when the passenger has something to act on (below).
+  const [compact, setCompact] = useState(true);
+  const [sheetHeight, setSheetHeight] = useState(0);
+
   const isSearching = rideStatus === 'searching';
   const elapsed = useElapsed(isSearching);
 
@@ -81,6 +86,15 @@ export default function RideRequestScreen() {
     .filter((o) => o.status === 'pending' && Number(o.expiresAtMs) > Date.now())
     .sort((a, b) => a.price - b.price)
     .slice(0, 4);
+
+  // Open the sheet when something needs the passenger: a declined card, the
+  // female-driver question, or a new driver offer.
+  const needsAttention =
+    rideData?.paymentStatus === 'auth_failed' || askToWiden || liveOffers.length > 0;
+  const offerCount = liveOffers.length;
+  useEffect(() => {
+    if (needsAttention) setCompact(false);
+  }, [needsAttention, offerCount]);
 
   const takeOffer = async (offer) => {
     setTaking(offer.driverId);
@@ -187,10 +201,15 @@ export default function RideRequestScreen() {
     const coords = validCoords(rideData.pickupLocation, rideData.dropoffLocation);
     if (!coords.length) return;
     mapRef.current.fitToCoordinates(coords, {
-      edgePadding: { top: 120, right: 60, bottom: 400, left: 60 },
+      edgePadding: { top: 120, right: 60, bottom: (sheetHeight || 400) + 40, left: 60 },
       animated: true,
     });
   };
+
+  // Refit when the sheet grows or shrinks, so the route is never under it.
+  useEffect(() => {
+    if (sheetHeight) fitMap();
+  }, [sheetHeight]);
 
   const handleCancelRequest = () => {
     Alert.alert('Cancel this ride?', 'You have not been charged.', [
@@ -286,9 +305,42 @@ export default function RideRequestScreen() {
         <IconButton icon="chevron-back" onPress={() => navigation.goBack()} accessibilityLabel="Go back" />
       </View>
 
-      <Sheet style={styles.sheet}>
-        {isSearching ? (
+      <View style={styles.sheet} onLayout={(e) => setSheetHeight(e.nativeEvent.layout.height)}>
+      <Sheet>
+        {isSearching && compact ? (
+          <View style={styles.compactRow}>
+            <View style={styles.compactRadar}>
+              <Animated.View style={[styles.compactHalo, haloStyle]} />
+              <View style={styles.compactCore}>
+                <Ionicons name="car-sport" size={18} color={COLORS.lime} />
+              </View>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.compactTitle} numberOfLines={1}>
+                {rideData.femaleDriverOnly ? 'Finding a female driver' : 'Finding your driver'}
+              </Text>
+              <Text style={TYPE.small} numberOfLines={1}>
+                Looking for {clock} · {currencySymbol()}{fareEstimate}
+              </Text>
+            </View>
+            <IconButton
+              icon="chevron-up"
+              tone="dark"
+              onPress={() => setCompact(false)}
+              accessibilityLabel="Show search details"
+            />
+          </View>
+        ) : null}
+
+        {isSearching && !compact ? (
           <View style={styles.searching}>
+            <View style={styles.collapse}>
+              <IconButton
+                icon="chevron-down"
+                onPress={() => setCompact(true)}
+                accessibilityLabel="Show more of the map"
+              />
+            </View>
             <View style={styles.radar}>
               <Animated.View style={[styles.halo, haloStyle]} />
               <View style={styles.radarCore}>
@@ -465,6 +517,7 @@ export default function RideRequestScreen() {
           </View>
         ) : null}
       </Sheet>
+      </View>
     </SafeAreaView>
   );
 }
@@ -490,7 +543,21 @@ const styles = StyleSheet.create({
 
   sheet: { position: 'absolute', left: 0, right: 0, bottom: 0 },
 
+  compactRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[3], paddingBottom: SPACE[2] },
+  compactRadar: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
+  compactHalo: {
+    position: 'absolute', width: 48, height: 48, borderRadius: 24,
+    backgroundColor: COLORS.lime,
+  },
+  compactCore: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: COLORS.midnight,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  compactTitle: { ...TYPE.subhead, fontSize: 18, color: COLORS.midnight },
+
   searching: { alignItems: 'center' },
+  collapse: { position: 'absolute', top: 0, right: 0, zIndex: 1 },
   radar: { width: 96, height: 96, alignItems: 'center', justifyContent: 'center', marginBottom: SPACE[4] },
   halo: {
     position: 'absolute', width: 96, height: 96, borderRadius: 48,
