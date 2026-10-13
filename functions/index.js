@@ -2626,7 +2626,8 @@ async function offerRideToDrivers(rideId, ride) {
   await sendPush(nearby, {
     title: "New job offer",
     body: `Pickup at ${pickup}. Open TakeARoute to accept.`,
-    // "job-offers" replaced "job-alerts" in the app (see utils/notifications.js).
+    // "job-offers" replaced "job-alerts" in the app
+    // (see utils/notifications.js).
     // Phones on an older build without it show the push on their default
     // channel instead, so it still arrives.
     channelId: "job-offers",
