@@ -6,10 +6,11 @@ import {
   SafeAreaView,
   ActivityIndicator,
   Keyboard,
+  TextInput,
+  TouchableOpacity,
 } from 'react-native';
 import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
-import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
-import { GOOGLE_MAPS_API_KEY, PLACES_NEW_PROPS, placeCoords } from '../../config/maps';
+import { usePlaceSearch } from '../../utils/placeSearch';
 import * as Location from 'expo-location';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import {
@@ -127,6 +128,19 @@ export default function PickupPickerScreen() {
     }
   };
 
+  // Ranked near where the map was opened, not limited to it.
+  const search = usePlaceSearch({ near: initial });
+
+  const choosePlace = async (item) => {
+    const place = await search.pick(item);
+    if (!place) return;
+    Keyboard.dismiss();
+    search.clear();
+    setCentre({ latitude: place.latitude, longitude: place.longitude });
+    setAddress(place.description);
+    mapRef.current?.animateToRegion(regionFrom(place, 0.004), 400);
+  };
+
   const confirm = () => {
     if (!isCoord(centre)) return;
     // Handed back to the home screen, which reads it off its own route params.
@@ -179,33 +193,39 @@ export default function PickupPickerScreen() {
 
         {/* Jump straight to an address instead of dragging there. */}
         <View style={styles.searchWrap}>
-          <GooglePlacesAutocomplete
+          <TextInput
+            style={styles.searchInput}
+            value={search.text}
+            onChangeText={search.setText}
             placeholder="Search for a street or postcode"
-            minLength={2}
-            fetchDetails
-            {...PLACES_NEW_PROPS}
-            onPress={(data, details = null) => {
-              const point = placeCoords(details);
-              if (!point) return;
-              Keyboard.dismiss();
-              setCentre(point);
-              setAddress(data.description);
-              mapRef.current?.animateToRegion(regionFrom(point, 0.004), 400);
-            }}
-            query={{ key: GOOGLE_MAPS_API_KEY, languageCode: 'en', includedRegionCodes: ['gb'] }}
-            styles={{
-              container: { flex: 0 },
-              textInputContainer: { backgroundColor: 'transparent', padding: 0 },
-              textInput: styles.searchInput,
-              listView: styles.searchList,
-              row: { padding: 0, height: 'auto' },
-              separator: { height: StyleSheet.hairlineWidth, backgroundColor: COLORS.line },
-              description: { color: COLORS.ink },
-            }}
-            textInputProps={{ placeholderTextColor: COLORS.faint, returnKeyType: 'search' }}
-            debounce={300}
-            enablePoweredByContainer={false}
+            placeholderTextColor={COLORS.faint}
+            autoCorrect={false}
+            returnKeyType="search"
           />
+          {search.text.trim().length >= 2 ? (
+            <View style={styles.searchList}>
+              {search.error ? <Text style={styles.searchNote}>{search.error}</Text> : null}
+              {search.loading && !search.results.length ? (
+                <ActivityIndicator color={COLORS.midnight} style={{ marginVertical: SPACE[3] }} />
+              ) : null}
+              {!search.loading && !search.error && !search.results.length ? (
+                <Text style={styles.searchNote}>No places match "{search.text.trim()}".</Text>
+              ) : null}
+              {search.results.slice(0, 5).map((item, i) => (
+                <TouchableOpacity
+                  key={item.placeId}
+                  style={[styles.searchRow, i > 0 && styles.searchRowLine]}
+                  onPress={() => choosePlace(item)}
+                  activeOpacity={0.6}
+                >
+                  <Text style={styles.searchMain} numberOfLines={1}>{item.main}</Text>
+                  {item.secondary ? (
+                    <Text style={styles.searchSub} numberOfLines={1}>{item.secondary}</Text>
+                  ) : null}
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.recentre}>
@@ -280,7 +300,7 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
   searchInput: {
-    height: 52, marginBottom: 0,
+    height: 52,
     paddingHorizontal: SPACE[4],
     borderRadius: RADIUS.md,
     backgroundColor: COLORS.white,
@@ -294,6 +314,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACE[4],
     ...SHADOW.float,
   },
+  searchRow: { paddingVertical: SPACE[3] },
+  searchRowLine: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: COLORS.line },
+  searchMain: { fontSize: 16, fontWeight: '600', color: COLORS.ink },
+  searchSub: { ...TYPE.small, marginTop: 1 },
+  searchNote: { ...TYPE.small, paddingVertical: SPACE[3] },
 
   addressRow: { flexDirection: 'row', alignItems: 'flex-start', gap: SPACE[3], marginTop: SPACE[2] },
   addressDot: {

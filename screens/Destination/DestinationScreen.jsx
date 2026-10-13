@@ -7,10 +7,11 @@ import {
   Text,
   FlatList,
   Keyboard,
+  TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import * as Location from 'expo-location';
-import { GooglePlacesAutocomplete } from 'react-native-google-places-autocomplete';
-import { GOOGLE_MAPS_API_KEY, PLACES_NEW_PROPS, placeCoords } from '../../config/maps';
+import { usePlaceSearch } from '../../utils/placeSearch';
 import { Ionicons } from '@expo/vector-icons';
 import {
   collection,
@@ -23,7 +24,7 @@ import {
   setDoc,
 } from 'firebase/firestore';
 import { auth, db } from '../../config/firebase';
-import { COLORS, TYPE, SPACE, RADIUS, SHADOW, ScreenHeader, EmptyState } from '../../components/ui/kit';
+import { COLORS, TYPE, SPACE, RADIUS, ScreenHeader, EmptyState } from '../../components/ui/kit';
 
 
 const PICKUP = {
@@ -43,6 +44,9 @@ export default function DestinationSearchScreen({ navigation, route }) {
 
   const [currentAddress, setCurrentAddress] = useState('');
   const [recentSearches, setRecentSearches] = useState([]);
+  const [picking, setPicking] = useState(false);
+  const search = usePlaceSearch({ near: origin });
+  const searching = search.text.trim().length >= 2;
 
   useEffect(() => {
     if (!auth.currentUser) return undefined;
@@ -139,6 +143,24 @@ export default function DestinationSearchScreen({ navigation, route }) {
     });
   };
 
+  const handleResultPress = async (item) => {
+    if (picking) return;
+    setPicking(true);
+    const place = await search.pick(item);
+    setPicking(false);
+    if (!place) return;
+    const destination = {
+      latitude: place.latitude,
+      longitude: place.longitude,
+      description: place.description,
+      address: place.description,
+      placeId: place.placeId,
+    };
+    saveRecentSearch(destination);
+    Keyboard.dismiss();
+    goToFare(destination);
+  };
+
   const pickup = PICKUP[pickupType] || PICKUP.current;
 
   return (
@@ -169,68 +191,71 @@ export default function DestinationSearchScreen({ navigation, route }) {
           </TouchableOpacity>
 
           <View style={styles.searchWrap}>
-            <GooglePlacesAutocomplete
+            <TextInput
               ref={searchRef}
+              style={styles.input}
+              value={search.text}
+              onChangeText={search.setText}
               placeholder={addingStop ? 'Search for a stop' : 'Search a destination'}
-              minLength={2}
+              placeholderTextColor={COLORS.faint}
               autoFocus
+              autoCorrect={false}
               returnKeyType="search"
-              fetchDetails
-              {...PLACES_NEW_PROPS}
-              onPress={(data, details = null) => {
-                const point = placeCoords(details);
-                if (!point) return;
-                const destination = {
-                  ...point,
-                  description: data.description,
-                  address: data.description,
-                  placeId: data.place_id,
-                };
-                saveRecentSearch(destination);
-                Keyboard.dismiss();
-                goToFare(destination);
-              }}
-              query={{ key: GOOGLE_MAPS_API_KEY, languageCode: 'en' }}
-              styles={{
-                container: { flex: 0 },
-                textInputContainer: styles.inputContainer,
-                textInput: styles.input,
-                listView: styles.listView,
-                row: styles.suggestionRow,
-                separator: styles.separator,
-              }}
-              textInputProps={{
-                placeholderTextColor: COLORS.faint,
-                returnKeyType: 'search',
-                clearButtonMode: 'while-editing',
-              }}
-              debounce={300}
-              enablePoweredByContainer={false}
-              renderRow={(rowData) => (
-                <View style={styles.suggestion}>
-                  <View style={styles.rowIcon}>
-                    <Ionicons name="location-outline" size={18} color={COLORS.midnight} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.suggestionMain} numberOfLines={1}>
-                      {rowData.structured_formatting?.main_text || rowData.description}
-                    </Text>
-                    {rowData.structured_formatting?.secondary_text ? (
-                      <Text style={styles.suggestionSub} numberOfLines={1}>
-                        {rowData.structured_formatting.secondary_text}
-                      </Text>
-                    ) : null}
-                  </View>
-                </View>
-              )}
             />
+            {search.text ? (
+              <TouchableOpacity
+                style={styles.clear}
+                onPress={search.clear}
+                hitSlop={8}
+                accessibilityLabel="Clear search"
+              >
+                <Ionicons name="close-circle" size={20} color={COLORS.faint} />
+              </TouchableOpacity>
+            ) : null}
           </View>
         </View>
       </View>
 
-      {/* Recents sit under the search and are the fast path for most trips. */}
+      {/* Results replace the recents while typing, as a normal list so
+          nothing can sit on top of them. Recents are the fast path otherwise. */}
       <View style={styles.recents}>
-        {recentSearches.length ? (
+        {searching ? (
+          <>
+            {search.error ? (
+              <Text style={styles.searchError}>{search.error}</Text>
+            ) : null}
+            {search.loading && !search.results.length ? (
+              <ActivityIndicator color={COLORS.midnight} style={{ marginTop: SPACE[4] }} />
+            ) : null}
+            {!search.loading && !search.error && !search.results.length ? (
+              <Text style={styles.searchHint}>No places match "{search.text.trim()}".</Text>
+            ) : null}
+            <FlatList
+              data={search.results}
+              keyExtractor={(item) => item.placeId}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              ItemSeparatorComponent={() => <View style={styles.rowLine} />}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.recentRow}
+                  onPress={() => handleResultPress(item)}
+                  activeOpacity={0.6}
+                >
+                  <View style={styles.rowIcon}>
+                    <Ionicons name="location-outline" size={18} color={COLORS.midnight} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.recentText} numberOfLines={1}>{item.main}</Text>
+                    {item.secondary ? (
+                      <Text style={styles.recentSub} numberOfLines={1}>{item.secondary}</Text>
+                    ) : null}
+                  </View>
+                </TouchableOpacity>
+              )}
+            />
+          </>
+        ) : recentSearches.length ? (
           <>
             <Text style={[TYPE.label, { marginBottom: SPACE[2] }]}>Recent</Text>
             <FlatList
@@ -278,7 +303,7 @@ export default function DestinationSearchScreen({ navigation, route }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.white },
 
-  journey: { flexDirection: 'row', gap: SPACE[3], paddingHorizontal: SPACE[5], paddingTop: SPACE[2], zIndex: 10 },
+  journey: { flexDirection: 'row', gap: SPACE[3], paddingHorizontal: SPACE[5], paddingTop: SPACE[2] },
   gutter: { width: 12, alignItems: 'center', paddingTop: 22 },
   dotPickup: {
     width: 12, height: 12, borderRadius: 6,
@@ -291,12 +316,11 @@ const styles = StyleSheet.create({
   pickupAddress: { ...TYPE.callout, marginTop: 2 },
   change: { ...TYPE.small, color: COLORS.midnight, fontWeight: '700' },
 
-  searchWrap: { zIndex: 20 },
-  inputContainer: { backgroundColor: 'transparent', padding: 0 },
+  searchWrap: { justifyContent: 'center' },
   input: {
     height: 54,
-    marginBottom: 0,
-    paddingHorizontal: SPACE[4],
+    paddingLeft: SPACE[4],
+    paddingRight: 44,
     borderRadius: RADIUS.md,
     borderWidth: 1.5,
     borderColor: COLORS.fill,
@@ -304,25 +328,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: COLORS.ink,
   },
-  listView: {
-    position: 'absolute',
-    top: 60,
-    left: 0,
-    right: 0,
-    backgroundColor: COLORS.white,
-    borderRadius: RADIUS.lg,
-    paddingHorizontal: SPACE[2],
-    zIndex: 30,
-    ...SHADOW.float,
-  },
-  suggestionRow: { padding: 0, height: 'auto' },
-  separator: { height: StyleSheet.hairlineWidth, backgroundColor: COLORS.line },
-  suggestion: {
-    flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
-    paddingHorizontal: SPACE[2], paddingVertical: SPACE[2], minHeight: 56,
-  },
-  suggestionMain: { fontSize: 16, fontWeight: '600', color: COLORS.ink, letterSpacing: -0.2 },
-  suggestionSub: { ...TYPE.small, marginTop: 1 },
+  clear: { position: 'absolute', right: SPACE[3] },
+  searchError: { ...TYPE.small, color: COLORS.red, marginBottom: SPACE[2] },
+  searchHint: { ...TYPE.small, marginTop: SPACE[2] },
 
   rowIcon: {
     width: 40, height: 40, borderRadius: 20,

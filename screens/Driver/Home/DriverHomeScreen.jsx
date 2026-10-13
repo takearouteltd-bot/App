@@ -36,7 +36,7 @@ import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocume
 import { canServe, classLabel } from '../../../constants/vehicleClasses';
 import { servesCity } from '../../../utils/cities';
 import { biddingEnabled, counterSteps, offerSeconds, sendCounterOffer } from '../../../utils/bidding';
-import { clearJobAlerts } from '../../../utils/notifications';
+import { clearJobAlerts, ringForNewJob } from '../../../utils/notifications';
 import PaymentTypeBanner from '../../../components/PaymentTypeBanner';
 import {
   COLORS, TYPE, SPACE, RADIUS, SHADOW,
@@ -77,6 +77,9 @@ export default function DriverHomeScreen() {
 
   const [shiftStartedAt, setShiftStartedAt] = useState(null);
   const [onRide, setOnRide] = useState(false);
+  // Read inside the offers listener without restarting it.
+  const onRideRef = useRef(false);
+  onRideRef.current = onRide;
   // Assume nothing until the driver record says otherwise, so the screen never
   // flashes "You are online" at someone who is not.
   const [isOnline, setIsOnline] = useState(false);
@@ -95,6 +98,8 @@ export default function DriverHomeScreen() {
   const [sentOffers, setSentOffers] = useState({});
   const [sending, setSending] = useState(false);
   const takenOver = useRef(false);
+  // Jobs already rung for, so each offer rings once, not on every update.
+  const rungFor = useRef(new Set());
 
   const [rideRequests, setRideRequests] = useState([]);
   // The offer being shown, by ride id, so a change to some other searching
@@ -376,6 +381,10 @@ export default function DriverHomeScreen() {
       });
 
       rides.sort((a, b) => a.pickupDistanceKm - b.pickupDistanceKm);
+      // Ring for jobs this phone has not seen yet. Not while on a job.
+      const fresh = rides.filter((r) => !rungFor.current.has(r.id));
+      fresh.forEach((r) => rungFor.current.add(r.id));
+      if (fresh.length && !onRideRef.current) ringForNewJob(fresh[0]);
       setRideRequests(rides);
       // Keep the card the driver is reading; only start again when it is gone.
       setCurrentRideId((current) => {

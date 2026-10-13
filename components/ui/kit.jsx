@@ -387,12 +387,26 @@ export function ListRow({ icon, iconColor = COLORS.blue, title, detail, right, o
   );
 }
 
-/* One number with its label. Use two or three, never a wall of them. */
+/* One number with its label. Use two or three, never a wall of them.
+   Each stat takes an equal share of the row and the number shrinks to fit,
+   so three money values never run off a narrow phone. */
 export function Stat({ value, label, tone }) {
   return (
     <View style={s.stat}>
-      <Text style={[TYPE.figure, tone === 'onDark' && { color: COLORS.white }]}>{value}</Text>
-      <Text style={[TYPE.small, tone === 'onDark' && { color: COLORS.onDark }]}>{label}</Text>
+      <Text
+        style={[TYPE.figure, tone === 'onDark' && { color: COLORS.white }]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.55}
+      >
+        {value}
+      </Text>
+      <Text
+        style={[TYPE.small, s.statLabel, tone === 'onDark' && { color: COLORS.onDark }]}
+        numberOfLines={2}
+      >
+        {label}
+      </Text>
     </View>
   );
 }
@@ -734,6 +748,9 @@ export const TAB_BAR_OPTIONS = {
   tabBarActiveTintColor: COLORS.midnight,
   tabBarInactiveTintColor: COLORS.faint,
   tabBarLabelStyle: { fontSize: 11, fontWeight: '700', marginTop: 2 },
+  // Five tabs share a narrow phone; large system text would push labels
+  // like "Membership" out of their slot.
+  tabBarAllowFontScaling: false,
   tabBarStyle: {
     backgroundColor: COLORS.white,
     borderTopWidth: 0,
@@ -891,8 +908,9 @@ const s = StyleSheet.create({
 
   avatarBadge: { position: 'absolute', right: -2, bottom: -2 },
 
-  stat: { alignItems: 'center', paddingHorizontal: SPACE[6], minWidth: 88 },
-  statRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  stat: { flex: 1, minWidth: 0, alignItems: 'center', paddingHorizontal: SPACE[2] },
+  statLabel: { textAlign: 'center' },
+  statRow: { flexDirection: 'row', alignItems: 'center', alignSelf: 'stretch' },
   statRule: { width: StyleSheet.hairlineWidth, height: 36, backgroundColor: COLORS.line },
 
   pill: {

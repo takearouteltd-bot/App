@@ -2473,14 +2473,14 @@ exports.payDriverMembership = functions
    PUSH NOTIFICATIONS
    Phones save their FCM token to pushTokens/{uid} (see the app's
    utils/notifications.js). Android channels decide sound and importance:
-   job-alerts, trip-updates, messages, general.
+   job-offers, trip-updates, messages, general.
 ====================================== */
 
 /**
  * Sends one notification to every saved phone for the given users and
  * removes tokens Firebase says are no longer valid.
  * @param {Array<string>} uids User ids.
- * @param {Object} msg {title, body, channelId, data, ttlSeconds}.
+ * @param {Object} msg {title, body, channelId, data, ttlSeconds, sound}.
  * @return {Promise<number>} Number of phones reached.
  */
 async function sendPush(uids, msg) {
@@ -2514,7 +2514,7 @@ async function sendPush(uids, msg) {
         ttl: (msg.ttlSeconds || 3600) * 1000,
         notification: {channelId: msg.channelId || "general"},
       },
-      apns: {payload: {aps: {sound: "default"}}},
+      apns: {payload: {aps: {sound: msg.sound || "default"}}},
     });
     reached += res.successCount;
 
@@ -2626,7 +2626,11 @@ async function offerRideToDrivers(rideId, ride) {
   await sendPush(nearby, {
     title: "New job offer",
     body: `Pickup at ${pickup}. Open TakeARoute to accept.`,
-    channelId: "job-alerts",
+    // "job-offers" replaced "job-alerts" in the app (see utils/notifications.js).
+    // Phones on an older build without it show the push on their default
+    // channel instead, so it still arrives.
+    channelId: "job-offers",
+    sound: "job_alert.wav",
     ttlSeconds: Math.max(10, cfg.dispatch.requestTimeoutSeconds || 20),
     data: {type: "job_offer", rideId},
   });

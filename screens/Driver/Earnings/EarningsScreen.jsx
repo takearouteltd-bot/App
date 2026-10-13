@@ -215,7 +215,9 @@ export default function EarningsScreen() {
       {/* The one bold element on this screen: the balance you can take out. */}
       <Card tone="dark" style={styles.hero}>
         <Text style={styles.heroLabel}>Available balance</Text>
-        <Text style={styles.heroValue}>{money(totalBalance)}</Text>
+        <Text style={styles.heroValue} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.6}>
+          {money(totalBalance)}
+        </Text>
         <Text style={styles.heroSub}>
           {totalBalance < minimumPayout
             ? `You can withdraw once you reach ${money(minimumPayout)}.`
@@ -317,7 +319,7 @@ const styles = StyleSheet.create({
   heroLabel: { ...TYPE.label, color: COLORS.lime },
   heroValue: { ...TYPE.display, color: COLORS.white, marginTop: SPACE[1] },
   heroSub: { ...TYPE.small, color: COLORS.onDark, marginTop: SPACE[1] },
-  heroStats: { marginTop: SPACE[5], justifyContent: 'space-between' },
+  heroStats: { marginTop: SPACE[5], marginHorizontal: -SPACE[2] },
   withdrawBtn: { marginTop: SPACE[5] },
 
   filters: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACE[2] },
