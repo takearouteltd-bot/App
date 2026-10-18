@@ -2473,7 +2473,7 @@ exports.payDriverMembership = functions
    PUSH NOTIFICATIONS
    Phones save their FCM token to pushTokens/{uid} (see the app's
    utils/notifications.js). Android channels decide sound and importance:
-   job-offers, trip-updates, messages, general.
+   job-ring, trip-updates, messages, general.
 ====================================== */
 
 /**
@@ -2626,12 +2626,12 @@ async function offerRideToDrivers(rideId, ride) {
   await sendPush(nearby, {
     title: "New job offer",
     body: `Pickup at ${pickup}. Open TakeARoute to accept.`,
-    // "job-offers" replaced "job-alerts" in the app
+    // "job-ring" replaced "job-offers" in the app
     // (see utils/notifications.js).
     // Phones on an older build without it show the push on their default
     // channel instead, so it still arrives.
-    channelId: "job-offers",
-    sound: "job_alert.wav",
+    channelId: "job-ring",
+    sound: "job_ring.wav",
     ttlSeconds: Math.max(10, cfg.dispatch.requestTimeoutSeconds || 20),
     data: {type: "job_offer", rideId},
   });

@@ -81,7 +81,8 @@
         {
           "color": "#86C814",
           "sounds": [
-            "./assets/sounds/job_alert.wav"
+            "./assets/sounds/job_alert.wav",
+            "./assets/sounds/job_ring.wav"
           ]
         }
       ],

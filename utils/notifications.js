@@ -15,7 +15,10 @@
 // before anything is delivered.
 //
 // Channels (Android sets sound and importance per channel, not per message):
-//   job-offers    new job offers. Loud, 20 second chime, vibration.
+//   job-ring      new job offers. Loud ring tune, vibration. Replaces
+//                 "job-offers" (same reason as below: a channel's sound is
+//                 fixed once the phone has made it).
+//   job-offers    older job channel, kept for pushes from older servers.
 //                 Replaces "job-alerts": Android never lets an app change a
 //                 channel's sound once the phone has created it, so phones
 //                 that made "job-alerts" before the chime was bundled rang
@@ -23,7 +26,8 @@
 //   trip-updates  driver arrived, ride cancelled, and similar.
 //   messages      chat and support replies.
 //   general       announcements from TakeARoute.
-import { Platform, Vibration } from 'react-native';
+import { AppState, Platform, Vibration } from 'react-native';
+import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import { signOut } from 'firebase/auth';
@@ -48,6 +52,16 @@ const JOB_VIBRATION = [0, 800, 400, 800, 400, 800, 400, 800];
 async function ensureChannels() {
   if (Platform.OS !== 'android' || channelsReady) return;
   await Notifications.deleteNotificationChannelAsync('job-alerts').catch(() => {});
+  await Notifications.setNotificationChannelAsync('job-ring', {
+    name: 'New job offers',
+    description: 'Rings when a new job is offered to you.',
+    importance: Notifications.AndroidImportance.MAX,
+    sound: 'job_ring.wav',
+    vibrationPattern: JOB_VIBRATION,
+    enableVibrate: true,
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    bypassDnd: false,
+  });
   await Notifications.setNotificationChannelAsync('job-offers', {
     name: 'New job offers',
     description: 'Rings when a new job is offered to you.',
@@ -204,20 +218,59 @@ export function showPushesWhileOpen() {
 /* Rings and vibrates for a job that has just appeared on the driver's
    screen. Called by the driver home screen for every new offer, so the
    driver hears it whether or not the push arrived (the push only goes to
-   drivers who were online and nearby when the passenger booked). */
+   drivers who were online and nearby when the passenger booked).
+
+   With the app open, the tune plays from the app itself and loops until the
+   job is taken, declined or gone (at most RING_MS). A notification sound
+   only rang the first time: Android quietens repeat alerts from one app
+   that arrive close together. In the background a notification rings on
+   the job-ring channel instead. */
+const RING_MS = 30000;
+let ringPlayer = null;
+let ringTimer = null;
+
+export function stopJobRing() {
+  clearTimeout(ringTimer);
+  ringTimer = null;
+  Vibration.cancel();
+  try {
+    ringPlayer?.pause();
+    ringPlayer?.seekTo(0);
+  } catch (error) {
+    // Not critical.
+  }
+}
+
+async function playRing() {
+  if (!ringPlayer) {
+    await setAudioModeAsync({ playsInSilentMode: true, interruptionModeAndroid: 'duckOthers' }).catch(() => {});
+    ringPlayer = createAudioPlayer(require('../assets/sounds/job_ring.wav'));
+    ringPlayer.loop = true;
+  }
+  stopJobRing();
+  ringPlayer.play();
+  ringTimer = setTimeout(stopJobRing, RING_MS);
+}
+
 export async function ringForNewJob(ride) {
   try {
     Vibration.vibrate(JOB_VIBRATION);
+    if (AppState.currentState === 'active') {
+      await playRing();
+      return;
+    }
     await ensureChannels();
+    // Take down the last job alert so this one rings as a new one.
+    await clearJobAlerts();
     const pickup = ride?.pickupLocation?.address || 'a nearby pickup';
     await Notifications.scheduleNotificationAsync({
       content: {
         title: 'New job offer',
         body: `Pickup at ${pickup}.`,
-        sound: 'job_alert.wav',
+        sound: 'job_ring.wav',
         data: { type: 'job_offer', rideId: ride?.id || '' },
       },
-      trigger: Platform.OS === 'android' ? { channelId: 'job-offers' } : null,
+      trigger: Platform.OS === 'android' ? { channelId: 'job-ring' } : null,
     });
   } catch (error) {
     console.log('Job ring error:', error);
@@ -226,6 +279,7 @@ export async function ringForNewJob(ride) {
 
 // Clears job alerts still showing, e.g. after the driver accepts a job.
 export async function clearJobAlerts() {
+  stopJobRing();
   try {
     const shown = await Notifications.getPresentedNotificationsAsync();
     await Promise.all(

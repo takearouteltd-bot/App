@@ -36,7 +36,7 @@ import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocume
 import { canServe, classLabel } from '../../../constants/vehicleClasses';
 import { servesCity } from '../../../utils/cities';
 import { biddingEnabled, counterSteps, offerSeconds, sendCounterOffer } from '../../../utils/bidding';
-import { clearJobAlerts, ringForNewJob } from '../../../utils/notifications';
+import { clearJobAlerts, ringForNewJob, stopJobRing } from '../../../utils/notifications';
 import PaymentTypeBanner from '../../../components/PaymentTypeBanner';
 import {
   COLORS, TYPE, SPACE, RADIUS, SHADOW,
@@ -100,6 +100,9 @@ export default function DriverHomeScreen() {
   const takenOver = useRef(false);
   // Jobs already rung for, so each offer rings once, not on every update.
   const rungFor = useRef(new Set());
+  // Jobs on screen now, for the edge-of-radius allowance.
+  const shownIds = useRef(new Set());
+  const [searchingRides, setSearchingRides] = useState([]);
 
   const [rideRequests, setRideRequests] = useState([]);
   // The offer being shown, by ride id, so a change to some other searching
@@ -343,62 +346,79 @@ export default function DriverHomeScreen() {
     return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
   };
 
+  // Every job still looking for a driver. One listener for as long as the
+  // driver is online: it used to restart on every location update (every 4
+  // seconds), which made jobs vanish and reappear and held back price offers.
+  useEffect(() => {
+    if (!isOnline || !isApproved) {
+      setSearchingRides([]);
+      return undefined;
+    }
+    const q = query(collection(db, 'rides'), where('status', '==', 'searching'));
+    return onSnapshot(q, (snapshot) => {
+      setSearchingRides(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+  }, [isOnline, isApproved]);
+
+  // The jobs on offer to this driver, nearest first, worked out again when
+  // the jobs or the driver's position change.
   useEffect(() => {
     // No jobs for anyone who is not approved, whatever their status says.
-    if (!isOnline || !location || !isApproved) return undefined;
+    if (!isOnline || !location || !isApproved) return;
 
-    const q = query(collection(db, 'rides'), where('status', '==', 'searching'));
+    const rides = [];
+    searchingRides.forEach((data) => {
+      if (!data.pickupLocation) return;
+      // Jobs this driver already cancelled are not offered again.
+      if (Array.isArray(data.declinedBy) && data.declinedBy.includes(driverId)) return;
+      // Passengers who asked not to be matched with this driver.
+      if (Array.isArray(data.blockedDriverIds) && data.blockedDriverIds.includes(driverId)) return;
+      // Somebody who booked and paid for Executive does not get a Mini.
+      if (!canServe(vehicleType, data.rideType)) return;
+      // Chosen a working city? Then only that city's jobs.
+      if (!servesCity(workingCityId, data.cityId)) return;
+      // Passenger asked for a female driver: verified female drivers only.
+      if (data.femaleDriverOnly === true && !femaleVerified) return;
 
-    return onSnapshot(q, (snapshot) => {
-      const rides = [];
+      const distance = getDistanceFromLatLonInKm(
+        location.latitude,
+        location.longitude,
+        data.pickupLocation.latitude,
+        data.pickupLocation.longitude
+      );
 
-      snapshot.forEach((docSnap) => {
-        const data = docSnap.data();
-        if (!data.pickupLocation) return;
-        // Jobs this driver already cancelled are not offered again.
-        if (Array.isArray(data.declinedBy) && data.declinedBy.includes(driverId)) return;
-        // Passengers who asked not to be matched with this driver.
-        if (Array.isArray(data.blockedDriverIds) && data.blockedDriverIds.includes(driverId)) return;
-        // Somebody who booked and paid for Executive does not get a Mini.
-        if (!canServe(vehicleType, data.rideType)) return;
-        // Chosen a working city? Then only that city's jobs.
-        if (!servesCity(workingCityId, data.cityId)) return;
-        // Passenger asked for a female driver: verified female drivers only.
-        if (data.femaleDriverOnly === true && !femaleVerified) return;
-
-        const distance = getDistanceFromLatLonInKm(
-          location.latitude,
-          location.longitude,
-          data.pickupLocation.latitude,
-          data.pickupLocation.longitude
-        );
-
-        // Straight-line distance only. We do not have a road route to the
-        // pickup, so no arrival time is shown rather than a guessed one.
-        if (distance <= searchRadiusKm) {
-          rides.push({ id: docSnap.id, ...data, pickupDistanceKm: distance });
-        }
-      });
-
-      rides.sort((a, b) => a.pickupDistanceKm - b.pickupDistanceKm);
-      // Ring for jobs this phone has not seen yet. Not while on a job.
-      const fresh = rides.filter((r) => !rungFor.current.has(r.id));
-      fresh.forEach((r) => rungFor.current.add(r.id));
-      if (fresh.length && !onRideRef.current) ringForNewJob(fresh[0]);
-      setRideRequests(rides);
-      // Keep the card the driver is reading; only start again when it is gone.
-      setCurrentRideId((current) => {
-        if (current && rides.some((r) => r.id === current)) return current;
-        const next = rides[0]?.id || null;
-        if (next) animateCard();
-        return next;
-      });
+      // Straight-line distance only. We do not have a road route to the
+      // pickup, so no arrival time is shown rather than a guessed one.
+      // A job already on screen stays until it is a quarter beyond the
+      // radius, so a driver near the edge does not see it blink in and out.
+      const limit = shownIds.current.has(data.id) ? searchRadiusKm * 1.25 : searchRadiusKm;
+      if (distance <= limit) {
+        rides.push({ ...data, pickupDistanceKm: distance });
+      }
     });
-  }, [isOnline, location, isApproved, searchRadiusKm, driverId, vehicleType, workingCityId, femaleVerified, animateCard]);
+
+    rides.sort((a, b) => a.pickupDistanceKm - b.pickupDistanceKm);
+    shownIds.current = new Set(rides.map((r) => r.id));
+    // Ring for jobs this phone has not seen yet. Not while on a job.
+    const fresh = rides.filter((r) => !rungFor.current.has(r.id));
+    fresh.forEach((r) => rungFor.current.add(r.id));
+    if (fresh.length && !onRideRef.current) ringForNewJob(fresh[0]);
+    // Nothing left to take: stop ringing.
+    if (!rides.length) stopJobRing();
+    setRideRequests(rides);
+    // Keep the card the driver is reading; only start again when it is gone.
+    setCurrentRideId((current) => {
+      if (current && rides.some((r) => r.id === current)) return current;
+      const next = rides[0]?.id || null;
+      if (next) animateCard();
+      return next;
+    });
+  }, [searchingRides, isOnline, location, isApproved, searchRadiusKm, driverId, vehicleType, workingCityId, femaleVerified, animateCard]);
 
   // Going offline takes the offer card down with it.
   useEffect(() => {
     if (isOnline) return;
+    stopJobRing();
     setRideRequests([]);
     setCurrentRideId(null);
   }, [isOnline]);

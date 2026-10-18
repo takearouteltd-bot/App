@@ -19,6 +19,7 @@
     "@react-navigation/native-stack": "^6.11.0",
     "@stripe/stripe-react-native": "^0.50.3",
     "expo": "~54.0.32",
+    "expo-audio": "~1.1.1",
     "expo-build-properties": "~1.0.10",
     "expo-dev-client": "~6.0.21",
     "expo-device": "~8.0.10",
