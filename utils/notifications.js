@@ -15,7 +15,7 @@
 // before anything is delivered.
 //
 // Channels (Android sets sound and importance per channel, not per message):
-//   job-ring      new job offers. Loud ring tune, vibration. Replaces
+//   job-ring      new job offers. Rising three-note chime, vibration. Replaces
 //                 "job-offers" (same reason as below: a channel's sound is
 //                 fixed once the phone has made it).
 //   job-offers    older job channel, kept for pushes from older servers.
