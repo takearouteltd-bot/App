@@ -102,6 +102,10 @@ export default function RideTrackingScreen() {
       const data = snap.data();
       setRideData(data);
 
+      // Navigate only on server data: a cached copy can lag a step behind
+      // and would bounce the passenger back to "searching" by mistake.
+      if (snap.metadata.fromCache) return;
+
       if (data.status === 'ongoing') {
         hasNavigatedToProgress.current = true;
         navigation.replace('RideInProgress', { rideId });

@@ -156,6 +156,9 @@ export default function DriverProfileScreen() {
   };
 
   const isOnline = driver?.status === "online";
+  // Between accepting and finishing a job the status is "on_ride", which used
+  // to read as "Approved, offline" here.
+  const onJob = driver?.status === "on_ride" || driver?.isOnRide === true;
   const isApproved = driver?.approved === true && driver?.onboardingComplete === true;
 
   const availableBalance = wallet?.availableBalance || 0;
@@ -184,7 +187,11 @@ export default function DriverProfileScreen() {
         <Text style={styles.name}>{name}</Text>
         <View style={{ marginTop: SPACE[2] }}>
           {isApproved ? (
-            <StatusPill status={isOnline ? "online" : "approved"} label={isOnline ? "Online" : "Approved, offline"} dot />
+            <StatusPill
+              status={isOnline || onJob ? "online" : "approved"}
+              label={onJob ? "On a job" : isOnline ? "Online" : "Approved, offline"}
+              dot
+            />
           ) : driver?.onboardingStatus === "rejected" ? (
             <StatusPill status="rejected" label="Application not approved" />
           ) : (

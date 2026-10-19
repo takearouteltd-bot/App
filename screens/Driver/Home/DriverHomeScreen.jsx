@@ -467,6 +467,16 @@ export default function DriverHomeScreen() {
       setTimer((prev) => {
         if (prev <= 1) {
           clearInterval(interval);
+          // The counter-offer has expired: forget it, so the chips come back
+          // if this job is shown again, instead of "Waiting for the
+          // passenger" for ever.
+          if (waitingOnCounter) {
+            setSentOffers((m) => {
+              const next = { ...m };
+              delete next[currentRideId];
+              return next;
+            });
+          }
           advanceQueue();
           return 0;
         }
@@ -482,13 +492,26 @@ export default function DriverHomeScreen() {
 
   /* Bidding: offer the passenger a higher price instead of accepting theirs. */
   const handleCounter = async (ride, price) => {
-    if (!driverId || !driverCard || sending) return;
+    if (!driverId || sending) return;
+    if (!driverCard) {
+      // The driver record has not loaded yet: say so rather than ignore the tap.
+      Alert.alert('One moment', 'Your profile is still loading. Please try again.');
+      return;
+    }
     setSending(true);
     try {
       await sendCounterOffer(ride.id, { id: driverId, ...driverCard }, price, appConfig);
       setSentOffers((m) => ({ ...m, [ride.id]: price }));
     } catch (error) {
-      Alert.alert('Offer not sent', 'Please try again.');
+      // The rules refuse an offer on a job that is no longer searching: it
+      // was taken or cancelled while the card was on screen.
+      if (error?.code === 'permission-denied') {
+        Alert.alert('Job gone', 'This job has already been taken or cancelled.', [
+          { text: 'OK', onPress: advanceQueue },
+        ]);
+      } else {
+        Alert.alert('Offer not sent', 'Please check your connection and try again.');
+      }
     } finally {
       setSending(false);
     }
@@ -631,7 +654,13 @@ export default function DriverHomeScreen() {
         // Finished, cancelled, back to searching, or handed to another driver:
         // clear the pointer and let the driver take new jobs.
         takenOver.current = false;
-        await updateDoc(driverRef, { isOnRide: false, currentRideId: null }).catch(() => null);
+        // Back to "online" too: new jobs are only pushed to online drivers,
+        // and a driver left on "on_ride" after a cancel was offered nothing.
+        await updateDoc(driverRef, {
+          isOnRide: false,
+          currentRideId: null,
+          ...(driverData.status === 'on_ride' ? { status: 'online' } : {}),
+        }).catch(() => null);
         setCheckingRide(false);
       } catch (error) {
         console.error('Error checking ongoing ride:', error);

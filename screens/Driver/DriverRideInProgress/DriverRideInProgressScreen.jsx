@@ -123,6 +123,13 @@ export default function DriverRideInProgressScreen() {
 
       if (hasLeftScreen.current) return;
 
+      // Decide only on what the server says. Straight after an accept the
+      // cache still holds this job as "searching" from the job list (the
+      // accept is a transaction, so it is not written locally first), and
+      // acting on that told a driver who had just taken the job that it was
+      // "no longer assigned" to them.
+      if (snap.metadata.fromCache) return;
+
       if (data.status === 'ongoing') {
         hasLeftScreen.current = true;
         navigation.replace('RideToDropoff', { rideId });
