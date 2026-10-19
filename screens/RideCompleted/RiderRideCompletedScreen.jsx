@@ -145,8 +145,8 @@ export default function RiderRideCompletedScreen() {
             passenger waits here. It used to stay disabled until payment
             confirmed, which froze the app for good if it never did. */}
         <Button
-          title="Book another ride"
-          icon="arrow-forward"
+          title="Complete ride"
+          icon="checkmark"
           onPress={() => navigation.reset({ index: 0, routes: [{ name: 'HomeScreen' }] })}
         />
       </View>
