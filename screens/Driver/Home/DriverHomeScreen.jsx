@@ -135,6 +135,25 @@ export default function DriverHomeScreen() {
 
   const [checkingRide, setCheckingRide] = useState(true);
 
+  // Bring the map to the driver once there is a fix. On a fresh install the
+  // first fix often takes longer than the position request allows, so the
+  // map mounts on the fallback region (London) and, without this, stays
+  // there while the car sits off-screen. Once only, so it never fights a
+  // driver who has panned away.
+  const centredOnDriver = useRef(false);
+  useEffect(() => {
+    if (!location) {
+      centredOnDriver.current = false;
+      return;
+    }
+    if (centredOnDriver.current) return;
+    centredOnDriver.current = true;
+    mapRef.current?.animateToRegion(
+      { latitude: location.latitude, longitude: location.longitude, latitudeDelta: 0.01, longitudeDelta: 0.01 },
+      600
+    );
+  }, [location]);
+
   /* ================= DRIVER, WALLET, TODAY ================= */
   useEffect(() => {
     if (!driverId) return undefined;
