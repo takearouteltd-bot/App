@@ -1,0 +1,56 @@
+name: Build Android AAB (store)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Generate Android project
+        run: npx expo prebuild --platform android --clean --no-install
+
+      - name: Write upload keystore
+        run: echo "$UPLOAD_KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
+        env:
+          UPLOAD_KEYSTORE_BASE64: ${{ secrets.UPLOAD_KEYSTORE_BASE64 }}
+
+      - name: Build signed release bundle
+        working-directory: android
+        env:
+          UPLOAD_KEYSTORE_PASSWORD: ${{ secrets.UPLOAD_KEYSTORE_PASSWORD }}
+        run: |
+          ./gradlew bundleRelease --no-daemon -Dorg.gradle.jvmargs=-Xmx4g \
+            -PUPLOAD_STORE_FILE=upload-keystore.jks \
+            -PUPLOAD_KEY_ALIAS=upload \
+            -PUPLOAD_STORE_PASSWORD="$UPLOAD_KEYSTORE_PASSWORD" \
+            -PUPLOAD_KEY_PASSWORD="$UPLOAD_KEYSTORE_PASSWORD"
+
+      - name: Check the bundle is signed with the Play upload key
+        run: |
+          AAB=android/app/build/outputs/bundle/release/app-release.aab
+          keytool -printcert -jarfile "$AAB" | tee /tmp/cert.txt
+          grep -q "00:B8:EF:01:F5:62:92:1C:1A:31:91:C4:C6:A0:48:E6:EC:DC:48:1B:83:D8:AA:12:FD:7B:21:0C:C7:9E:79:91" /tmp/cert.txt \
+            || { echo "::error::AAB is not signed with the upload key"; exit 1; }
+          grep -E 'versionCode|versionName' android/app/build.gradle
+
+      - name: Upload AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: takearoute-aab
+          path: android/app/build/outputs/bundle/release/app-release.aab

@@ -2,7 +2,7 @@
   "expo": {
     "name": "takearoute",
     "slug": "takearoute",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "orientation": "portrait",
     "icon": "./assets/myicon.png",
     "scheme": "takearoute",
@@ -40,7 +40,8 @@
       "permissions": [
         "POST_NOTIFICATIONS",
         "VIBRATE"
-      ]
+      ],
+      "versionCode": 3
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -106,7 +107,8 @@
         }
       ],
       "./plugins/withLightOnly",
-      "./plugins/withNotificationColorOverride"
+      "./plugins/withNotificationColorOverride",
+      "./plugins/withReleaseSigning"
     ]
   }
 }
