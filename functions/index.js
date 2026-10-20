@@ -2779,22 +2779,24 @@ exports.expireSearchingRides = functions
         const ride = doc.data();
         const rideRef = doc.ref;
         const done = await db.runTransaction(async (tx) => {
+          // Firestore transactions must do every read before the first
+          // write, so read the passenger before touching the ride.
           const snap = await tx.get(rideRef);
           if (!snap.exists || snap.data().status !== "searching") {
             return false;
           }
+          const riderRef = ride.riderId ?
+            db.collection("riders").doc(ride.riderId) : null;
+          const rider = riderRef ? await tx.get(riderRef) : null;
           tx.update(rideRef, {
             status: "cancelled",
             cancelledBy: "timeout",
             cancelReason: "no_driver_found",
             cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
           });
-          if (ride.riderId) {
-            const riderRef = db.collection("riders").doc(ride.riderId);
-            const rider = await tx.get(riderRef);
-            if (rider.exists && rider.data().currentRideId === doc.id) {
-              tx.update(riderRef, {currentRideId: null});
-            }
+          if (rider && rider.exists &&
+              rider.data().currentRideId === doc.id) {
+            tx.update(riderRef, {currentRideId: null});
           }
           return true;
         }).catch((error) => {
