@@ -177,7 +177,7 @@ const ChatScreen = ({ route }) => {
     );
   };
 
-  const otherName = otherUserName || (userType === 'rider' ? 'Driver' : 'Rider');
+  const otherName = otherUserName || (userType === 'rider' ? 'Driver' : 'Passenger');
 
   // Messages from different days get a small pill between them.
   const dayLabel = (ts) => {

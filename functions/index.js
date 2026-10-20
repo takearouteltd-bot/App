@@ -373,7 +373,8 @@ exports.saveCard = functions
         const riderDoc = await riderRef.get();
 
         if (!riderDoc.exists) {
-          throw new functions.https.HttpsError("not-found", "Rider not found");
+          throw new functions.https.HttpsError("not-found",
+              "Passenger not found");
         }
 
         const stripeCustomerId = riderDoc.data().stripeCustomerId;

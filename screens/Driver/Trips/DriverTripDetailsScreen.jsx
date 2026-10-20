@@ -34,7 +34,7 @@ export default function DriverTripDetailsScreen() {
         if (riderDoc.exists()) {
           const riderData = riderDoc.data();
           setRider({
-            name: riderData.name || riderData.fullName || 'Rider',
+            name: riderData.name || riderData.fullName || 'Passenger',
             image: riderData.profileImage || riderData.selfieUrl,
             rating: riderData.rating || riderData.averageRating || null,
             phone: riderData.phone || '',
@@ -172,7 +172,7 @@ export default function DriverTripDetailsScreen() {
             <View style={styles.riderRow}>
               <Avatar uri={rider?.image} name={rider?.name} size={52} />
               <View style={{ flex: 1 }}>
-                <Text style={TYPE.subhead}>{rider?.name || 'Rider'}</Text>
+                <Text style={TYPE.subhead}>{rider?.name || 'Passenger'}</Text>
                 <Text style={TYPE.small}>Passenger</Text>
               </View>
               <View style={styles.rating}>

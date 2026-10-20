@@ -496,7 +496,7 @@ export default function EditProfileScreen() {
     );
   }
 
-  const displayName = fullName || user.displayName || "Rider";
+  const displayName = fullName || user.displayName || "Passenger";
 
   return (
     <KeyboardAvoidingView

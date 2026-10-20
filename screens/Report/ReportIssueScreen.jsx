@@ -31,13 +31,13 @@ const WARNING = COLORS.amber;
 const DRIVER_CATEGORIES = [
   {
     id: 'rider_behavior',
-    label: 'Rider Issue',
+    label: 'Passenger Issue',
     icon: 'person-outline',
     iconSet: 'Ionicons',
     subCategories: [
       { id: 'rude_behavior', label: 'Rude Behavior', severity: 'medium' },
       { id: 'wrong_pickup', label: 'Wrong Pickup Location', severity: 'low' },
-      { id: 'no_show', label: 'Rider No-Show', severity: 'low' },
+      { id: 'no_show', label: 'Passenger No-Show', severity: 'low' },
       { id: 'damaged_vehicle', label: 'Damaged Vehicle', severity: 'high' },
       { id: 'too_many_passengers', label: 'Too Many Passengers', severity: 'medium' },
       { id: 'unaccompanied_minor', label: 'Unaccompanied Minor', severity: 'high' },
