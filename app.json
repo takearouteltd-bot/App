@@ -41,7 +41,10 @@
         "POST_NOTIFICATIONS",
         "VIBRATE"
       ],
-      "versionCode": 3
+      "versionCode": 3,
+      "blockedPermissions": [
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
