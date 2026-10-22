@@ -140,6 +140,9 @@ service cloud.firestore {
     function driverKeepsGuardedFields() {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       return !changed.hasAny(["subscription", "femaleVerified", "blocked"]) &&
+        /* Hours and rest are kept by enforceDriverHours and admins. */
+        !changed.hasAny(["workLog", "restUntil", "restStartedAt", "restDue",
+          "restEndedEarlyAt", "restEndedEarlyBy"]) &&
         (!changed.hasAny(["approved"]) || request.resource.data.approved == false);
     }
 
@@ -158,6 +161,11 @@ service cloud.firestore {
             /* Only an approved driver can put themselves online. */
             !(request.resource.data.status == "online" &&
               resource.data.approved != true) &&
+            /* ...and not while resting after their hours limit. */
+            !(request.resource.data.status == "online" &&
+              resource.data.status != "online" &&
+              resource.data.get("restUntil", null) is timestamp &&
+              resource.data.restUntil > request.time) &&
             (
               resource.data.onboardingComplete != true ||
               !request.resource.data.diff(resource.data).affectedKeys()

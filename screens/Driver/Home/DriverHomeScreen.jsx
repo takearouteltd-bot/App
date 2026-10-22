@@ -38,6 +38,7 @@ import { servesCity } from '../../../utils/cities';
 import { biddingEnabled, counterSteps, offerSeconds, sendCounterOffer } from '../../../utils/bidding';
 import { clearJobAlerts, ringForNewJob, stopJobRing } from '../../../utils/notifications';
 import PaymentTypeBanner from '../../../components/PaymentTypeBanner';
+import { formatHours, formatRestEnd, restEndsAt, workedInLastDay } from '../../../utils/driverHours';
 import {
   COLORS, TYPE, SPACE, RADIUS, SHADOW,
   Button, Chip, Banner, RouteLine, Loading, Sheet, EmptyState,
@@ -50,14 +51,12 @@ const HIDE_EARNINGS_KEY = 'driver.hideEarnings';
 
 const { width } = Dimensions.get('window');
 
-// "Online 2h 10m of 12h" while a shift limit applies.
-function shiftLabel(startedMs, maxHours) {
-  if (!startedMs) return null;
-  const mins = Math.max(0, Math.floor((Date.now() - startedMs) / 60000));
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  const online = h ? `${h}h ${m}m` : `${m}m`;
-  return maxHours > 0 ? `Online ${online} of ${maxHours}h` : `Online ${online}`;
+// "Online 2h 10m of 12h today": time online in the last 24 hours, across
+// every time they went on and off, against the dashboard's limit.
+function hoursLabel(hoursDoc, maxHours, now) {
+  if (!hoursDoc) return null;
+  const online = formatHours(workedInLastDay(hoursDoc, now));
+  return maxHours > 0 ? `Online ${online} of ${maxHours}h today` : `Online ${online} today`;
 }
 
 export default function DriverHomeScreen() {
@@ -75,7 +74,17 @@ export default function DriverHomeScreen() {
   const maxShiftHours = driverConfig.maxShiftHours; // 0 means unlimited
   const searchRadiusKm = dispatchConfig.searchRadiusKm;
 
-  const [shiftStartedAt, setShiftStartedAt] = useState(null);
+  // workLog, restUntil and status, kept by the server (enforceDriverHours).
+  const [hoursDoc, setHoursDoc] = useState(null);
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30 * 1000);
+    return () => clearInterval(id);
+  }, []);
+  const restUntil = restEndsAt(hoursDoc, now);
+  const wasOnlineRef = useRef(null);
+  const maxShiftHoursRef = useRef(maxShiftHours);
+  maxShiftHoursRef.current = maxShiftHours;
   const [onRide, setOnRide] = useState(false);
   // Read inside the offers listener without restarting it.
   const onRideRef = useRef(false);
@@ -182,8 +191,21 @@ export default function DriverHomeScreen() {
         photoUrl: data.selfieUrl || null,
       });
       setDocumentAlerts(expiryAlertsFor(data));
-      const started = data.shiftStartedAt?.toMillis?.() ?? null;
-      setShiftStartedAt(started);
+      setHoursDoc({
+        workLog: data.workLog,
+        restUntil: data.restUntil,
+        status: data.status,
+        shiftStartedAt: data.shiftStartedAt,
+      });
+      // Taken offline by the server at the hours limit: say so once.
+      const resting = restEndsAt(data);
+      if (wasOnlineRef.current === true && data.status === 'offline' && resting) {
+        Alert.alert(
+          'Time for a rest',
+          `You've reached your ${maxShiftHoursRef.current} hours online for today, so you've been taken offline for your safety. You can go online again at ${formatRestEnd(resting)}.`
+        );
+      }
+      wasOnlineRef.current = data.status === 'online' || data.status === 'on_ride';
       // Online from before shift tracking existed: start the clock now.
       if (data.status === 'online' && !data.shiftStartedAt) {
         setDoc(driverRef, { shiftStartedAt: serverTimestamp() }, { merge: true }).catch(() => {});
@@ -240,6 +262,15 @@ export default function DriverHomeScreen() {
     if (!driverId) return;
     const newStatus = !isOnline ? 'online' : 'offline';
 
+    // Resting after the hours limit: the server won't let them back on yet.
+    if (newStatus === 'online' && restUntil) {
+      Alert.alert(
+        'You’re resting',
+        `You’ve reached your hours online for today. For your safety you can go online again at ${formatRestEnd(restUntil)}.`
+      );
+      return;
+    }
+
     // An unpaid membership pauses the account (after a grace period).
     if (newStatus === 'online' && membershipStatus === 'suspended') {
       Alert.alert(
@@ -290,9 +321,9 @@ export default function DriverHomeScreen() {
     }
 
     try {
-      // shiftStartedAt drives the maximum shift length set on the dashboard. It
-      // is kept while the driver goes on and off trips, and cleared when they
-      // go offline themselves.
+      // shiftStartedAt tells the server's hours log when this spell online
+      // began. It is kept while the driver goes on and off trips, and cleared
+      // when they go offline themselves.
       await setDoc(
         doc(db, 'drivers', driverId),
         newStatus === 'online'
@@ -307,40 +338,10 @@ export default function DriverHomeScreen() {
     }
   };
 
-  /* ================= MAXIMUM SHIFT LENGTH =================
-     Set on the dashboard (Settings, Drivers). When the limit is reached the
-     driver is taken offline for safety. A driver on a trip finishes it first. */
-  const shiftEndedRef = useRef(false);
-  useEffect(() => {
-    if (!driverId || !isOnline || !shiftStartedAt || !(maxShiftHours > 0)) return undefined;
-    shiftEndedRef.current = false;
-
-    const check = async () => {
-      if (shiftEndedRef.current || onRide) return;
-      if (Date.now() - shiftStartedAt < maxShiftHours * 60 * 60 * 1000) return;
-
-      shiftEndedRef.current = true;
-      try {
-        await setDoc(
-          doc(db, 'drivers', driverId),
-          { status: 'offline', shiftStartedAt: null, lastShiftEndedAt: serverTimestamp() },
-          { merge: true }
-        );
-        setIsOnline(false);
-        Alert.alert(
-          'Shift limit reached',
-          `You have been online for ${maxShiftHours} hours, so you have been taken offline for your safety. Please take a break before driving again.`
-        );
-      } catch (error) {
-        shiftEndedRef.current = false;
-        console.log('Shift limit update error:', error);
-      }
-    };
-
-    check();
-    const id = setInterval(check, 60 * 1000);
-    return () => clearInterval(id);
-  }, [driverId, isOnline, shiftStartedAt, maxShiftHours, onRide]);
+  /* ================= HOURS LIMIT =================
+     Enforced on the server (enforceDriverHours): it counts time online over
+     the last 24 hours and takes the driver offline to rest at the limit, so
+     it works with the app closed too. The snapshot above shows the result. */
 
   /* ================= JOB OFFERS ================= */
   const animateCard = useCallback(() => {
@@ -755,7 +756,9 @@ export default function DriverHomeScreen() {
             <Text style={TYPE.subhead}>{isOnline ? 'Online' : 'Offline'}</Text>
             <Text style={TYPE.small} numberOfLines={1}>
               {isOnline
-                ? shiftLabel(shiftStartedAt, maxShiftHours) || 'Waiting for jobs'
+                ? hoursLabel(hoursDoc, maxShiftHours, now) || 'Waiting for jobs'
+                : restUntil
+                ? `Resting · back online at ${formatRestEnd(restUntil, now)}`
                 : isApproved
                 ? 'Go online to get jobs'
                 : rejection
@@ -765,7 +768,7 @@ export default function DriverHomeScreen() {
           </View>
 
           <TouchableOpacity
-            style={[styles.goBtn, isOnline ? styles.goBtnOff : styles.goBtnOn]}
+            style={[styles.goBtn, isOnline ? styles.goBtnOff : restUntil ? styles.goBtnRest : styles.goBtnOn]}
             onPress={toggleOnlineStatus}
             activeOpacity={0.85}
             accessibilityRole="button"
@@ -1020,6 +1023,7 @@ const styles = StyleSheet.create({
   },
   goBtnOn: { backgroundColor: COLORS.lime, borderColor: COLORS.lime },
   goBtnOff: { backgroundColor: COLORS.white, borderColor: COLORS.redSoft },
+  goBtnRest: { backgroundColor: COLORS.white, borderColor: COLORS.faint, opacity: 0.6 },
   goBtnText: { fontSize: 15, fontWeight: '800', color: COLORS.midnight, letterSpacing: -0.2 },
 
   docAlert: { marginTop: SPACE[2] },

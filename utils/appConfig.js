@@ -29,7 +29,10 @@ export const DEFAULT_APP_CONFIG = {
     searchTimeoutMinutes: 15,
   },
   drivers: {
+    // Most hours online in any 24 hours (0 = no limit), then the rest that
+    // follows. Enforced on the server (enforceDriverHours).
     maxShiftHours: 12,
+    restHours: 6,
     minimumPayout: 10,
     instantPayouts: 0,
   },

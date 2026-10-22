@@ -57,7 +57,8 @@ const CONFIG_DEFAULTS = {
   currency: "GBP",
   waiting: {freeMinutes: 5, ratePerMinute: 0.25, maxCharge: 10},
   subscription: {monthlyPrice: 99.99, graceDays: 3},
-  drivers: {minimumPayout: 10, instantPayouts: 0},
+  drivers: {minimumPayout: 10, instantPayouts: 0, maxShiftHours: 12,
+    restHours: 6},
   dispatch: {
     searchRadiusKm: 50, requestTimeoutSeconds: 20, searchTimeoutMinutes: 15,
   },
@@ -110,6 +111,12 @@ async function loadAppConfig() {
           d.drivers.minimumPayout),
       instantPayouts: numSetting(data.drivers, "instantPayouts",
           d.drivers.instantPayouts) === 1 ? 1 : 0,
+      // Most hours a driver may be online in any 24 hours (0 = no limit),
+      // and the rest that follows (enforceDriverHours).
+      maxShiftHours: Math.min(24, numSetting(data.drivers, "maxShiftHours",
+          d.drivers.maxShiftHours)),
+      restHours: Math.min(48, numSetting(data.drivers, "restHours",
+          d.drivers.restHours)),
     },
     cancellation: {
       fee: numSetting(data.cancellation, "fee", d.cancellation.fee),
@@ -2811,6 +2818,126 @@ exports.expireSearchingRides = functions
           data: {type: "trip", rideId: doc.id},
         }).catch(() => null);
         console.log("⌛ Search timed out:", doc.id);
+      }
+      return null;
+    });
+
+/* ======================================
+   DRIVER HOURS
+   A driver may be online (or on a trip) for at most drivers.maxShiftHours
+   in any 24 hours. Every run adds the time since the last run to each
+   working driver's workLog, a list of {start, end} spells in ms trimmed to
+   the last 24 hours, so logging out and back in does not reset anything.
+   At the limit the driver is taken offline (after the trip they are on) and
+   rests for drivers.restHours: restUntil, which the rules check before a
+   driver can go online again. The count starts afresh after the rest. An
+   admin can end a rest early from the dashboard. Keep the sums in step with
+   utils/driverHours.js in the app and the dashboard.
+====================================== */
+const HOURS_TICK_MS = 2 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Online time inside the last 24 hours.
+ * @param {Array<{start: number, end: number}>} log Spells in ms.
+ * @param {number} now Current time in ms.
+ * @return {number} Milliseconds online.
+ */
+function workedInLastDay(log, now) {
+  const from = now - DAY_MS;
+  return log.reduce((sum, spell) =>
+    sum + Math.max(0, Math.min(spell.end, now) - Math.max(spell.start, from)),
+  0);
+}
+
+/**
+ * The driver's spells, cleaned and trimmed to the last 24 hours.
+ * @param {*} raw Stored workLog.
+ * @param {number} now Current time in ms.
+ * @return {Array<{start: number, end: number}>} Spells.
+ */
+function recentSpells(raw, now) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+      .filter((s) => s && Number.isFinite(s.start) && Number.isFinite(s.end))
+      .filter((s) => s.end > now - DAY_MS)
+      .map((s) => ({start: s.start, end: s.end}));
+}
+
+exports.enforceDriverHours = functions
+    .pubsub.schedule("every 2 minutes")
+    .onRun(async () => {
+      const cfg = await loadAppConfig();
+      const limitMs = cfg.drivers.maxShiftHours * 60 * 60 * 1000;
+      const restMs = cfg.drivers.restHours * 60 * 60 * 1000;
+      const working = await db.collection("drivers")
+          .where("status", "in", ["online", "on_ride"])
+          .get();
+      const now = Date.now();
+
+      for (const doc of working.docs) {
+        const driver = doc.data();
+        const log = recentSpells(driver.workLog, now);
+        const last = log[log.length - 1];
+        if (last && now - last.end <= HOURS_TICK_MS * 2) {
+          last.end = now;
+        } else {
+          // A new spell: from when they went online if that is recent,
+          // otherwise count the time since the last run.
+          const went = driver.shiftStartedAt && driver.shiftStartedAt.toMillis ?
+            driver.shiftStartedAt.toMillis() : 0;
+          const start = went > now - HOURS_TICK_MS * 2 &&
+            (!last || went >= last.end) ? went : now - HOURS_TICK_MS;
+          log.push({start, end: now});
+        }
+
+        const due = limitMs > 0 && workedInLastDay(log, now) >= limitMs;
+        if (!due) {
+          await doc.ref.update({workLog: log}).catch((error) =>
+            console.error("Could not log hours:", doc.id, error.message));
+          continue;
+        }
+
+        // At the limit. Re-read inside a transaction: a driver who has just
+        // accepted a trip finishes it first.
+        const rested = await db.runTransaction(async (tx) => {
+          const fresh = await tx.get(doc.ref);
+          if (!fresh.exists) return false;
+          if (fresh.data().status === "on_ride") {
+            tx.update(doc.ref, {workLog: log, restDue: true});
+            return false;
+          }
+          if (fresh.data().status !== "online") return false;
+          tx.update(doc.ref, {
+            status: "offline",
+            shiftStartedAt: null,
+            workLog: [],
+            restDue: admin.firestore.FieldValue.delete(),
+            lastShiftEndedAt: admin.firestore.FieldValue.serverTimestamp(),
+            restStartedAt: admin.firestore.FieldValue.serverTimestamp(),
+            restUntil: restMs > 0 ?
+              admin.firestore.Timestamp.fromMillis(now + restMs) : null,
+          });
+          return true;
+        }).catch((error) => {
+          console.error("Could not start rest:", doc.id, error.message);
+          return false;
+        });
+        if (!rested) continue;
+
+        const hours = cfg.drivers.maxShiftHours;
+        const rest = cfg.drivers.restHours;
+        await sendPush([doc.id], {
+          title: "Time for a rest",
+          body: rest > 0 ?
+            `You've been online for ${hours} hours today, so you're offline ` +
+            `for the next ${rest} hours for your safety.` :
+            `You've been online for ${hours} hours today, so you've been ` +
+            "taken offline for your safety.",
+          channelId: "general",
+          data: {type: "rest"},
+        }).catch(() => null);
+        console.log("😴 Rest started:", doc.id, `${hours}h online`);
       }
       return null;
     });
