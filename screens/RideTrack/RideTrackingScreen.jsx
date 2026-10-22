@@ -102,6 +102,15 @@ export default function RideTrackingScreen() {
       const data = snap.data();
       setRideData(data);
 
+      // Start following the driver even on a cached copy. This sat below the
+      // cache check, and the server copy that follows an accept usually holds
+      // no change, so the listener (and Track driver) waited for "arrived".
+      if (data.driverId && listeningDriverId.current !== data.driverId) {
+        stopDriverListener();
+        listeningDriverId.current = data.driverId;
+        driverUnsubRef.current = listenToDriver(data.driverId);
+      }
+
       // Navigate only on server data: a cached copy can lag a step behind
       // and would bounce the passenger back to "searching" by mistake.
       if (snap.metadata.fromCache) return;
@@ -149,11 +158,6 @@ export default function RideTrackingScreen() {
         return;
       }
 
-      if (data.driverId && listeningDriverId.current !== data.driverId) {
-        stopDriverListener();
-        listeningDriverId.current = data.driverId;
-        driverUnsubRef.current = listenToDriver(data.driverId);
-      }
     });
 
     return () => {
