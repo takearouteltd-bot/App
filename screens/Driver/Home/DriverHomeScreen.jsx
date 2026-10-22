@@ -445,6 +445,9 @@ export default function DriverHomeScreen() {
 
   // Move to the next offer, or clear the queue when there are none left.
   const advanceQueue = useCallback(() => {
+    // The driver has dealt with this offer (declined it, or it went), so the
+    // ring and its notification stop with it. Later new jobs ring again.
+    clearJobAlerts();
     setCurrentRideId((current) => {
       const index = rideRequests.findIndex((r) => r.id === current);
       const next = rideRequests[index + 1];
