@@ -17,7 +17,7 @@ import { collection, doc, onSnapshot, updateDoc, serverTimestamp } from 'firebas
 import { db } from '../../config/firebase';
 import { getAuth } from 'firebase/auth';
 import { currencySymbol, useAppConfig, money } from '../../utils/appConfig';
-import { acceptCounterOffer, raiseOffer } from '../../utils/bidding';
+import { acceptCounterOffer, offerIsLive, raiseOffer } from '../../utils/bidding';
 import {
   COLORS, TYPE, SPACE, RADIUS, Screen, Sheet, Card, Button, Banner, Avatar, IconButton,
   RouteLine, Loading, MapUnavailable, isCoord, validCoords, regionCovering,
@@ -83,7 +83,7 @@ export default function RideRequestScreen() {
 
   // `elapsed` ticks every second, so expired offers drop out on their own.
   const liveOffers = offers
-    .filter((o) => o.status === 'pending' && Number(o.expiresAtMs) > Date.now())
+    .filter((o) => o.status === 'pending' && offerIsLive(o))
     .sort((a, b) => a.price - b.price)
     .slice(0, 4);
 
@@ -172,6 +172,14 @@ export default function RideRequestScreen() {
         }, 2500);
       }
 
+      // Opened late (say from an old offer notification) when the ride has
+      // already moved on: tracking forwards to the right screen itself.
+      if (['arrived', 'ongoing', 'completed'].includes(data.status) && !hasNavigatedToTracking.current) {
+        hasNavigatedToTracking.current = true;
+        navigation.replace('RideTracking', { rideId });
+        return;
+      }
+
       // Leave once. Cancelling used to call goBack twice, popping an extra screen.
       if ((data.status === 'cancelled' || data.status === 'canceled') && !hasLeftScreen.current) {
         hasLeftScreen.current = true;
@@ -184,7 +192,9 @@ export default function RideRequestScreen() {
         if (!cancelledByMe.current) {
           Alert.alert('Ride cancelled', 'This ride has been cancelled.');
         }
-        navigation.goBack();
+        // This screen replaced the fare screen, so going back could land on
+        // the address search; home is where a cancelled booking belongs.
+        navigation.popToTop();
       }
     });
 

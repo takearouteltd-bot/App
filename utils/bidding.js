@@ -98,8 +98,24 @@ export async function sendCounterOffer(rideId, driver, price, config) {
     photoUrl: driver.photoUrl || null,
     status: 'pending',
     createdAt: serverTimestamp(),
+    // Both from the driver's clock, so their difference is the offer's
+    // length whatever that clock says (see offerIsLive).
+    sentAtMs: Date.now(),
     expiresAtMs: Date.now() + offerSeconds(config) * 1000,
   });
+}
+
+/* Whether a counter-offer is still open. Timed from the server's createdAt
+   where it has one, so a driver's phone clock running slow or fast can't
+   make every offer arrive already expired (or never expire). The driver's
+   expiresAtMs is the fallback while createdAt is still pending. */
+export function offerIsLive(offer, now = Date.now()) {
+  const created = offer?.createdAt?.toMillis?.();
+  const sentAt = Number(offer?.sentAtMs);
+  if (created && sentAt && Number(offer.expiresAtMs) > sentAt) {
+    return now < created + (Number(offer.expiresAtMs) - sentAt);
+  }
+  return Number(offer?.expiresAtMs) > now;
 }
 
 /* Passenger takes a driver's counter-offer. The ride is claimed in a
@@ -108,15 +124,21 @@ export async function sendCounterOffer(rideId, driver, price, config) {
 export async function acceptCounterOffer(rideId, offer) {
   const rideRef = doc(db, 'rides', rideId);
   const offerRef = doc(db, 'rides', rideId, 'offers', offer.driverId);
+  const driverRef = doc(db, 'drivers', offer.driverId);
   await runTransaction(db, async (tx) => {
     const rideSnap = await tx.get(rideRef);
     const offerSnap = await tx.get(offerRef);
+    const driverSnap = await tx.get(driverRef);
     if (!rideSnap.exists() || rideSnap.data().status !== 'searching') {
       throw new Error('This ride already has a driver.');
     }
     const live = offerSnap.exists() ? offerSnap.data() : null;
-    if (!live || live.status !== 'pending' || Number(live.expiresAtMs) < Date.now()) {
+    if (!live || live.status !== 'pending' || !offerIsLive(live)) {
       throw new Error('That offer has expired. Pick another, or wait for a new one.');
+    }
+    const driver = driverSnap.exists() ? driverSnap.data() : {};
+    if (driver.status !== 'online' || driver.isOnRide === true) {
+      throw new Error('That driver has just taken another job. Pick another offer.');
     }
     const price = round2(live.price);
     tx.update(rideRef, {

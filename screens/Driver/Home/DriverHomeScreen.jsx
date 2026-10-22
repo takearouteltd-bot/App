@@ -50,6 +50,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const HIDE_EARNINGS_KEY = 'driver.hideEarnings';
 
 const { width } = Dimensions.get('window');
+// A job whose timer ran out stays off the list this long before it can be
+// shown again (it won't ring again).
+const MISSED_SNOOZE_MS = 60000;
 
 // "Online 2h 10m of 12h today": time online in the last 24 hours, across
 // every time they went on and off, against the dashboard's limit.
@@ -111,12 +114,16 @@ export default function DriverHomeScreen() {
   const rungFor = useRef(new Set());
   // Jobs on screen now, for the edge-of-radius allowance.
   const shownIds = useRef(new Set());
+  // Jobs kept off the list until a time (ms): declined, or just missed.
+  const snoozed = useRef(new Map());
   const [searchingRides, setSearchingRides] = useState([]);
 
   const [rideRequests, setRideRequests] = useState([]);
   // The offer being shown, by ride id, so a change to some other searching
   // ride does not throw the driver back to the first card.
   const [currentRideId, setCurrentRideId] = useState(null);
+  const currentRideIdRef = useRef(null);
+  currentRideIdRef.current = currentRideId;
   const [timer, setTimer] = useState(15);
   const [isAccepting, setIsAccepting] = useState(false);
 
@@ -391,6 +398,8 @@ export default function DriverHomeScreen() {
       if (!data.pickupLocation) return;
       // Jobs this driver already cancelled are not offered again.
       if (Array.isArray(data.declinedBy) && data.declinedBy.includes(driverId)) return;
+      // Declined here, or its timer just ran out: don't put it straight back.
+      if ((snoozed.current.get(data.id) || 0) > Date.now()) return;
       // Passengers who asked not to be matched with this driver.
       if (Array.isArray(data.blockedDriverIds) && data.blockedDriverIds.includes(driverId)) return;
       // Somebody who booked and paid for Executive does not get a Mini.
@@ -438,13 +447,20 @@ export default function DriverHomeScreen() {
   // Going offline takes the offer card down with it.
   useEffect(() => {
     if (isOnline) return;
+    snoozed.current.clear();
     stopJobRing();
     setRideRequests([]);
     setCurrentRideId(null);
   }, [isOnline]);
 
   // Move to the next offer, or clear the queue when there are none left.
-  const advanceQueue = useCallback(() => {
+  // snoozeMs keeps the current job off the list for a while (Decline: for
+  // the rest of this online spell), otherwise the next GPS fix, every few
+  // seconds, would bring the same card straight back.
+  const advanceQueue = useCallback((snoozeMs = 0) => {
+    if (snoozeMs > 0 && currentRideIdRef.current) {
+      snoozed.current.set(currentRideIdRef.current, Date.now() + snoozeMs);
+    }
     // The driver has dealt with this offer (declined it, or it went), so the
     // ring and its notification stop with it. Later new jobs ring again.
     clearJobAlerts();
@@ -459,6 +475,10 @@ export default function DriverHomeScreen() {
       return null;
     });
   }, [rideRequests, animateCard]);
+  // The countdown below keeps one interval per card, so it calls the latest
+  // advanceQueue through this rather than the one from when it started.
+  const advanceRef = useRef(advanceQueue);
+  advanceRef.current = advanceQueue;
 
   useEffect(() => {
     if (isOnline) {
@@ -500,7 +520,7 @@ export default function DriverHomeScreen() {
               return next;
             });
           }
-          advanceQueue();
+          advanceRef.current(MISSED_SNOOZE_MS);
           return 0;
         }
         return prev - 1;
@@ -530,7 +550,7 @@ export default function DriverHomeScreen() {
       // was taken or cancelled while the card was on screen.
       if (error?.code === 'permission-denied') {
         Alert.alert('Job gone', 'This job has already been taken or cancelled.', [
-          { text: 'OK', onPress: advanceQueue },
+          { text: 'OK', onPress: () => advanceQueue() },
         ]);
       } else {
         Alert.alert('Offer not sent', 'Please check your connection and try again.');
@@ -598,6 +618,17 @@ export default function DriverHomeScreen() {
         // since the list was drawn.
         if (rideDoc.data().femaleDriverOnly === true && !femaleVerified) {
           throw new Error('This passenger asked for a female driver.');
+        }
+        // One account on two phones: the other phone may already have taken
+        // a job. Only a ride that is really still live and ours blocks this;
+        // a stale pointer must not lock the driver out.
+        const me = (await transaction.get(driverRef)).data() || {};
+        if (me.isOnRide && me.currentRideId && me.currentRideId !== ride.id) {
+          const other = await transaction.get(doc(db, 'rides', me.currentRideId));
+          const o = other.exists() ? other.data() : null;
+          if (o && o.driverId === driverId && ['accepted', 'arrived', 'ongoing'].includes(o.status)) {
+            throw new Error('You are already on a job. Finish it before taking another.');
+          }
         }
 
         transaction.update(rideRef, {
@@ -970,7 +1001,7 @@ export default function DriverHomeScreen() {
               )
             ) : null}
 
-            <Button title="Decline" variant="ghost" onPress={advanceQueue} style={styles.decline} />
+            <Button title="Decline" variant="ghost" onPress={() => advanceQueue(Infinity)} style={styles.decline} />
           </Sheet>
         </Animated.View>
       ) : null}

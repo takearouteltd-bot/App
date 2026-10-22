@@ -443,6 +443,29 @@ null,
             {merge: true},
         );
 
+        // =================================================
+        // 5. RESUME A SEARCH THE OLD CARD STOPPED
+        // =================================================
+        // After a declined hold the ride waits for a card, and nothing was
+        // re-offered once one was added: the banner stayed up and drivers
+        // coming online later were never told. The search clock restarts.
+        try {
+          const waiting = await db.collection("rides")
+              .where("riderId", "==", uid)
+              .where("status", "==", "searching")
+              .get();
+          for (const rideDoc of waiting.docs) {
+            if (rideDoc.data().paymentStatus !== "auth_failed") continue;
+            await rideDoc.ref.update({
+              paymentStatus: "pending",
+              lastDriverCancelAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            await offerRideToDrivers(rideDoc.id, rideDoc.data());
+          }
+        } catch (error) {
+          console.error("Could not resume search after new card:", error);
+        }
+
         return {success: true};
       } catch (error) {
         console.error("saveCard error:", error);
@@ -621,11 +644,38 @@ exports.authorizePaymentOnRideAccept = functions
         // =========================
         // UPDATE RIDE (MINIMAL)
         // =========================
-        await db.collection("rides").doc(rideId).update({
-          paymentIntentId,
-          paymentStatus: "authorized",
-          paymentFailure: admin.firestore.FieldValue.delete(),
+        // A cold start can take most of a minute, and the passenger may
+        // cancel meanwhile. cancelRidePayment found no hold to release then,
+        // so this run releases it rather than stamping a hold on a ride that
+        // has ended (it would sit on the card for up to 7 days).
+        const rideRef = db.collection("rides").doc(rideId);
+        const stillActive = await db.runTransaction(async (tx) => {
+          const snap = await tx.get(rideRef);
+          const ride = snap.exists ? snap.data() : null;
+          const live = ["accepted", "arrived", "ongoing"];
+          if (!ride || !live.includes(ride.status)) {
+            return false;
+          }
+          tx.update(rideRef, {
+            paymentIntentId,
+            paymentStatus: "authorized",
+            paymentFailure: admin.firestore.FieldValue.delete(),
+          });
+          return true;
         });
+
+        if (!stillActive) {
+          console.log("Ride ended during the hold, releasing:", rideId);
+          await stripe.paymentIntents.cancel(paymentIntentId).catch((error) => {
+            console.error("Could not release late hold:", rideId,
+                error.message);
+          });
+          await db.collection("payments").doc(paymentIntentId).update({
+            status: "canceled",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          }).catch(() => null);
+          return null;
+        }
 
         console.log("✅ PAYMENT AUTHORIZED:", rideId);
         return null;
@@ -970,12 +1020,14 @@ exports.cancelRidePayment = functions
       // release the rest, then pay the driver their share.
       const fee = cancellationFee(before, after);
       if (fee > 0) {
+        let feeCaptured = false;
         try {
           const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
           const feeMinor = Math.min(Math.round(fee * 100), intent.amount);
           await stripe.paymentIntents.capture(paymentIntentId,
               {amount_to_capture: feeMinor},
               {idempotencyKey: `cancel_fee_${rideId}`});
+          feeCaptured = true;
 
           const charged = feeMinor / 100;
           const policy = after.cancellationPolicy || {};
@@ -1040,6 +1092,22 @@ exports.cancelRidePayment = functions
           console.log("💷 Cancellation fee taken:", rideId, charged);
           return null;
         } catch (error) {
+          if (feeCaptured) {
+            // The fee is taken, so the hold is already settled: releasing it
+            // would fail. What's left is the records or the driver's share,
+            // kept here to be put right by hand.
+            console.error("❌ Fee captured, bookkeeping failed:", rideId,
+                error);
+            await db.collection("failedWalletCredits").add({
+              rideId,
+              paymentIntentId,
+              driverId: after.driverId || null,
+              type: "cancellation_fee",
+              error: String(error && error.message || error),
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            }).catch(() => null);
+            return null;
+          }
           // Fall through and release the hold: better no fee than a stuck one.
           console.error("❌ Cancellation fee failed, releasing hold:", error);
         }
@@ -2705,6 +2773,27 @@ exports.notifyRideUpdates = functions.firestore
       const cancelled = ["cancelled", "canceled"];
       const trip = {channelId: "trip-updates", data: {type: "trip", rideId}};
 
+      // A ride that ends frees its driver here too, not only from the
+      // driver's app: if that app was closed or missed the update, the
+      // driver stayed "on_ride" and got no new job pushes.
+      const endedDriver = before.driverId || after.driverId;
+      if ((after.status === "completed" || cancelled.includes(after.status)) &&
+          endedDriver) {
+        const driverRef = db.collection("drivers").doc(endedDriver);
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(driverRef);
+          if (!snap.exists || snap.data().currentRideId !== rideId) return;
+          tx.update(driverRef, {
+            isOnRide: false,
+            currentRideId: null,
+            status: snap.data().status === "on_ride" ?
+              "online" : snap.data().status,
+          });
+        }).catch((error) => {
+          console.error("Could not free driver:", endedDriver, error.message);
+        });
+      }
+
       // Back to searching because the card hold failed: the passenger and
       // driver were told by authorizePaymentOnRideAccept, and there is no
       // point offering it again until a card is added.
@@ -2722,6 +2811,29 @@ exports.notifyRideUpdates = functions.firestore
         return offerRideToDrivers(rideId, after);
       }
       if (after.status === "accepted") {
+        // The passenger took this driver's counter-offer: the driver may
+        // not be looking at the job list, so tell them.
+        if (after.acceptedOfferId && after.driverId) {
+          // The driver's app marks them busy only while its job list is
+          // open, so mark it here: no new job pushes meanwhile, and the
+          // app opens on this job.
+          const driverRef = db.collection("drivers").doc(after.driverId);
+          await db.runTransaction(async (tx) => {
+            const snap = await tx.get(driverRef);
+            if (!snap.exists || snap.data().isOnRide) return;
+            tx.update(driverRef, {
+              isOnRide: true,
+              currentRideId: rideId,
+              status: "on_ride",
+            });
+          }).catch((error) => {
+            console.error("Could not mark driver busy:", error.message);
+          });
+          await sendPush([after.driverId], {...trip,
+            title: "Your offer was accepted",
+            body: "The passenger took your price. Head to the pickup."})
+              .catch(() => null);
+        }
         return sendPush([after.riderId], {...trip,
           title: "Driver on the way",
           body: "Your driver has accepted and is heading to your pickup."});
@@ -2782,9 +2894,19 @@ exports.expireSearchingRides = functions
           .where("timestamps.createdAt", "<=", cutoff)
           .get();
 
+      const ms = (t) =>
+        (t && typeof t.toMillis === "function" ? t.toMillis() : 0);
       for (const doc of stale.docs) {
         const ride = doc.data();
         const rideRef = doc.ref;
+        // The search restarts when a driver gives the job back or a card
+        // hold fails, so time it from the latest of those, not the booking.
+        const searchStarted = Math.max(
+            ms(ride.timestamps && ride.timestamps.createdAt),
+            ms(ride.lastDriverCancelAt),
+            ms(ride.paymentFailure && ride.paymentFailure.at),
+        );
+        if (Date.now() - searchStarted < limitMs) continue;
         const done = await db.runTransaction(async (tx) => {
           // Firestore transactions must do every read before the first
           // write, so read the passenger before touching the ride.
@@ -3377,8 +3499,11 @@ function toE164(raw) {
   let value = String(raw).replace(/[^\d+]/g, "");
   if (value.startsWith("+")) return value.length >= 8 ? value : null;
   if (value.startsWith("00")) value = "+" + value.slice(2);
+  // Pakistani mobiles are 03xx xxxxxxx; every UK mobile starts 07, so the
+  // two don't overlap. Before this, 0300... was dialled as +44 300...
+  else if (/^03\d{9}$/.test(value)) value = "+92" + value.slice(1);
   else if (value.startsWith("0")) value = "+44" + value.slice(1);
-  else if (value.startsWith("44")) value = "+" + value;
+  else if (/^(44|92)/.test(value)) value = "+" + value;
   else return null;
   return value.length >= 8 ? value : null;
 }
@@ -3394,7 +3519,9 @@ async function phoneFor(collection, uid) {
   const snap = await db.collection(collection).doc(uid).get();
   const data = snap.exists ? snap.data() : {};
   const stored = data.phoneNumber || data.phone;
-  if (stored) return toE164(stored);
+  // A stored number we can't read falls back to the sign-in number.
+  const fromStored = toE164(stored);
+  if (fromStored) return fromStored;
   try {
     const user = await admin.auth().getUser(uid);
     return toE164(user.phoneNumber);

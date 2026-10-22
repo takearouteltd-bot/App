@@ -14,7 +14,7 @@ import { Alert } from '../../../components/ui/alert';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 import { useDriverPosition } from '../../../utils/driverLocation';
 
@@ -36,6 +36,9 @@ const ARRIVAL_DISTANCE_M = 60;
 const COMPLETE_RADIUS_KM = 0.5;
 // The route is redrawn at most this often, to keep Directions calls sane.
 const ROUTE_REFRESH_MS = 25000;
+
+// The driver's record once a trip is over: free for the next job.
+const RELEASE = { isOnRide: false, currentRideId: null, status: 'online' };
 
 export default function DriverRideToDropoffScreen() {
   const route = useRoute();
@@ -252,28 +255,44 @@ export default function DriverRideToDropoffScreen() {
     });
   };
 
+  /* After a failed write: if the ride already reached `status` (the first
+     try landed), free the driver and carry on instead of failing for ever. */
+  const rideAlreadyEnded = async (status) => {
+    try {
+      const snap = await getDoc(doc(db, 'rides', rideId));
+      if (!snap.exists() || snap.data().status !== status) return false;
+      await updateDoc(doc(db, 'drivers', ride.driverId), RELEASE).catch(() => {});
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
+
   const completeRide = async (extra) => {
     if (completing) return;
     setCompleting(true);
 
     try {
-      await Promise.all([
-        updateDoc(doc(db, 'rides', rideId), {
-          status: 'completed',
-          expiresAt: serverTimestamp(),
-          completedAt: serverTimestamp(),
-          ...extra,
-        }),
-        updateDoc(doc(db, 'drivers', ride.driverId), {
-          isOnRide: false,
-          currentRideId: null,
-          status: 'online',
-        }),
-      ]);
+      // One batch, so the ride can't end up completed while the driver is
+      // still marked on it (a retry would then be refused for ever).
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'rides', rideId), {
+        status: 'completed',
+        expiresAt: serverTimestamp(),
+        completedAt: serverTimestamp(),
+        ...extra,
+      });
+      batch.update(doc(db, 'drivers', ride.driverId), RELEASE);
+      await batch.commit();
 
       navigation.navigate('RideCompleted', { rideId });
     } catch (error) {
       console.log('Error completing ride:', error);
+      // The first tap may have got through before the connection dropped.
+      if (await rideAlreadyEnded('completed')) {
+        navigation.navigate('RideCompleted', { rideId });
+        return;
+      }
       Alert.alert('Could not complete', 'Please try again.');
       setCompleting(false);
     }
@@ -296,24 +315,25 @@ export default function DriverRideToDropoffScreen() {
           onPress: async () => {
             setCompleting(true);
             try {
-              await Promise.all([
-                updateDoc(doc(db, 'rides', rideId), {
-                  status: 'cancelled',
-                  cancelledBy: 'driver',
-                  cancelReason: 'driver_ended_mid_trip',
-                  endedEarly: true,
-                  cancelledAt: serverTimestamp(),
-                }),
-                updateDoc(doc(db, 'drivers', ride.driverId), {
-                  isOnRide: false,
-                  currentRideId: null,
-                  status: 'online',
-                }),
-              ]);
+              const batch = writeBatch(db);
+              batch.update(doc(db, 'rides', rideId), {
+                status: 'cancelled',
+                cancelledBy: 'driver',
+                cancelReason: 'driver_ended_mid_trip',
+                endedEarly: true,
+                cancelledAt: serverTimestamp(),
+              });
+              batch.update(doc(db, 'drivers', ride.driverId), RELEASE);
+              await batch.commit();
               leftScreen.current = true;
               navigation.reset({ index: 0, routes: [{ name: 'DriverHome' }] });
             } catch (error) {
               console.log('Error cancelling trip:', error);
+              if (await rideAlreadyEnded('cancelled')) {
+                leftScreen.current = true;
+                navigation.reset({ index: 0, routes: [{ name: 'DriverHome' }] });
+                return;
+              }
               Alert.alert('Could not cancel', 'Please try again.');
               setCompleting(false);
             }

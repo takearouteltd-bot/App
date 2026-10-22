@@ -79,6 +79,27 @@ function routeForNotification(data, role) {
   return null;
 }
 
+/* A tap about the ride already on screen changes nothing: that screen is
+   live. Navigating anyway popped the passenger back to the home map, or
+   stacked a second copy of the job screen (with its own listeners) on top
+   of the one the driver was using. */
+const DRIVER_JOB_SCREENS = ["DriverRideInProgress", "RideToDropoff", "ChatScreen"];
+const RIDER_RIDE_SCREENS = ["RideRequest", "RideTracking", "RideInProgress", "RiderRideCompleted", "ChatScreen"];
+function alreadyThere(data, role) {
+  const current = navigationRef.getCurrentRoute();
+  if (!current) return false;
+  const type = data?.type;
+  if (role === "driver") {
+    return DRIVER_JOB_SCREENS.includes(current.name) &&
+      ["job_offer", "trip", "chat"].includes(type);
+  }
+  if (role === "rider") {
+    return RIDER_RIDE_SCREENS.includes(current.name) &&
+      !!data?.rideId && current.params?.rideId === data.rideId;
+  }
+  return false;
+}
+
 export default function App() {
   const [initializing, setInitializing] = useState(true);
   const [signedIn, setSignedIn] = useState(false);
@@ -265,6 +286,7 @@ export default function App() {
       pendingTap.current = data;
       return;
     }
+    if (alreadyThere(data, role)) return;
     const target = routeForNotification(data, role);
     if (target) navigationRef.navigate(...target);
   }, []);

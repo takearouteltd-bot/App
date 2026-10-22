@@ -93,6 +93,9 @@ async function ensureChannels() {
 // This phone's FCM registration token, or null when there is none (simulator,
 // or iOS before APNs registration succeeds). One code path for both platforms
 // so register and unregister always agree on which token they mean.
+// This phone's token as last saved to the account.
+let savedToken = null;
+
 async function getPushToken() {
   if (!Device.isDevice) return null;
   const messaging = getMessaging();
@@ -120,6 +123,7 @@ export async function registerForPushNotifications(uid) {
 
     const token = await getPushToken();
     if (!token) return null;
+    savedToken = token;
 
     await setDoc(
       doc(db, 'pushTokens', uid),
@@ -145,18 +149,18 @@ export async function registerForPushNotifications(uid) {
 export async function unregisterPushNotifications(uid) {
   try {
     if (!uid) return false;
-    const token = await getPushToken().catch(() => null);
+    // The token saved at sign-in covers a sign-out on a bad connection.
+    const token = (await getPushToken().catch(() => null)) || savedToken;
     if (token) {
       await setDoc(
         doc(db, 'pushTokens', uid),
         { tokens: arrayRemove(token), updatedAt: serverTimestamp() },
         { merge: true }
       );
-    } else {
-      // No token to hand (simulator, or permission already withdrawn): clear
-      // the lot so nothing is left pointing at this account.
-      await setDoc(doc(db, 'pushTokens', uid), { tokens: [], updatedAt: serverTimestamp() }, { merge: true });
     }
+    // No token at all: leave the list alone. Clearing it took the pushes
+    // away from every other phone signed in to this account (a shared
+    // driver account lost its job alerts when one phone signed out offline).
     return true;
   } catch (error) {
     console.log('Push unregister error:', error);

@@ -226,19 +226,30 @@ service cloud.firestore {
         resource.data.status == "searching";
     }
 
+    /* Raise only, and the card hold (fareEstimate) stays equal to the fare. */
     function riderRaisesOffer() {
       return rideChanged().hasOnly(["offeredFare", "fareEstimate", "fare"]) &&
-        resource.data.status == "searching";
+        resource.data.status == "searching" &&
+        request.resource.data.offeredFare is number &&
+        request.resource.data.offeredFare >= resource.data.get("offeredFare", 0) &&
+        request.resource.data.fareEstimate == request.resource.data.offeredFare &&
+        request.resource.data.fare.total == request.resource.data.offeredFare;
     }
 
     /* The offer is only read once the write has the right shape, so a
        missing offer document cannot break the other rider paths. */
     function offerMatchesWrite(rideId) {
       let offer = get(/databases/$(database)/documents/rides/$(rideId)/offers/$(request.resource.data.driverId)).data;
+      let driver = get(/databases/$(database)/documents/drivers/$(request.resource.data.driverId)).data;
+      // The driver must still be free: one who has since taken another job
+      // or gone offline cannot be handed this one.
       return offer.driverId == request.resource.data.driverId &&
         offer.status == "pending" &&
         request.resource.data.offeredFare == offer.price &&
-        request.resource.data.fare.total == offer.price;
+        request.resource.data.fareEstimate == offer.price &&
+        request.resource.data.fare.total == offer.price &&
+        driver.get("status", "") == "online" &&
+        driver.get("isOnRide", false) != true;
     }
 
     function riderTakesOffer(rideId) {
@@ -273,6 +284,10 @@ service cloud.firestore {
         request.resource.data.walletProcessed == false &&
         get(/databases/$(database)/documents/drivers/$(request.auth.uid))
           .data.approved == true &&
+        // Over the hours limit: the rest starts after the current trip, so
+        // no new job in between.
+        get(/databases/$(database)/documents/drivers/$(request.auth.uid))
+          .data.get("restDue", false) != true &&
         myVehicleServes(resource.data);
     }
 
@@ -369,6 +384,10 @@ service cloud.firestore {
         allow update: if isAdmin() || (
           signedIn() &&
           request.auth.uid != resource.data.senderId &&
+          (
+            request.auth.uid == get(/databases/$(database)/documents/rides/$(rideId)).data.riderId ||
+            request.auth.uid == get(/databases/$(database)/documents/rides/$(rideId)).data.driverId
+          ) &&
           request.resource.data.diff(resource.data).affectedKeys().hasOnly(["read"])
         );
 

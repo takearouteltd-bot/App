@@ -58,7 +58,8 @@ export default function RiderRideCompletedScreen() {
   // paymentStatus is what the payment function writes; the nested payment
   // object is only kept up to date by the Stripe webhook.
   const paymentStatus = ride.paymentStatus || ride.payment?.status || 'pending';
-  const isPaid = ['captured', 'authorized', 'paid', 'succeeded'].includes(paymentStatus);
+  // 'authorized' is only the hold: the charge itself comes a moment later.
+  const isPaid = ['captured', 'paid', 'succeeded'].includes(paymentStatus);
   const isFailed = paymentStatus === 'failed';
   const isPending = !isPaid && !isFailed;
   const isCash = ride.paymentMethod === 'cash';
