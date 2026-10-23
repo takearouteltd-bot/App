@@ -29,8 +29,15 @@ jobs:
         working-directory: android
         run: ./gradlew assembleRelease --no-daemon -Dorg.gradle.jvmargs=-Xmx4g -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
 
+      - name: Name the file by version
+        id: ver
+        run: |
+          V=$(node -p "const a=require('./app.json').expo; a.version+'-'+a.android.versionCode")
+          mkdir -p out && cp android/app/build/outputs/apk/release/app-release.apk "out/TakeARoute-$V.apk"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: takearoute-apk
-          path: android/app/build/outputs/apk/release/app-release.apk
+          name: TakeARoute-v${{ steps.ver.outputs.version }}-apk
+          path: out/*.apk

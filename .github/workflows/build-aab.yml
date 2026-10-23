@@ -49,8 +49,15 @@ jobs:
             || { echo "::error::AAB is not signed with the upload key"; exit 1; }
           grep -E 'versionCode|versionName' android/app/build.gradle
 
+      - name: Name the file by version
+        id: ver
+        run: |
+          V=$(node -p "const a=require('./app.json').expo; a.version+'-'+a.android.versionCode")
+          mkdir -p out && cp android/app/build/outputs/bundle/release/app-release.aab "out/TakeARoute-$V.aab"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
       - name: Upload AAB
         uses: actions/upload-artifact@v4
         with:
-          name: takearoute-aab
-          path: android/app/build/outputs/bundle/release/app-release.aab
+          name: TakeARoute-v${{ steps.ver.outputs.version }}-aab
+          path: out/*.aab
