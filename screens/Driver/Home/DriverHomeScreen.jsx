@@ -53,6 +53,8 @@ const { width } = Dimensions.get('window');
 // A job whose timer ran out stays off the list this long before it can be
 // shown again (it won't ring again).
 const MISSED_SNOOZE_MS = 60000;
+// The price on the table for a job (the passenger's offer when bidding).
+const fareOf = (ride) => Number(ride?.fareEstimate) || 0;
 
 // "Online 2h 10m of 12h today": time online in the last 24 hours, across
 // every time they went on and off, against the dashboard's limit.
@@ -111,11 +113,13 @@ export default function DriverHomeScreen() {
   const [sending, setSending] = useState(false);
   const takenOver = useRef(false);
   // Jobs already rung for, so each offer rings once, not on every update.
-  const rungFor = useRef(new Set());
   // Jobs on screen now, for the edge-of-radius allowance.
   const shownIds = useRef(new Set());
   // Jobs kept off the list until a time (ms): declined, or just missed.
+  // Each keeps the price it had, so a passenger raising it brings it back.
   const snoozed = useRef(new Map());
+  // Jobs this phone has rung for, with the price at the time.
+  const rungFor = useRef(new Map());
   const [searchingRides, setSearchingRides] = useState([]);
 
   const [rideRequests, setRideRequests] = useState([]);
@@ -398,8 +402,10 @@ export default function DriverHomeScreen() {
       if (!data.pickupLocation) return;
       // Jobs this driver already cancelled are not offered again.
       if (Array.isArray(data.declinedBy) && data.declinedBy.includes(driverId)) return;
-      // Declined here, or its timer just ran out: don't put it straight back.
-      if ((snoozed.current.get(data.id) || 0) > Date.now()) return;
+      // Declined here, or its timer just ran out: don't put it straight back,
+      // unless the passenger has raised the price since.
+      const snooze = snoozed.current.get(data.id);
+      if (snooze && snooze.until > Date.now() && !(fareOf(data) > snooze.fare)) return;
       // Passengers who asked not to be matched with this driver.
       if (Array.isArray(data.blockedDriverIds) && data.blockedDriverIds.includes(driverId)) return;
       // Somebody who booked and paid for Executive does not get a Mini.
@@ -429,8 +435,9 @@ export default function DriverHomeScreen() {
     rides.sort((a, b) => a.pickupDistanceKm - b.pickupDistanceKm);
     shownIds.current = new Set(rides.map((r) => r.id));
     // Ring for jobs this phone has not seen yet. Not while on a job.
-    const fresh = rides.filter((r) => !rungFor.current.has(r.id));
-    fresh.forEach((r) => rungFor.current.add(r.id));
+    // A job whose price went up since it rang counts as new.
+    const fresh = rides.filter((r) => !rungFor.current.has(r.id) || fareOf(r) > rungFor.current.get(r.id));
+    fresh.forEach((r) => rungFor.current.set(r.id, fareOf(r)));
     if (fresh.length && !onRideRef.current) ringForNewJob(fresh[0]);
     // Nothing left to take: stop ringing.
     if (!rides.length) stopJobRing();
@@ -459,7 +466,8 @@ export default function DriverHomeScreen() {
   // seconds, would bring the same card straight back.
   const advanceQueue = useCallback((snoozeMs = 0) => {
     if (snoozeMs > 0 && currentRideIdRef.current) {
-      snoozed.current.set(currentRideIdRef.current, Date.now() + snoozeMs);
+      const ride = rideRequests.find((r) => r.id === currentRideIdRef.current);
+      snoozed.current.set(currentRideIdRef.current, { until: Date.now() + snoozeMs, fare: fareOf(ride) });
     }
     // The driver has dealt with this offer (declined it, or it went), so the
     // ring and its notification stop with it. Later new jobs ring again.
@@ -602,6 +610,22 @@ export default function DriverHomeScreen() {
 
       clearJobAlerts();
 
+      // One account on two phones: the other phone may already have taken
+      // a job. Only a ride that is really still live and ours blocks this;
+      // a stale pointer must not lock the driver out. Checked before the
+      // transaction, not inside it: this phone writes the driver record every
+      // few seconds with its position, and a transaction that reads a record
+      // which changes before it commits fails ("stored version does not
+      // match"), so accepting kept failing for a driver on the move.
+      const me = (await getDoc(driverRef)).data() || {};
+      if (me.isOnRide && me.currentRideId && me.currentRideId !== ride.id) {
+        const other = await getDoc(doc(db, 'rides', me.currentRideId));
+        const o = other.exists() ? other.data() : null;
+        if (o && o.driverId === driverId && ['accepted', 'arrived', 'ongoing'].includes(o.status)) {
+          throw new Error('You are already on a job. Finish it before taking another.');
+        }
+      }
+
       await runTransaction(db, async (transaction) => {
         const rideDoc = await transaction.get(rideRef);
         if (!rideDoc.exists()) throw new Error('This job no longer exists.');
@@ -619,18 +643,6 @@ export default function DriverHomeScreen() {
         if (rideDoc.data().femaleDriverOnly === true && !femaleVerified) {
           throw new Error('This passenger asked for a female driver.');
         }
-        // One account on two phones: the other phone may already have taken
-        // a job. Only a ride that is really still live and ours blocks this;
-        // a stale pointer must not lock the driver out.
-        const me = (await transaction.get(driverRef)).data() || {};
-        if (me.isOnRide && me.currentRideId && me.currentRideId !== ride.id) {
-          const other = await transaction.get(doc(db, 'rides', me.currentRideId));
-          const o = other.exists() ? other.data() : null;
-          if (o && o.driverId === driverId && ['accepted', 'arrived', 'ongoing'].includes(o.status)) {
-            throw new Error('You are already on a job. Finish it before taking another.');
-          }
-        }
-
         transaction.update(rideRef, {
           driverId,
           status: 'accepted',

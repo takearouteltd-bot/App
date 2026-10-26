@@ -74,16 +74,31 @@ export default function RideRequestScreen() {
   const [offers, setOffers] = useState([]);
   const [taking, setTaking] = useState(null);
   const [raising, setRaising] = useState(false);
+  // When this phone first saw each offer (keyed by driver and send time, so
+  // a fresh offer from the same driver starts its own clock).
+  const seenAt = useRef(new Map());
   useEffect(() => {
     if (!rideId || !rideData?.bidding) return undefined;
-    return onSnapshot(collection(db, 'rides', rideId, 'offers'), (snap) =>
-      setOffers(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
+    return onSnapshot(
+      collection(db, 'rides', rideId, 'offers'),
+      (snap) => {
+        const now = Date.now();
+        setOffers(
+          snap.docs.map((d) => {
+            const data = d.data();
+            const key = `${d.id}:${data.sentAtMs}`;
+            if (!seenAt.current.has(key)) seenAt.current.set(key, now);
+            return { id: d.id, ...data, seenAtMs: seenAt.current.get(key) };
+          })
+        );
+      },
+      (error) => console.log('Offers listener error:', error)
     );
   }, [rideId, rideData?.bidding]);
 
   // `elapsed` ticks every second, so expired offers drop out on their own.
   const liveOffers = offers
-    .filter((o) => o.status === 'pending' && offerIsLive(o))
+    .filter((o) => o.status === 'pending' && offerIsLive(o, Date.now(), o.seenAtMs))
     .sort((a, b) => a.price - b.price)
     .slice(0, 4);
 

@@ -14,6 +14,7 @@
 //   rides/{id}/offers/{uid}    one counter-offer per driver
 import {
   doc,
+  getDoc,
   runTransaction,
   serverTimestamp,
   setDoc,
@@ -109,12 +110,16 @@ export async function sendCounterOffer(rideId, driver, price, config) {
    where it has one, so a driver's phone clock running slow or fast can't
    make every offer arrive already expired (or never expire). The driver's
    expiresAtMs is the fallback while createdAt is still pending. */
-export function offerIsLive(offer, now = Date.now()) {
-  const created = offer?.createdAt?.toMillis?.();
+export function offerIsLive(offer, now = Date.now(), seenAtMs = null) {
   const sentAt = Number(offer?.sentAtMs);
-  if (created && sentAt && Number(offer.expiresAtMs) > sentAt) {
-    return now < created + (Number(offer.expiresAtMs) - sentAt);
-  }
+  const length = Number(offer?.expiresAtMs) - sentAt;
+  // Timed from when this phone first saw the offer, on this phone's own
+  // clock: comparing the passenger's clock with the server's (or the
+  // driver's) hid every offer whenever the passenger's phone ran a minute or
+  // two out.
+  if (seenAtMs && sentAt && length > 0) return now < seenAtMs + length;
+  const created = offer?.createdAt?.toMillis?.();
+  if (created && sentAt && length > 0) return now < created + length;
   return Number(offer?.expiresAtMs) > now;
 }
 
@@ -124,21 +129,25 @@ export function offerIsLive(offer, now = Date.now()) {
 export async function acceptCounterOffer(rideId, offer) {
   const rideRef = doc(db, 'rides', rideId);
   const offerRef = doc(db, 'rides', rideId, 'offers', offer.driverId);
-  const driverRef = doc(db, 'drivers', offer.driverId);
+  // Read outside the transaction: the driver's phone rewrites this record
+  // with its position every few seconds, and a transaction that reads it
+  // fails whenever it changes before the commit.
+  const driverSnap = await getDoc(doc(db, 'drivers', offer.driverId));
+  const driver = driverSnap.exists() ? driverSnap.data() : {};
+  if (driver.status !== 'online' || driver.isOnRide === true) {
+    throw new Error('That driver has just taken another job. Pick another offer.');
+  }
   await runTransaction(db, async (tx) => {
     const rideSnap = await tx.get(rideRef);
     const offerSnap = await tx.get(offerRef);
-    const driverSnap = await tx.get(driverRef);
     if (!rideSnap.exists() || rideSnap.data().status !== 'searching') {
       throw new Error('This ride already has a driver.');
     }
     const live = offerSnap.exists() ? offerSnap.data() : null;
-    if (!live || live.status !== 'pending' || !offerIsLive(live)) {
+    // The passenger already saw this offer as open, so only the offer's own
+    // status decides here, not the clocks (see offerIsLive).
+    if (!live || live.status !== 'pending' || !offerIsLive(live, Date.now(), offer.seenAtMs)) {
       throw new Error('That offer has expired. Pick another, or wait for a new one.');
-    }
-    const driver = driverSnap.exists() ? driverSnap.data() : {};
-    if (driver.status !== 'online' || driver.isOnRide === true) {
-      throw new Error('That driver has just taken another job. Pick another offer.');
     }
     const price = round2(live.price);
     tx.update(rideRef, {
