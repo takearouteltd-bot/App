@@ -18,7 +18,8 @@ import { doc, getDoc, onSnapshot, serverTimestamp, updateDoc, writeBatch } from 
 import { db } from '../../../config/firebase';
 import { useDriverPosition } from '../../../utils/driverLocation';
 
-import { currencySymbol, money, waitingCharge } from '../../../utils/appConfig';
+import { currencySymbol, getAppConfig, money, waitingCharge } from '../../../utils/appConfig';
+import { fareSoFar } from '../../../utils/fareSoFar';
 import { navigationUrl, remainingStops, stopsOf } from '../../../utils/stops';
 import { fetchRoute as fetchDrivingRoute, durationText, distanceText } from '../../../utils/routes';
 import SafetyButton from '../../../components/SafetyButton';
@@ -208,8 +209,12 @@ export default function DriverRideToDropoffScreen() {
      is disputed. The button stays enabled so that path is reachable. */
   // What the passenger owes: the booked fare plus any waiting at pickup,
   // worked out the same way the payment function does.
-  const amountDue = () => {
-    const base = Number(ride?.fare?.total || 0);
+  // Ending away from the drop-off (leftKm still to go) charges the fare so far.
+  const amountDue = (leftKm = null) => {
+    const base =
+      leftKm === null
+        ? Number(ride?.fare?.total || 0)
+        : fareSoFar(ride, leftKm, getAppConfig().fares.minimumFare);
     const arrivedMs = ride?.arrivedAt?.toMillis?.();
     const startedMs = ride?.startedAt?.toMillis?.();
     const waiting =
@@ -220,8 +225,9 @@ export default function DriverRideToDropoffScreen() {
   // Cash rides: the driver confirms they have been paid before the trip closes.
   const finish = (extra) => {
     if (ride?.paymentMethod !== 'cash') return completeRide(extra);
+    const leftKm = extra?.completedAwayFromDropoff ? extra.completeDistanceKm : null;
     Alert.alert(
-      `Collect ${money(amountDue(), ride?.currency)} in cash`,
+      `Collect ${money(amountDue(leftKm), ride?.currency)} in cash`,
       'This is a cash ride. Take payment from the passenger, then confirm.',
       [
         { text: 'Not yet', style: 'cancel' },
@@ -239,7 +245,7 @@ export default function DriverRideToDropoffScreen() {
       const shown = awayM < 1000 ? `${Math.round(awayM)} m` : `${awayKm.toFixed(1)} km`;
       Alert.alert(
         'You are not at the drop-off yet',
-        `You are ${shown} away. Only complete the trip here if the passenger has asked to get out.`,
+        `You are ${shown} away. Only complete the trip here if the passenger has asked to get out. They pay the fare so far, about ${money(amountDue(awayKm), ride?.currency)}.`,
         [
           { text: 'Keep driving', style: 'cancel' },
           {

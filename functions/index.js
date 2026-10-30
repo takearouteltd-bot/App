@@ -280,12 +280,16 @@ function passengerEndedEarly(before, after) {
  * @param {Object} endPoint {latitude, longitude} where the trip ended.
  * @param {number} minimumFare Minimum fare from config/app.
  * @param {number} now Time the trip ended, in ms.
+ * @param {number=} leftKm Distance still to go, if already known (the
+ *     driver's app records it when ending away from the drop-off).
  * @return {{total: number, fullTotal: number, percent: number}} Fare.
  */
-function endedEarlyFare(ride, endPoint, minimumFare, now = Date.now()) {
+function endedEarlyFare(ride, endPoint, minimumFare, now = Date.now(),
+    leftKm = null) {
   const fullTotal = Number(ride.fare && ride.fare.total) || 0;
   const whole = distanceKm(ride.pickupLocation, ride.dropoffLocation);
-  const left = distanceKm(endPoint, ride.dropoffLocation);
+  const left = Number.isFinite(Number(leftKm)) && leftKm !== null ?
+    Number(leftKm) : distanceKm(endPoint, ride.dropoffLocation);
   const started = toMillis(ride.startedAt);
   const plannedMin = Number(ride.route && ride.route.durationMinutes);
   let share = 1;
@@ -776,6 +780,38 @@ exports.chargeOnRideCompletion = functions
       // Trigger only when completed
       if (before.status === "completed" || after.status !== "completed") {
         return null;
+      }
+
+      // The driver ended the trip away from the drop-off because the
+      // passenger got out: charge the fare so far (as when the passenger
+      // ends it early), using how far from the drop-off the driver's app
+      // said they were. A passenger's early end already set its fare.
+      if (after.completedAwayFromDropoff && !after.endedEarlyBy &&
+          after.fare && after.fare.fullTotal === undefined) {
+        try {
+          let endPoint = null;
+          if (after.driverId) {
+            const driverSnap = await db.collection("drivers")
+                .doc(after.driverId).get();
+            endPoint = driverSnap.exists ? driverSnap.data().location : null;
+          }
+          const cfg = await loadAppConfig();
+          const fare = endedEarlyFare(after, endPoint, cfg.fares.minimumFare,
+              toMillis(after.completedAt) || Date.now(),
+              after.completeDistanceKm);
+          await db.collection("rides").doc(rideId).update({
+            "endedEarlyBy": "driver",
+            "fare.fullTotal": fare.fullTotal,
+            "fare.total": fare.total,
+            "fare.endedEarlyPercent": fare.percent,
+          });
+          after.fare = {...after.fare, total: fare.total,
+            fullTotal: fare.fullTotal, endedEarlyPercent: fare.percent};
+          console.log("🛑 Ended away from drop-off:", rideId, fare);
+        } catch (error) {
+          // Charge the agreed fare rather than nothing.
+          console.error("❌ Fare so far failed, full fare:", rideId, error);
+        }
       }
 
       // Cash: nothing to charge. Record the final amount, waiting included,
