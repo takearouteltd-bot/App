@@ -62,7 +62,8 @@ const CONFIG_DEFAULTS = {
   dispatch: {
     searchRadiusKm: 50, requestTimeoutSeconds: 20, searchTimeoutMinutes: 15,
   },
-  cancellation: {fee: 0, freeMinutes: 2, driverSharePercent: 100},
+  cancellation: {fee: 0, freeMinutes: 2, arrivedFee: 0, noShowWaitMinutes: 5,
+    driverSharePercent: 100},
 };
 
 /**
@@ -122,6 +123,10 @@ async function loadAppConfig() {
       fee: numSetting(data.cancellation, "fee", d.cancellation.fee),
       freeMinutes: numSetting(data.cancellation, "freeMinutes",
           d.cancellation.freeMinutes),
+      arrivedFee: numSetting(data.cancellation, "arrivedFee",
+          d.cancellation.arrivedFee),
+      noShowWaitMinutes: numSetting(data.cancellation, "noShowWaitMinutes",
+          d.cancellation.noShowWaitMinutes),
       driverSharePercent: Math.min(100, numSetting(data.cancellation,
           "driverSharePercent", d.cancellation.driverSharePercent)),
     },
@@ -205,28 +210,43 @@ function addOneMonth(date) {
 
 /**
  * The fee for a passenger cancelling this ride, in major units, or 0.
- * Same rule as utils/cancellation.js in the app, which warns the passenger
- * before they confirm: card rides only, cancelled by the passenger before
- * pickup, more than the free minutes after a driver accepted. The terms are
- * the ride's own (cancellationPolicy, saved at booking).
+ * Same rule as utils/cancellation.js in the app, which warns before anyone
+ * confirms. Card rides only, before pickup. Once the driver has arrived the
+ * passenger pays arrivedFee for cancelling (free window or not), and the
+ * same when the driver reports a no-show after waiting noShowWaitMinutes.
+ * Otherwise a passenger cancel costs fee, more than freeMinutes after a
+ * driver accepted. The terms are the ride's own (cancellationPolicy, saved
+ * at booking).
  * @param {Object} before Ride before the cancel.
  * @param {Object} after Ride after the cancel.
  * @return {number} Fee.
  */
 function cancellationFee(before, after) {
-  if (after.cancelledBy !== "rider" || after.endedEarly) return 0;
-  if (after.paymentMethod === "cash") return 0;
+  if (after.endedEarly || after.paymentMethod === "cash") return 0;
   if (!["accepted", "arrived"].includes(before.status)) return 0;
 
   const policy = after.cancellationPolicy || {};
+  const arrivedFee = numSetting(policy, "arrivedFee", 0);
+  const cancelled = toMillis(after.cancelledAt) || Date.now();
+  const round2 = (n) => Math.round(n * 100) / 100;
+
+  if (after.cancelledBy === "driver") {
+    if (after.cancelReason !== "passenger_no_show") return 0;
+    if (before.status !== "arrived" || !(arrivedFee > 0)) return 0;
+    const arrived = toMillis(after.arrivedAt);
+    if (!arrived) return 0;
+    const waitMs = numSetting(policy, "noShowWaitMinutes", 5) * 60000;
+    return cancelled - arrived >= waitMs ? round2(arrivedFee) : 0;
+  }
+  if (after.cancelledBy !== "rider") return 0;
+  if (before.status === "arrived" && arrivedFee > 0) return round2(arrivedFee);
+
   const fee = numSetting(policy, "fee", 0);
   if (!(fee > 0)) return 0;
-
   const accepted = toMillis(after.acceptedAt);
   if (!accepted) return 0;
-  const cancelled = toMillis(after.cancelledAt) || Date.now();
   const freeMs = numSetting(policy, "freeMinutes", 2) * 60000;
-  return cancelled - accepted > freeMs ? Math.round(fee * 100) / 100 : 0;
+  return cancelled - accepted > freeMs ? round2(fee) : 0;
 }
 
 /* ======================================
@@ -2860,11 +2880,13 @@ exports.notifyRideUpdates = functions.firestore
         if (after.cancelledBy === "timeout") return null;
         if (after.cancelledBy === "driver") {
           const noShow = after.cancelReason === "passenger_no_show";
+          const fee = noShow ? cancellationFee(before, after) : 0;
           return sendPush([after.riderId], {...trip,
             title: noShow ? "Ride ended: no-show" : "Ride cancelled",
             body: noShow ?
-              "The driver reported a no-show at the pickup and ended " +
-              "the ride." :
+              "The driver waited at the pickup and reported a no-show." +
+              (fee > 0 ? " A no-show fee of " +
+                emailMoney(fee, rideCurrency(after)) + " was charged." : "") :
               "Your driver cancelled this ride. " +
               "You have not been charged."});
         }

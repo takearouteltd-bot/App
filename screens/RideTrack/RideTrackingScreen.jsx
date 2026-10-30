@@ -224,7 +224,9 @@ export default function RideTrackingScreen() {
     // Say what it costs before they confirm, from the ride's own terms.
     const fee = cancellationFeeFor(rideData);
     const message = fee > 0
-      ? `Your driver has been on the way for a while, so a ${money(fee, rideData?.currency)} cancellation fee will be charged to your card.`
+      ? rideData?.status === 'arrived'
+        ? `Your driver is already at the pickup, so a ${money(fee, rideData?.currency)} cancellation fee will be charged to your card.`
+        : `Your driver has been on the way for a while, so a ${money(fee, rideData?.currency)} cancellation fee will be charged to your card.`
       : 'Your driver will be told straight away. There is no charge.';
     Alert.alert('Cancel this ride?', message, [
       { text: 'Keep ride', style: 'cancel' },

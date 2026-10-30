@@ -20,7 +20,8 @@ import { doc, onSnapshot, updateDoc, serverTimestamp, arrayUnion } from 'firebas
 import { auth, db } from '../../../config/firebase';
 import { useDriverPosition } from '../../../utils/driverLocation';
 
-import { currencySymbol } from '../../../utils/appConfig';
+import { currencySymbol, money } from '../../../utils/appConfig';
+import { noShowFeeFor, noShowWaitMs } from '../../../utils/cancellation';
 import SafetyButton from '../../../components/SafetyButton';
 import PaymentTypeBanner from '../../../components/PaymentTypeBanner';
 import { confirmMaskedCall } from '../../../utils/calling';
@@ -300,12 +301,25 @@ export default function DriverRideInProgressScreen() {
   }, [rideId, releaseDriver, goHome]);
 
   /* After arriving, the driver can end the job if the passenger does not show.
-     The ride is cancelled outright (not re-offered), the card hold is released
-     by the cancelRidePayment function, and the passenger is told. */
+     The ride is cancelled outright (not re-offered) and the passenger told.
+     cancelRidePayment takes the no-show fee from the card hold if the driver
+     waited long enough (utils/cancellation.js), and releases the rest. */
   const handleNoShow = useCallback(() => {
+    const fee = noShowFeeFor(ride);
+    const policyFee = Number(ride?.cancellationPolicy?.arrivedFee) || 0;
+    const arrivedMs = ride?.arrivedAt?.toMillis?.();
+    const leftMin = arrivedMs
+      ? Math.ceil((arrivedMs + noShowWaitMs(ride) - Date.now()) / 60000)
+      : 0;
+    let message = 'The ride will be cancelled and the passenger told.';
+    if (fee > 0) {
+      message += ` The passenger is charged a ${money(fee, ride?.currency)} no-show fee.`;
+    } else if (policyFee > 0 && ride?.paymentMethod !== 'cash' && leftMin > 0) {
+      message += ` Wait ${leftMin} more minute${leftMin === 1 ? '' : 's'} and the passenger is charged a no-show fee; cancelling now is free for them.`;
+    }
     Alert.alert(
       'Passenger has not turned up?',
-      'The ride will be cancelled and the passenger told.',
+      message,
       [
         { text: 'Keep waiting', style: 'cancel' },
         {
@@ -333,7 +347,7 @@ export default function DriverRideInProgressScreen() {
         },
       ]
     );
-  }, [rideId, releaseDriver, goHome]);
+  }, [rideId, ride, releaseDriver, goHome]);
 
   // Turn-by-turn directions to the pickup in the phone's maps app.
   const handleNavigate = useCallback(() => {

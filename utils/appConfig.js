@@ -45,10 +45,14 @@ export const DEFAULT_APP_CONFIG = {
     multiplier: 1,
   },
   // Charged when a passenger cancels before pickup, more than freeMinutes
-  // after a driver accepted. 0 means no fee. Card rides only.
+  // after a driver accepted. Once the driver has arrived, cancelling (or a
+  // no-show after noShowWaitMinutes) costs arrivedFee instead. 0 means no
+  // fee. Card rides only. See utils/cancellation.js.
   cancellation: {
     fee: 0,
     freeMinutes: 2,
+    arrivedFee: 0,
+    noShowWaitMinutes: 5,
     driverSharePercent: 100,
   },
   // Passengers may ask for a female driver. If none accepts within
