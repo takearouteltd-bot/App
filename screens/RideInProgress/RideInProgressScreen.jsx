@@ -160,16 +160,15 @@ export default function RideInProgressScreen() {
   // Masked call through Twilio. Neither side sees a real number.
   const handleCall = () => confirmMaskedCall(rideId, 'your driver');
 
-  /* Ending a trip that is already under way. There was previously no way out
-     of this screen at all — once the driver started the ride, neither side
-     could stop it. The trip is marked cancelled rather than completed, so
-     chargeOnRideCompletion does not fire and cancelRidePayment releases the
-     hold on the card. */
+  /* Ending a trip that is already under way. The ride is marked cancelled
+     with endedEarly; the chargeTripEndedEarly function then completes it at
+     the fare so far (the share of the journey done), so the passenger pays
+     for that part and gets a receipt. */
   const handleEndEarly = () => {
     if (ending) return;
     Alert.alert(
       'End this trip early?',
-      'Your driver will be told to pull over when it is safe. You will not be charged for the journey.',
+      'Your driver will be told to pull over when it is safe. You pay only for the part of the journey done so far.',
       [
         { text: 'Stay in the trip', style: 'cancel' },
         {

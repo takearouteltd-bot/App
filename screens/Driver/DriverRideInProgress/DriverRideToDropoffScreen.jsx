@@ -107,7 +107,14 @@ export default function DriverRideToDropoffScreen() {
       if ((data.status === 'cancelled' || data.status === 'canceled') && !leftScreen.current) {
         leftScreen.current = true;
         if (data.cancelledBy === 'rider') {
-          Alert.alert('Trip ended', 'Your passenger ended this trip. You are free for the next job.');
+          Alert.alert(
+            'Trip ended',
+            data.endedEarly
+              ? data.paymentMethod === 'cash'
+                ? 'Your passenger ended the trip early. The fare so far is on its way in a notification: collect it in cash before they leave.'
+                : 'Your passenger ended the trip early. They pay the fare so far, and you are paid for it as usual.'
+              : 'Your passenger ended this trip. You are free for the next job.'
+          );
         }
         if (data.driverId) {
           updateDoc(doc(db, 'drivers', data.driverId), {

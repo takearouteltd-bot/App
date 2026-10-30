@@ -62,6 +62,7 @@ const CONFIG_DEFAULTS = {
   dispatch: {
     searchRadiusKm: 50, requestTimeoutSeconds: 20, searchTimeoutMinutes: 15,
   },
+  fares: {minimumFare: 6},
   cancellation: {fee: 0, freeMinutes: 2, arrivedFee: 0, noShowWaitMinutes: 5,
     driverSharePercent: 100},
 };
@@ -100,6 +101,10 @@ async function loadAppConfig() {
       ratePerMinute: numSetting(data.waiting, "ratePerMinute",
           d.waiting.ratePerMinute),
       maxCharge: numSetting(data.waiting, "maxCharge", d.waiting.maxCharge),
+    },
+    fares: {
+      minimumFare: numSetting(data.fares, "minimumFare",
+          d.fares.minimumFare),
     },
     subscription: {
       monthlyPrice: numSetting(data.subscription, "monthlyPrice",
@@ -247,6 +252,56 @@ function cancellationFee(before, after) {
   if (!accepted) return 0;
   const freeMs = numSetting(policy, "freeMinutes", 2) * 60000;
   return cancelled - accepted > freeMs ? round2(fee) : 0;
+}
+
+/**
+ * True for the update where a passenger ends a trip that is under way. That
+ * ride is not left cancelled: chargeTripEndedEarly completes it at the fare
+ * so far, so cancelRidePayment and the cancel push leave it alone.
+ * @param {Object} before Ride before the update.
+ * @param {Object} after Ride after the update.
+ * @return {boolean} Whether this is a passenger ending the trip early.
+ */
+function passengerEndedEarly(before, after) {
+  return before.status === "ongoing" &&
+    ["cancelled", "canceled"].includes(after.status) &&
+    after.endedEarly === true && after.cancelledBy === "rider";
+}
+
+/**
+ * The fare for a trip the passenger ended early: the agreed fare times the
+ * share of the journey done, measured as how much nearer the drop-off the
+ * car got (straight line, so a detour can't add to it). Without a position
+ * for the car, the share of the planned trip time that has passed is used
+ * instead. Never below the minimum fare and never above the agreed fare.
+ * Waiting time is added later by chargeOnRideCompletion, as for any
+ * completed trip.
+ * @param {Object} ride Ride document.
+ * @param {Object} endPoint {latitude, longitude} where the trip ended.
+ * @param {number} minimumFare Minimum fare from config/app.
+ * @param {number} now Time the trip ended, in ms.
+ * @return {{total: number, fullTotal: number, percent: number}} Fare.
+ */
+function endedEarlyFare(ride, endPoint, minimumFare, now = Date.now()) {
+  const fullTotal = Number(ride.fare && ride.fare.total) || 0;
+  const whole = distanceKm(ride.pickupLocation, ride.dropoffLocation);
+  const left = distanceKm(endPoint, ride.dropoffLocation);
+  const started = toMillis(ride.startedAt);
+  const plannedMin = Number(ride.route && ride.route.durationMinutes);
+  let share = 1;
+  if (Number.isFinite(whole) && whole > 0.05 && Number.isFinite(left)) {
+    share = 1 - left / whole;
+  } else if (started && plannedMin > 0) {
+    share = (now - started) / (plannedMin * 60000);
+  }
+  share = Math.min(1, Math.max(0, share));
+  const floor = Math.min(minimumFare, fullTotal);
+  const total = Math.min(fullTotal, Math.max(floor, fullTotal * share));
+  return {
+    total: Math.round(total * 100) / 100,
+    fullTotal,
+    percent: Math.round(share * 100),
+  };
 }
 
 /* ======================================
@@ -1018,6 +1073,77 @@ exports.stripeWebhook = functions
     });
 
 
+/* ======================================
+   PASSENGER ENDS THE TRIP EARLY
+   The passenger's app marks the ride cancelled with endedEarly. Here it is
+   completed instead, at the fare so far (endedEarlyFare), so the usual
+   completion path charges the card (or records the cash due), pays the
+   driver and sends the receipt. The trip ends where the driver's phone
+   last reported.
+====================================== */
+exports.chargeTripEndedEarly = functions
+    .runWith({secrets: STRIPE_SECRETS}).firestore
+    .document("rides/{rideId}")
+    .onUpdate(async (change, context) => {
+      const before = change.before.data();
+      const after = change.after.data();
+      const rideId = context.params.rideId;
+      if (!passengerEndedEarly(before, after)) return null;
+
+      try {
+        let endPoint = null;
+        if (after.driverId) {
+          const driverSnap = await db.collection("drivers")
+              .doc(after.driverId).get();
+          endPoint = driverSnap.exists ? driverSnap.data().location : null;
+        }
+        const cfg = await loadAppConfig();
+        const fare = endedEarlyFare(after, endPoint, cfg.fares.minimumFare,
+            toMillis(after.cancelledAt) || Date.now());
+        const FieldValue = admin.firestore.FieldValue;
+
+        await db.collection("rides").doc(rideId).update({
+          "status": "completed",
+          "completedAt": FieldValue.serverTimestamp(),
+          "expiresAt": FieldValue.serverTimestamp(),
+          "endedEarlyBy": "rider",
+          "completedAwayFromDropoff": true,
+          "endedAtLocation": endPoint && endPoint.latitude ?
+            {latitude: endPoint.latitude, longitude: endPoint.longitude} :
+            null,
+          "fare.fullTotal": fare.fullTotal,
+          "fare.total": fare.total,
+          "fare.endedEarlyPercent": fare.percent,
+          "cancelledBy": FieldValue.delete(),
+          "cancelReason": FieldValue.delete(),
+          "cancelledAt": FieldValue.delete(),
+        });
+
+        if (after.driverId) {
+          const amount = emailMoney(fare.total, rideCurrency(after));
+          await sendPush([after.driverId], {
+            channelId: "trip-updates",
+            data: {type: "trip", rideId},
+            title: "Passenger ended the trip early",
+            body: after.paymentMethod === "cash" ?
+              `Fare so far: ${amount} (waiting time extra). ` +
+              "Collect it in cash before they leave." :
+              `Fare so far: ${amount}. It is charged to their card.`,
+          }).catch(() => null);
+        }
+        console.log("🛑 Trip ended early:", rideId, fare);
+      } catch (error) {
+        // Better no charge than a hold left on the card.
+        console.error("❌ Ended-early fare failed, releasing hold:", rideId,
+            error);
+        if (after.paymentIntentId) {
+          await stripe.paymentIntents.cancel(after.paymentIntentId)
+              .catch(() => null);
+        }
+      }
+      return null;
+    });
+
 exports.cancelRidePayment = functions
     .runWith({secrets: STRIPE_SECRETS}).firestore
     .document("rides/{rideId}")
@@ -1032,6 +1158,9 @@ exports.cancelRidePayment = functions
           !cancelWords.includes(after.status)) {
         return null;
       }
+
+      // chargeTripEndedEarly charges the fare so far from this hold.
+      if (passengerEndedEarly(before, after)) return null;
 
       const paymentIntentId = after.paymentIntentId;
       if (!paymentIntentId) return null;
@@ -2878,6 +3007,9 @@ exports.notifyRideUpdates = functions.firestore
       if (cancelled.includes(after.status)) {
         // Timed out with no driver: expireSearchingRides already told them.
         if (after.cancelledBy === "timeout") return null;
+        // Completed at the fare so far by chargeTripEndedEarly, which tells
+        // the driver; the passenger is told when it completes.
+        if (passengerEndedEarly(before, after)) return null;
         if (after.cancelledBy === "driver") {
           const noShow = after.cancelReason === "passenger_no_show";
           const fee = noShow ? cancellationFee(before, after) : 0;
