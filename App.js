@@ -108,6 +108,8 @@ export default function App() {
   const [driverOnboardingStatus, setDriverOnboardingStatus] = useState(null);
   // Set from the admin dashboard (Users > Block account).
   const [isBlocked, setIsBlocked] = useState(false);
+  // Why, and whether the driver's fleet (rather than TakeARoute) did it.
+  const [blockInfo, setBlockInfo] = useState(null);
   // Bumped on sign-out so the sign-in flow starts again from the first screen.
   const [authEpoch, setAuthEpoch] = useState(0);
   const [navReady, setNavReady] = useState(false);
@@ -144,6 +146,7 @@ export default function App() {
         (snap) => {
           const data = snap.exists() ? snap.data() : null;
           setIsBlocked(data?.blocked === true);
+          setBlockInfo(data?.blocked === true ? { reason: data.blockedReason || '', byFleet: Boolean(data.blockedByFleet), fleetName: data.fleetName || '' } : null);
 
           if (role === "rider") {
             if (!data || !data.fullName) {
@@ -326,7 +329,13 @@ export default function App() {
           Account suspended
         </Text>
         <Text style={[TYPE.body, { color: COLORS.muted, textAlign: "center", marginBottom: SPACE[6] }]}>
-          Your TakeARoute account has been suspended. Please contact support if you think this is a mistake.
+          {blockInfo?.byFleet
+            ? `${blockInfo.fleetName || 'Your fleet'} has suspended your account for breaking the terms and conditions.`
+            : 'Your TakeARoute account has been suspended for breaking the terms and conditions.'}
+          {blockInfo?.reason ? ` Reason: ${blockInfo.reason}.` : ''}
+          {blockInfo?.byFleet
+            ? ' Please speak to your fleet.'
+            : ' Please contact support if you think this is a mistake.'}
         </Text>
         <Button title="Sign out" variant="dark" onPress={() => signOutEverywhere().catch(() => {})} />
         <AlertHost />

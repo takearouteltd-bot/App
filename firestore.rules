@@ -147,6 +147,7 @@ service cloud.firestore {
     function driverGrantsNothing(data) {
       return data.get("approved", false) == false &&
         data.get("blocked", false) == false &&
+        !data.keys().hasAny(["blockedByFleet"]) &&
         data.get("femaleVerified", false) == false &&
         !("subscription" in data) &&
         !data.keys().hasAny(["fleetId", "fleetName", "fleetRequest", "fleetInvite"]);
@@ -154,7 +155,8 @@ service cloud.firestore {
 
     function driverKeepsGuardedFields() {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
-      return !changed.hasAny(["subscription", "femaleVerified", "blocked"]) &&
+      return !changed.hasAny(["subscription", "femaleVerified", "blocked",
+          "blockedReason", "blockedBy", "blockedAt", "blockedByFleet"]) &&
         /* Joining and leaving a fleet go through functions/fleet.js. */
         !changed.hasAny(["fleetId", "fleetName", "fleetJoinedAt", "fleetRequest",
           "fleetInvite", "subscriptionBeforeFleet", "lastFleetId", "fleetLeftAt"]) &&

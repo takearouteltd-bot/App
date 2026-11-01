@@ -181,3 +181,8 @@ test('staff save their own phone for calls, nothing else', async () => {
   await assertFails(updateDoc(doc(as('op1'), 'fleetManagers/own1'), { phone: '+447700900555' }));
   await assertFails(updateDoc(doc(as('op1'), 'fleetManagers/op1'), { phone: '+447700900555', role: 'owner' }));
 });
+test('driver cannot touch who suspended them', async () => {
+  await assertFails(updateDoc(doc(as('d1'), 'drivers/d1'), { blockedByFleet: 'f1' }));
+  await assertFails(updateDoc(doc(as('d1'), 'drivers/d1'), { blockedReason: '' }));
+  await assertFails(setDoc(doc(as('dnew2'), 'drivers/dnew2'), { approved: false, blockedByFleet: 'f1' }));
+});

@@ -354,6 +354,65 @@ module.exports = (deps) => {
   }
 
   /**
+   * Tells someone their account was suspended, or that it is back on.
+   * @param {string} uid User.
+   * @param {boolean} suspended Suspended (true) or lifted (false).
+   * @param {string} reason Reason given, if any.
+   * @param {string} by Who did it, as the person should read it.
+   * @return {Promise<void>}
+   */
+  async function tellSuspension(uid, suspended, reason, by) {
+    await sendPush([uid], suspended ? {
+      title: "Your account has been suspended",
+      body: `${by} suspended your account for breaking the terms and ` +
+        `conditions.${reason ? ` Reason: ${reason}.` : ""} You cannot ` +
+        "take jobs until it is lifted.",
+      channelId: "general",
+    } : {
+      title: "Your account is active again",
+      body: `${by} lifted your suspension. You can go online again.`,
+      channelId: "general",
+    }).catch(() => null);
+  }
+
+  /**
+   * Offers waiting for this driver go back to the fleet's office.
+   * @param {string} fleetId Fleet.
+   * @param {string} driverId Driver.
+   * @param {Array} docs Open rides of the fleet (snapshots).
+   * @return {Promise<void>}
+   */
+  async function returnOffers(fleetId, driverId, docs) {
+    for (const d of docs) {
+      const r = d.data();
+      if (!r.dispatch || r.dispatch.driverId !== driverId) continue;
+      await d.ref.update(r.status === "dispatching" ? {
+        "dispatch.driverId": null,
+        "dispatch.returnedBy": driverId,
+        "dispatch.returnedAt": FieldValue.serverTimestamp(),
+        "dispatch.offeredAt": null,
+      } : {"dispatch.driverId": null}).catch(() => null);
+    }
+  }
+
+  /**
+   * The fleet's open rides, and the one this driver is doing, if any.
+   * @param {string} fleetId Fleet.
+   * @param {string} driverId Driver.
+   * @return {Promise<Object>} {docs, onJob}
+   */
+  async function openFleetRides(fleetId, driverId) {
+    const open = await db.collection("rides")
+        .where("fleetId", "==", fleetId)
+        .where("status", "in", ["scheduled", "dispatching", "accepted",
+          "arrived", "ongoing"])
+        .get();
+    const onJob = open.docs.find((d) => d.data().driverId === driverId &&
+      ["accepted", "arrived", "ongoing"].includes(d.data().status));
+    return {docs: open.docs, onJob};
+  }
+
+  /**
    * The zone a point is in: the smallest circle that contains it, so a
    * station zone inside a town zone wins.
    * @param {Array} zones Fleet zones [{id, name, center, radiusKm}].
@@ -914,13 +973,7 @@ module.exports = (deps) => {
 
     // Not in the middle of one of the fleet's jobs: it would be left with
     // a driver who no longer works for them.
-    const open = await db.collection("rides")
-        .where("fleetId", "==", me.fleetId)
-        .where("status", "in", ["scheduled", "dispatching", "accepted",
-          "arrived", "ongoing"])
-        .get();
-    const onJob = open.docs.find((d) => d.data().driverId === driverId &&
-      ["accepted", "arrived", "ongoing"].includes(d.data().status));
+    const {docs, onJob} = await openFleetRides(me.fleetId, driverId);
     if (onJob) {
       throw new HttpsError("failed-precondition",
           "This driver is on one of your jobs. Remove them once it has " +
@@ -941,27 +994,26 @@ module.exports = (deps) => {
       const before = driver.subscriptionBeforeFleet;
       restored = Boolean(before && before.paymentMethod !== "fleet" &&
         ["active", "past_due", "suspended"].includes(before.status));
-      tx.update(driverRef, {
+      // A suspension this fleet made ends with their say over the driver;
+      // one by TakeARoute stays.
+      const liftOwn = driver.blocked === true &&
+        driver.blockedByFleet === me.fleetId;
+      tx.update(driverRef, Object.assign(liftOwn ? {
+        blocked: false, blockedReason: "", blockedByFleet: null,
+        unblockedAt: new Date().toISOString(),
+        unblockedBy: `${me.fleet.name} (left the fleet)`,
+      } : {}, {
         fleetId: null,
         fleetName: null,
         fleetLeftAt: FieldValue.serverTimestamp(),
         lastFleetId: me.fleetId,
         subscription: restored ? before : FieldValue.delete(),
         subscriptionBeforeFleet: FieldValue.delete(),
-      });
+      }));
     });
 
     // Offers that were waiting for this driver go back to the office.
-    for (const d of open.docs) {
-      const r = d.data();
-      if (!r.dispatch || r.dispatch.driverId !== driverId) continue;
-      await d.ref.update(r.status === "dispatching" ? {
-        "dispatch.driverId": null,
-        "dispatch.returnedBy": driverId,
-        "dispatch.returnedAt": FieldValue.serverTimestamp(),
-        "dispatch.offeredAt": null,
-      } : {"dispatch.driverId": null}).catch(() => null);
-    }
+    await returnOffers(me.fleetId, driverId, docs);
 
     await sendPush([driverId], {
       title: `You left ${me.fleet.name}`,
@@ -973,6 +1025,93 @@ module.exports = (deps) => {
       channelId: "general",
     }).catch(() => null);
     return {ok: true, membershipRestored: restored};
+  });
+
+  /* A fleet's owner or operator suspends one of their drivers (or lifts
+     it). It is the same block TakeARoute admins use (drivers/{id}.blocked),
+     so the app shows "Account suspended" and no job reaches them; it is
+     marked as the fleet's, and the fleet can only lift its own. What is
+     owed between the fleet and the driver is for them to settle. */
+  out.suspendFleetDriver = functions.https.onCall(async (data, context) => {
+    const me = await assertFleetManager(context, false);
+    const driverId = text(data && data.driverId, 128);
+    const suspend = !(data && data.suspend === false);
+    const reason = text(data && data.reason, 200);
+    const driverRef = db.collection("drivers").doc(driverId);
+
+    const {docs, onJob} = await openFleetRides(me.fleetId, driverId);
+    if (suspend && onJob) {
+      throw new HttpsError("failed-precondition",
+          "This driver is on one of your jobs. Suspend them once it has " +
+          "ended, or cancel or resend the job first.");
+    }
+    const by = `${me.manager.name || me.manager.email || "Staff"}, ` +
+      `${me.fleet.name} (fleet)`;
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(driverRef);
+      const driver = snap.exists ? snap.data() : null;
+      if (!driver || driver.fleetId !== me.fleetId) {
+        throw new HttpsError("not-found", "Not one of your drivers.");
+      }
+      if (suspend) {
+        if (driver.blocked === true) {
+          throw new HttpsError("already-exists", "Already suspended.");
+        }
+        tx.update(driverRef, {
+          blocked: true, blockedReason: reason,
+          blockedAt: new Date().toISOString(),
+          blockedBy: by,
+          blockedByFleet: me.fleetId, status: "offline",
+        });
+      } else {
+        if (driver.blocked !== true) {
+          throw new HttpsError("failed-precondition", "Not suspended.");
+        }
+        if (driver.blockedByFleet !== me.fleetId) {
+          throw new HttpsError("permission-denied",
+              "TakeARoute suspended this driver. Please contact TakeARoute.");
+        }
+        tx.update(driverRef, {
+          blocked: false, blockedReason: "", blockedByFleet: null,
+          unblockedAt: new Date().toISOString(),
+          unblockedBy: by,
+        });
+      }
+    });
+    if (suspend) await returnOffers(me.fleetId, driverId, docs);
+    await tellSuspension(driverId, suspend, reason, me.fleet.name);
+    return {ok: true, suspended: suspend};
+  });
+
+  /* A TakeARoute admin suspends an account (driver and passenger records
+     alike) or lifts it, and the person is told. */
+  out.setAccountSuspension = functions.https.onCall(async (data, context) => {
+    await assertAdmin(context);
+    const uid = text(data && data.uid, 128);
+    const suspend = !(data && data.suspend === false);
+    const reason = text(data && data.reason, 200);
+    const adminSnap = await db.collection("admins").doc(context.auth.uid)
+        .get();
+    const who = (adminSnap.data() || {}).email || context.auth.token.email ||
+      "an admin";
+    let found = 0;
+    for (const coll of ["drivers", "riders"]) {
+      const ref = db.collection(coll).doc(uid);
+      const snap = await ref.get();
+      if (!snap.exists) continue;
+      found++;
+      await ref.update(suspend ? Object.assign({
+        blocked: true, blockedReason: reason,
+        blockedAt: new Date().toISOString(), blockedBy: who,
+        blockedByFleet: null,
+      }, coll === "drivers" ? {status: "offline"} : {}) : {
+        blocked: false, blockedReason: "", blockedByFleet: null,
+        unblockedAt: new Date().toISOString(), unblockedBy: who,
+      });
+    }
+    if (!found) throw new HttpsError("not-found", "No such account.");
+    await tellSuspension(uid, suspend, reason, "TakeARoute");
+    return {ok: true, suspended: suspend};
   });
 
   /* --------------------------- phone bookings ------------------------ */

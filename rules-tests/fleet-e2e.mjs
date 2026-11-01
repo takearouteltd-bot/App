@@ -250,6 +250,34 @@ await adminSet(`drivers/${d3.user.uid}`, { subscriptionBeforeFleet: null }, true
 assert.equal((await O.call('removeFleetDriver', { driverId: d3.user.uid })).membershipRestored, false);
 assert.equal((await getDoc(doc(D3.db, 'drivers', d3.user.uid))).data().subscription, undefined);
 
+step('suspension: fleet cannot suspend mid-job; suspends with a reason; driver offline, no jobs, offers back to office; fleet lifts its own only; admin suspends and lifts; removal ends the fleet\'s own');
+await assert.rejects(O.call('suspendFleetDriver', { driverId: d4.user.uid, reason: 'x' }), /on one of your jobs/);
+await O.call('cancelFleetBooking', { rideId: bq.rideId });
+await adminSet(`drivers/${d4.user.uid}`, { status: 'online', isOnRide: false }, true);
+const bS = await O.call('createFleetBooking', { customer: { phone: '07700900999', name: 'Ann Smith' }, pickup: T5, dropoff: PAD, driverId: d4.user.uid });
+await O.call('suspendFleetDriver', { driverId: d4.user.uid, reason: 'Repeated no-shows' });
+let d4doc = (await getDoc(doc(D4.db, 'drivers', d4.user.uid))).data();
+assert.equal(d4doc.blocked, true); assert.equal(d4doc.blockedByFleet, fid); assert.equal(d4doc.status, 'offline'); assert.equal(d4doc.blockedReason, 'Repeated no-shows');
+assert.equal((await getDoc(doc(O.db, 'rides', bS.rideId))).data().dispatch.returnedBy, d4.user.uid);
+await assert.rejects(updateDoc(doc(D4.db, 'drivers', d4.user.uid), { status: 'online' }), 'suspended driver going online');
+await O.call('redispatchFleetBooking', { rideId: bS.rideId, driverId: null });
+await assert.rejects(updateDoc(doc(D4.db, 'rides', bS.rideId), claim(d4.user.uid)), 'suspended driver taking a job');
+await assert.rejects(updateDoc(doc(D4.db, 'drivers', d4.user.uid), { blockedByFleet: null }), 'driver editing the suspension');
+await O.call('suspendFleetDriver', { driverId: d4.user.uid, suspend: false });
+assert.equal((await getDoc(doc(D4.db, 'drivers', d4.user.uid))).data().blocked, false);
+await A.call('setAccountSuspension', { uid: d4.user.uid, reason: 'Admin check' });
+d4doc = (await getDoc(doc(D4.db, 'drivers', d4.user.uid))).data();
+assert.equal(d4doc.blocked, true); assert.equal(d4doc.blockedByFleet, null);
+await assert.rejects(O.call('suspendFleetDriver', { driverId: d4.user.uid, suspend: false }), /TakeARoute suspended/);
+await A.call('setAccountSuspension', { uid: d4.user.uid, suspend: false });
+assert.equal((await getDoc(doc(D4.db, 'drivers', d4.user.uid))).data().blocked, false);
+await assert.rejects(D.call('setAccountSuspension', { uid: d4.user.uid }), 'driver using admin suspension');
+await O.call('cancelFleetBooking', { rideId: bS.rideId });
+await O.call('suspendFleetDriver', { driverId: d4.user.uid, reason: 'Leaving' });
+await O.call('removeFleetDriver', { driverId: d4.user.uid });
+d4doc = (await getDoc(doc(D4.db, 'drivers', d4.user.uid))).data();
+assert.equal(d4doc.fleetId, null); assert.equal(d4doc.blocked, false, 'fleet suspension ends when they leave');
+
 step('paused fleet cannot book');
 await adminSet(`fleets/${created.fleetId}`, { status: 'suspended' }, true);
 await assert.rejects(O.call('createFleetBooking', { customer: { phone: '07700900777' }, pickup: T5, dropoff: PAD }));
