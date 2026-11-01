@@ -59,7 +59,7 @@ export default function DriverFleetScreen() {
               You get their phone bookings as well as normal app jobs.
             </Text>
             <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>
-              To leave, ask your fleet to remove you. You will then drive on your own and pay your own membership.
+              To leave, ask your fleet to remove you. You then drive on your own: card fares go to your wallet again, and the membership you had before joining comes back (or you activate one).
             </Text>
           </Card>
         </Section>

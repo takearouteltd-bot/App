@@ -342,7 +342,7 @@ export default function DriverHomeScreen() {
     }
 
     // Driving needs an active membership; nothing else starts it.
-    if (newStatus === 'online' && (!membershipStatus || membershipStatus === 'cancelled')) {
+    if (newStatus === 'online' && (!membershipStatus || membershipStatus === 'cancelled' || membershipStatus === 'inactive')) {
       Alert.alert(
         'Activate your membership first',
         'You need an active membership to go online and take jobs.',

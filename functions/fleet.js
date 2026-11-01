@@ -911,29 +911,68 @@ module.exports = (deps) => {
     const me = await assertFleetManager(context, false);
     const driverId = text(data && data.driverId, 128);
     const driverRef = db.collection("drivers").doc(driverId);
+
+    // Not in the middle of one of the fleet's jobs: it would be left with
+    // a driver who no longer works for them.
+    const open = await db.collection("rides")
+        .where("fleetId", "==", me.fleetId)
+        .where("status", "in", ["scheduled", "dispatching", "accepted",
+          "arrived", "ongoing"])
+        .get();
+    const onJob = open.docs.find((d) => d.data().driverId === driverId &&
+      ["accepted", "arrived", "ongoing"].includes(d.data().status));
+    if (onJob) {
+      throw new HttpsError("failed-precondition",
+          "This driver is on one of your jobs. Remove them once it has " +
+          "ended, or cancel or resend the job first.");
+    }
+
+    let restored = false;
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(driverRef);
       const driver = snap.exists ? snap.data() : null;
       if (!driver || driver.fleetId !== me.fleetId) {
         throw new HttpsError("not-found", "Not one of your drivers.");
       }
+      // Back to driving on their own: the membership they had before
+      // joining comes back as it was (renewals pick it up from its billing
+      // date); with none, they activate one like any new driver, which
+      // every build of the app asks for before going online.
+      const before = driver.subscriptionBeforeFleet;
+      restored = Boolean(before && before.paymentMethod !== "fleet" &&
+        ["active", "past_due", "suspended"].includes(before.status));
       tx.update(driverRef, {
         fleetId: null,
         fleetName: null,
         fleetLeftAt: FieldValue.serverTimestamp(),
         lastFleetId: me.fleetId,
-        // No membership until they activate their own (Membership screen).
-        subscription: {status: "inactive", paymentMethod: "wallet_deduction",
-          endedFleetAt: Timestamp.now()},
+        subscription: restored ? before : FieldValue.delete(),
+        subscriptionBeforeFleet: FieldValue.delete(),
       });
     });
+
+    // Offers that were waiting for this driver go back to the office.
+    for (const d of open.docs) {
+      const r = d.data();
+      if (!r.dispatch || r.dispatch.driverId !== driverId) continue;
+      await d.ref.update(r.status === "dispatching" ? {
+        "dispatch.driverId": null,
+        "dispatch.returnedBy": driverId,
+        "dispatch.returnedAt": FieldValue.serverTimestamp(),
+        "dispatch.offeredAt": null,
+      } : {"dispatch.driverId": null}).catch(() => null);
+    }
+
     await sendPush([driverId], {
       title: `You left ${me.fleet.name}`,
-      body: "You now drive independently. Activate your membership in " +
-        "the app to keep going online.",
+      body: restored ?
+        "You now drive independently. Your own membership is back on, " +
+          "and card fares go to your wallet again." :
+        "You now drive independently. Activate your membership in the " +
+          "app to keep going online; card fares go to your wallet again.",
       channelId: "general",
     }).catch(() => null);
-    return {ok: true};
+    return {ok: true, membershipRestored: restored};
   });
 
   /* --------------------------- phone bookings ------------------------ */
