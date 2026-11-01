@@ -7,11 +7,19 @@
      approves them, or the fleet invites a driver by phone number and the
      driver accepts in the app. TakeARoute still checks every driver's
      documents as usual (drivers/{id}.approved).
-   - While in a fleet, a driver's card earnings go to the fleet's wallet
-     (fleetWallets/{fleetId}), not their own, and they cannot withdraw. The
-     fleet pays a monthly membership per driver instead of the driver
-     (billFleets), and admins pay fleets by bank and record it
-     (recordFleetPayout).
+   - A fleet driver is one of two kinds (drivers/{id}.fleetDriverType),
+     chosen by the fleet when it approves or invites them; only a
+     TakeARoute admin can change it afterwards (setFleetDriverType):
+       "company"  drives the fleet's car, rented or on commission. Card
+                  earnings go to the fleet's wallet (fleetWallets/{fleetId}),
+                  not their own, and the fleet pays a monthly membership per
+                  company driver (billFleets). The fleet can let them go.
+                  Members from before the two kinds existed are "company".
+       "self"     self-employed, own car. Takes the fleet's jobs but keeps
+                  their own wallet and pays their own membership. The fleet
+                  can suspend them but not remove them; they leave
+                  themselves (leaveFleet) or an admin takes them out.
+     Admins pay fleets by bank and record it (recordFleetPayout).
    - Fleet operators take phone bookings on the fleet dashboard
      (quoteFleetBooking, createFleetBooking). A phone job has no passenger
      account: rides/{id}.source "phone", riderId null, customer {name,
@@ -299,6 +307,29 @@ module.exports = (deps) => {
   function canTakeFleetJob(d, ride) {
     return d.fleetId === ride.fleetId && canWork(d) &&
       canServe(d.vehicleType, ride.rideType);
+  }
+
+  /**
+   * The driver's kind in their fleet: "self" (self-employed, own car) or
+   * "company" (the fleet's car). Members from before the kinds existed are
+   * company drivers, as they were then.
+   * @param {Object} d Driver data.
+   * @return {string} "self" or "company".
+   */
+  function fleetTypeOf(d) {
+    return d.fleetDriverType === "self" ? "self" : "company";
+  }
+
+  /**
+   * A driver kind sent by the dashboard, or throws.
+   * @param {*} v Value.
+   * @return {string} "self" or "company".
+   */
+  function chosenType(v) {
+    if (v === "self" || v === "company") return v;
+    throw new HttpsError("invalid-argument",
+        "Choose company car or self-employed. If you do not see the choice, " +
+        "refresh the page.");
   }
 
   /**
@@ -755,29 +786,80 @@ module.exports = (deps) => {
   /* ---------------------------- drivers ------------------------------ */
 
   /**
-   * Puts a driver into a fleet: earnings and membership move to the fleet.
+   * The membership fields for a driver becoming a company driver: the
+   * fleet pays, and their own membership is kept to give back if they go.
+   * @param {Object} driver Driver data.
+   * @param {string} fleetId Fleet id.
+   * @param {string} fleetName Fleet name.
+   * @return {Object} Fields to write.
+   */
+  function fleetPaysFields(driver, fleetId, fleetName) {
+    const sub = driver.subscription || null;
+    return {
+      // Kept as "active" so every build of the app lets the driver go
+      // online; renewals skip anything that is not wallet_deduction.
+      subscriptionBeforeFleet: sub && sub.paymentMethod !== "fleet" ?
+        sub : (driver.subscriptionBeforeFleet || null),
+      subscription: {status: "active", paymentMethod: "fleet", fleetId,
+        fleetName},
+    };
+  }
+
+  /**
+   * The membership fields for a company driver going back to paying their
+   * own: the one they had before comes back as it was (renewals pick it up
+   * from its billing date); with none, they activate one like any new
+   * driver, which every build of the app asks for before going online.
+   * @param {Object} driver Driver data.
+   * @return {Object} {fields, restored}
+   */
+  function ownMembershipFields(driver) {
+    const sub = driver.subscription || null;
+    if (!sub || sub.paymentMethod !== "fleet") {
+      return {fields: {subscriptionBeforeFleet: FieldValue.delete()},
+        restored: Boolean(sub)};
+    }
+    const before = driver.subscriptionBeforeFleet;
+    const restored = Boolean(before && before.paymentMethod !== "fleet" &&
+      ["active", "past_due", "suspended"].includes(before.status));
+    return {restored, fields: {
+      subscription: restored ? before : FieldValue.delete(),
+      subscriptionBeforeFleet: FieldValue.delete(),
+    }};
+  }
+
+  /**
+   * Puts a driver into a fleet. A company driver's earnings and membership
+   * move to the fleet; a self-employed driver keeps their own.
    * @param {Object} tx Transaction.
    * @param {Object} driverRef Driver document.
    * @param {Object} driver Driver data.
    * @param {string} fleetId Fleet id.
    * @param {Object} fleet Fleet data.
+   * @param {string} type "company" or "self".
    */
-  function joinInTx(tx, driverRef, driver, fleetId, fleet) {
-    const sub = driver.subscription || null;
-    tx.update(driverRef, {
+  function joinInTx(tx, driverRef, driver, fleetId, fleet, type) {
+    tx.update(driverRef, Object.assign({
       fleetId,
       fleetName: fleet.name,
+      fleetDriverType: type,
       fleetJoinedAt: FieldValue.serverTimestamp(),
       fleetRequest: FieldValue.delete(),
       fleetInvite: FieldValue.delete(),
-      // The fleet pays the membership. Kept as "active" so every build of
-      // the app lets the driver go online; renewals skip anything that is
-      // not wallet_deduction.
-      subscriptionBeforeFleet: sub && sub.paymentMethod !== "fleet" ?
-        sub : (driver.subscriptionBeforeFleet || null),
-      subscription: {status: "active", paymentMethod: "fleet", fleetId,
-        fleetName: fleet.name},
-    });
+    }, type === "company" ? fleetPaysFields(driver, fleetId, fleet.name) : {}));
+  }
+
+  /**
+   * What the driver is told on joining.
+   * @param {string} type "company" or "self".
+   * @return {string} Message.
+   */
+  function joinedText(type) {
+    return type === "company" ?
+      "As a company driver, your fleet receives your card earnings and " +
+        "pays your membership." :
+      "You can now take their jobs. As a self-employed driver, card fares " +
+        "still go to your wallet and you keep your own membership.";
   }
 
   /* A driver asks to join a fleet with its join code. */
@@ -807,7 +889,7 @@ module.exports = (deps) => {
     if (driver.fleetId) {
       throw new HttpsError("failed-precondition",
           `You drive for ${driver.fleetName || "another fleet"}. ` +
-          "Ask them to remove you first.");
+          "Leave that fleet first.");
     }
     await driverRef.update({fleetRequest: {
       fleetId: fleetDoc.id, fleetName: fleetDoc.data().name,
@@ -849,9 +931,12 @@ module.exports = (deps) => {
         throw new HttpsError("failed-precondition",
             `You drive for ${driver.fleetName || "another fleet"}.`);
       }
-      joinInTx(tx, driverRef, driver, invite.fleetId, fleetSnap.data());
+      // Invitations from before the kinds existed made company drivers.
+      const type = invite.driverType === "self" ? "self" : "company";
+      joinInTx(tx, driverRef, driver, invite.fleetId, fleetSnap.data(), type);
       if (inviteRef) tx.delete(inviteRef);
-      return {joined: true, fleetName: fleetSnap.data().name};
+      return {joined: true, fleetName: fleetSnap.data().name,
+        driverType: type};
     });
     return result;
   });
@@ -861,6 +946,7 @@ module.exports = (deps) => {
     const me = await assertFleetManager(context, false);
     const driverId = text(data && data.driverId, 128);
     const approve = data && data.approve === true;
+    const type = approve ? chosenType(data.driverType) : null;
     const driverRef = db.collection("drivers").doc(driverId);
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(driverRef);
@@ -877,12 +963,11 @@ module.exports = (deps) => {
         throw new HttpsError("failed-precondition",
             "This driver has joined another fleet.");
       }
-      joinInTx(tx, driverRef, driver, me.fleetId, me.fleet);
+      joinInTx(tx, driverRef, driver, me.fleetId, me.fleet, type);
     });
     await sendPush([driverId], {
       title: approve ? `You joined ${me.fleet.name}` : "Fleet request declined",
-      body: approve ?
-        "Your fleet now receives your card earnings and pays your membership." :
+      body: approve ? joinedText(type) :
         `${me.fleet.name} did not accept your request.`,
       channelId: "general",
     }).catch(() => null);
@@ -899,6 +984,7 @@ module.exports = (deps) => {
           "Enter the driver's mobile number.");
     }
     const invite = {fleetId: me.fleetId, fleetName: me.fleet.name,
+      driverType: chosenType(data.driverType),
       invitedAt: Timestamp.now(), invitedBy: me.uid};
     await db.collection("fleetInvites").doc(phone).set(
         Object.assign({phone}, invite));
@@ -959,72 +1045,160 @@ module.exports = (deps) => {
         if (!invite.exists) return null;
         const i = invite.data();
         await change.after.ref.update({fleetInvite: {fleetId: i.fleetId,
-          fleetName: i.fleetName, invitedAt: i.invitedAt,
-          invitedBy: i.invitedBy || null}});
+          fleetName: i.fleetName, driverType: i.driverType || "company",
+          invitedAt: i.invitedAt, invitedBy: i.invitedBy || null}});
         return null;
       });
 
-  /* The fleet lets a driver go: they become an independent driver again
-     and pay their own membership from now on. */
-  out.removeFleetDriver = functions.https.onCall(async (data, context) => {
-    const me = await assertFleetManager(context, false);
-    const driverId = text(data && data.driverId, 128);
+  /**
+   * Takes a driver out of their fleet; they drive independently from then
+   * on. Not while they are on one of the fleet's jobs: it would be left
+   * with a driver who no longer works for them.
+   * @param {string} driverId Driver.
+   * @param {Function} check Throws if the caller may not, given the
+   *     driver's data.
+   * @param {string} by Who did it, kept on the driver.
+   * @return {Promise<Object>} {fleetId, fleetName, type, restored}
+   */
+  async function takeOutOfFleet(driverId, check, by) {
     const driverRef = db.collection("drivers").doc(driverId);
-
-    // Not in the middle of one of the fleet's jobs: it would be left with
-    // a driver who no longer works for them.
-    const {docs, onJob} = await openFleetRides(me.fleetId, driverId);
+    const first = await driverRef.get();
+    const fleetId = first.exists ? first.data().fleetId : null;
+    if (!fleetId) throw new HttpsError("not-found", "Not in a fleet.");
+    check(first.data());
+    const {docs, onJob} = await openFleetRides(fleetId, driverId);
     if (onJob) {
       throw new HttpsError("failed-precondition",
-          "This driver is on one of your jobs. Remove them once it has " +
-          "ended, or cancel or resend the job first.");
+          "This driver is on one of the fleet's jobs. Try again once it " +
+          "has ended, or cancel or resend the job first.");
     }
 
-    let restored = false;
-    await db.runTransaction(async (tx) => {
+    const result = await db.runTransaction(async (tx) => {
       const snap = await tx.get(driverRef);
       const driver = snap.exists ? snap.data() : null;
-      if (!driver || driver.fleetId !== me.fleetId) {
-        throw new HttpsError("not-found", "Not one of your drivers.");
+      if (!driver || driver.fleetId !== fleetId) {
+        throw new HttpsError("aborted", "Their fleet changed. Try again.");
       }
-      // Back to driving on their own: the membership they had before
-      // joining comes back as it was (renewals pick it up from its billing
-      // date); with none, they activate one like any new driver, which
-      // every build of the app asks for before going online.
-      const before = driver.subscriptionBeforeFleet;
-      restored = Boolean(before && before.paymentMethod !== "fleet" &&
-        ["active", "past_due", "suspended"].includes(before.status));
-      // A suspension this fleet made ends with their say over the driver;
-      // one by TakeARoute stays.
+      check(driver);
+      const type = fleetTypeOf(driver);
+      const own = ownMembershipFields(driver);
+      // A suspension the fleet made ends with its say over the driver; one
+      // by TakeARoute stays.
       const liftOwn = driver.blocked === true &&
-        driver.blockedByFleet === me.fleetId;
+        driver.blockedByFleet === fleetId;
       tx.update(driverRef, Object.assign(liftOwn ? {
         blocked: false, blockedReason: "", blockedByFleet: null,
         unblockedAt: new Date().toISOString(),
-        unblockedBy: `${me.fleet.name} (left the fleet)`,
-      } : {}, {
+        unblockedBy: `${driver.fleetName || "Fleet"} (left the fleet)`,
+      } : {}, own.fields, {
         fleetId: null,
         fleetName: null,
+        fleetDriverType: FieldValue.delete(),
         fleetLeftAt: FieldValue.serverTimestamp(),
-        lastFleetId: me.fleetId,
-        subscription: restored ? before : FieldValue.delete(),
-        subscriptionBeforeFleet: FieldValue.delete(),
+        fleetLeftBy: by,
+        lastFleetId: fleetId,
       }));
+      return {fleetId, fleetName: driver.fleetName || "your fleet", type,
+        restored: own.restored};
     });
 
     // Offers that were waiting for this driver go back to the office.
-    await returnOffers(me.fleetId, driverId, docs);
+    await returnOffers(fleetId, driverId, docs);
 
     await sendPush([driverId], {
-      title: `You left ${me.fleet.name}`,
-      body: restored ?
-        "You now drive independently. Your own membership is back on, " +
-          "and card fares go to your wallet again." :
-        "You now drive independently. Activate your membership in the " +
-          "app to keep going online; card fares go to your wallet again.",
+      title: `You left ${result.fleetName}`,
+      body: result.type === "self" ?
+        "You now drive independently. Nothing changes with your " +
+          "membership or your wallet." :
+        result.restored ?
+          "You now drive independently. Your own membership is back on, " +
+            "and card fares go to your wallet again." :
+          "You now drive independently. Activate your membership in the " +
+            "app to keep going online; card fares go to your wallet again.",
       channelId: "general",
     }).catch(() => null);
-    return {ok: true, membershipRestored: restored};
+    return result;
+  }
+
+  /* The fleet lets one of its company drivers go. Self-employed drivers
+     are TakeARoute's: the fleet can suspend them, not remove them. */
+  out.removeFleetDriver = functions.https.onCall(async (data, context) => {
+    const me = await assertFleetManager(context, false);
+    const driverId = text(data && data.driverId, 128);
+    const by = `${me.manager.name || me.manager.email || "Staff"}, ` +
+      `${me.fleet.name} (fleet)`;
+    const result = await takeOutOfFleet(driverId, (driver) => {
+      if (driver.fleetId !== me.fleetId) {
+        throw new HttpsError("not-found", "Not one of your drivers.");
+      }
+      if (fleetTypeOf(driver) === "self") {
+        throw new HttpsError("permission-denied",
+            "Self-employed drivers can only be removed by TakeARoute. You " +
+            "can suspend them, or ask TakeARoute to remove them.");
+      }
+    }, by);
+    return {ok: true, membershipRestored: result.restored};
+  });
+
+  /* A self-employed driver leaves their fleet. Company drivers ask their
+     fleet, who let them go. */
+  out.leaveFleet = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new HttpsError("unauthenticated", "Sign in.");
+    const result = await takeOutOfFleet(context.auth.uid, (driver) => {
+      if (fleetTypeOf(driver) !== "self") {
+        throw new HttpsError("permission-denied",
+            "You drive one of your fleet's cars. Ask your fleet to let " +
+            "you go.");
+      }
+    }, "the driver");
+    return {ok: true, membershipRestored: result.restored};
+  });
+
+  /* A TakeARoute admin takes any driver out of their fleet. */
+  out.adminRemoveFleetDriver = functions.https.onCall(async (data, context) => {
+    await assertAdmin(context);
+    const driverId = text(data && data.driverId, 128);
+    const result = await takeOutOfFleet(driverId, () => null,
+        `${context.auth.token.email || "an admin"} (TakeARoute)`);
+    return {ok: true, membershipRestored: result.restored};
+  });
+
+  /* A TakeARoute admin changes a fleet driver between company car and
+     self-employed; membership and earnings follow from the next trip. */
+  out.setFleetDriverType = functions.https.onCall(async (data, context) => {
+    await assertAdmin(context);
+    const driverId = text(data && data.driverId, 128);
+    const type = chosenType(data && data.driverType);
+    const driverRef = db.collection("drivers").doc(driverId);
+    const result = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(driverRef);
+      const driver = snap.exists ? snap.data() : null;
+      if (!driver || !driver.fleetId) {
+        throw new HttpsError("not-found", "Not in a fleet.");
+      }
+      if (fleetTypeOf(driver) === type && driver.fleetDriverType === type) {
+        return {changed: false, fleetName: driver.fleetName};
+      }
+      const fields = type === "company" ?
+        fleetPaysFields(driver, driver.fleetId, driver.fleetName) :
+        ownMembershipFields(driver).fields;
+      tx.update(driverRef, Object.assign(fields, {fleetDriverType: type}));
+      return {changed: fleetTypeOf(driver) !== type,
+        fleetName: driver.fleetName};
+    });
+    if (result.changed) {
+      await sendPush([driverId], {
+        title: type === "company" ? "You are now a company driver" :
+          "You are now self-employed in your fleet",
+        body: type === "company" ?
+          `${result.fleetName || "Your fleet"} now receives your card ` +
+            "earnings and pays your membership." :
+          "Card fares now go to your wallet, and you pay your own " +
+            "membership.",
+        channelId: "general",
+      }).catch(() => null);
+    }
+    return {ok: true, changed: result.changed};
   });
 
   /* A fleet's owner or operator suspends one of their drivers (or lifts
@@ -1840,7 +2014,10 @@ module.exports = (deps) => {
           return null;
         }
         const snap = await db.collection("drivers").doc(after.driverId).get();
-        const fleetId = snap.exists ? snap.data().fleetId || null : null;
+        // Only company drivers' app trips are the fleet's (their fares go
+        // to its wallet); a self-employed driver's stay their own.
+        const fleetId = snap.exists && fleetTypeOf(snap.data()) === "company" ?
+          snap.data().fleetId || null : null;
         if ((after.fleetId || null) === fleetId) return null;
         await change.after.ref.update({
           fleetId,
@@ -1849,9 +2026,10 @@ module.exports = (deps) => {
         return null;
       });
 
-  /* Daily: each fleet's monthly membership, for every driver in the fleet
-     on its billing date, taken from the fleet's wallet. The wallet may go
-     below zero; the admin settles that with the fleet. */
+  /* Daily: each fleet's monthly membership, for every company driver in the
+     fleet on its billing date (self-employed drivers pay their own), taken
+     from the fleet's wallet. The wallet may go below zero; the admin
+     settles that with the fleet. */
   out.billFleets = functions.pubsub
       .schedule("every day 06:30").timeZone("Europe/London")
       .onRun(async () => {
@@ -1865,9 +2043,11 @@ module.exports = (deps) => {
             fleet.perDriverMonthly !== undefined &&
             Number(fleet.perDriverMonthly) >= 0 ?
             Number(fleet.perDriverMonthly) : cfg.subscription.monthlyPrice;
-          const drivers = await db.collection("drivers")
+          const members = await db.collection("drivers")
               .where("fleetId", "==", doc.id).get();
-          const count = drivers.size;
+          const drivers = {docs: members.docs.filter((d) =>
+            fleetTypeOf(d.data()) === "company")};
+          const count = drivers.docs.length;
           const amount = Math.round(count * price * 100) / 100;
           const walletRef = db.collection("fleetWallets").doc(doc.id);
           await db.runTransaction(async (tx) => {

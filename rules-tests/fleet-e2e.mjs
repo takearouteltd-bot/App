@@ -2,7 +2,7 @@
 // (auth 9099, firestore 8080, functions 5001), project demo-tar.
 import { initializeApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import { getFirestore, connectFirestoreEmulator, doc, getDoc, updateDoc, setDoc, arrayUnion } from 'firebase/firestore';
+import { getFirestore, connectFirestoreEmulator, doc, getDoc, getDocs, collection, updateDoc, setDoc, arrayUnion } from 'firebase/firestore';
 import { getFunctions, connectFunctionsEmulator, httpsCallable } from 'firebase/functions';
 import assert from 'node:assert/strict';
 
@@ -55,12 +55,14 @@ for (const [u, phone] of [[d1.user.uid, '+447700900111'], [d2.user.uid, '+447700
   await adminSet(`drivers/${u}`, { approved: true, onboardingComplete: true, vehicleType: 'RouteMini', status: 'online', phoneNumber: phone, firstName: 'Drv', location: { latitude: 51.47, longitude: -0.45 }, subscription: { status: 'active', paymentMethod: 'wallet_deduction' } });
 }
 assert.equal((await D.call('requestFleetJoin', { code: created.joinCode })).fleetName, 'Star Cars');
-await O.call('decideFleetDriver', { driverId: d1.user.uid, approve: true });
+await assert.rejects(O.call('decideFleetDriver', { driverId: d1.user.uid, approve: true }), /company car or self-employed/);
+await O.call('decideFleetDriver', { driverId: d1.user.uid, approve: true, driverType: 'company' });
 let d1doc = (await getDoc(doc(D.db, 'drivers', d1.user.uid))).data();
 assert.equal(d1doc.fleetId, created.fleetId);
 assert.equal(d1doc.subscription.paymentMethod, 'fleet');
 assert.equal(d1doc.subscriptionBeforeFleet.paymentMethod, 'wallet_deduction');
-const inv = await O.call('inviteFleetDriver', { phone: '07700 900222' });
+assert.equal(d1doc.fleetDriverType, 'company');
+const inv = await O.call('inviteFleetDriver', { phone: '07700 900222', driverType: 'company' });
 assert.equal(inv.existingAccount, true);
 assert.equal((await getDoc(doc(D2.db, 'drivers', d2.user.uid))).data().fleetInvite.fleetId, created.fleetId);
 assert.equal((await D2.call('answerFleetInvite', { accept: true })).joined, true);
@@ -142,7 +144,7 @@ assert.equal((await getDoc(doc(O.db, 'fleetWallets', created.fleetId))).data().a
 step('fleet cannot remove driver 2 mid-job; afterwards driver 2 is independent with their own membership back, waiting offers return to the office');
 const bOn = await O.call('createFleetBooking', { customer: { phone: '07700900888', name: 'Bob' }, pickup: T5, dropoff: PAD, driverId: d2.user.uid });
 await updateDoc(doc(D2.db, 'rides', bOn.rideId), claim(d2.user.uid));
-await assert.rejects(O.call('removeFleetDriver', { driverId: d2.user.uid }), /on one of your jobs/);
+await assert.rejects(O.call('removeFleetDriver', { driverId: d2.user.uid }), /on one of the fleet's jobs/);
 await O.call('cancelFleetBooking', { rideId: bOn.rideId });
 const bWait = await O.call('createFleetBooking', { customer: { phone: '07700900888', name: 'Bob' }, pickup: T5, dropoff: PAD, driverId: d2.user.uid });
 const removed = await O.call('removeFleetDriver', { driverId: d2.user.uid });
@@ -188,7 +190,7 @@ for (const [u, phone] of [[d3.user.uid, '+447700900333'], [d4.user.uid, '+447700
 }
 for (const [X, u] of [[D3, d3], [D4, d4]]) {
   await X.call('requestFleetJoin', { code: created.joinCode });
-  await O.call('decideFleetDriver', { driverId: u.user.uid, approve: true });
+  await O.call('decideFleetDriver', { driverId: u.user.uid, approve: true, driverType: 'company' });
 }
 // Driver 1 waits at Heathrow first; driver 3 arrives later.
 await adminSet(`drivers/${d1.user.uid}`, { status: 'online', isOnRide: false, location: HEATHROW, lastUpdated: fresh() }, true);
@@ -277,6 +279,53 @@ await O.call('suspendFleetDriver', { driverId: d4.user.uid, reason: 'Leaving' })
 await O.call('removeFleetDriver', { driverId: d4.user.uid });
 d4doc = (await getDoc(doc(D4.db, 'drivers', d4.user.uid))).data();
 assert.equal(d4doc.fleetId, null); assert.equal(d4doc.blocked, false, 'fleet suspension ends when they leave');
+
+step('self-employed driver: joins keeping own membership; fleet cannot remove; app trips stay theirs; not billed to the fleet; admin switches type; driver leaves; admin removes a company driver');
+await adminSet(`drivers/${d3.user.uid}`, { subscription: { status: 'active', paymentMethod: 'wallet_deduction', nextBillingDate: '2026-12-01' }, status: 'online', isOnRide: false }, true);
+await assert.rejects(O.call('inviteFleetDriver', { phone: '07700 900333' }), /company car or self-employed/);
+await O.call('inviteFleetDriver', { phone: '07700 900333', driverType: 'self' });
+assert.equal((await D3.call('answerFleetInvite', { accept: true })).driverType, 'self');
+let d3doc = (await getDoc(doc(D3.db, 'drivers', d3.user.uid))).data();
+assert.equal(d3doc.fleetId, fid); assert.equal(d3doc.fleetDriverType, 'self');
+assert.equal(d3doc.subscription.paymentMethod, 'wallet_deduction'); assert.equal(d3doc.subscriptionBeforeFleet, undefined);
+await assert.rejects(updateDoc(doc(D3.db, 'drivers', d3.user.uid), { fleetDriverType: 'company' }), 'driver changing their own type');
+await assert.rejects(O.call('removeFleetDriver', { driverId: d3.user.uid }), /only be removed by TakeARoute/);
+await adminSet('rides/appjob2', { riderId: 'r1', driverId: null, status: 'searching', rideType: 'RouteMini', paymentMethod: 'cash', fare: { total: 20 }, pickupLocation: T5, dropoffLocation: PAD });
+await updateDoc(doc(D3.db, 'rides', 'appjob2'), claim(d3.user.uid));
+await adminSet(`drivers/${d1.user.uid}`, { status: 'online', isOnRide: false }, true);
+await adminSet('rides/appjob3', { riderId: 'r1', driverId: null, status: 'searching', rideType: 'RouteMini', paymentMethod: 'cash', fare: { total: 20 }, pickupLocation: T5, dropoffLocation: PAD });
+await updateDoc(doc(D.db, 'rides', 'appjob3'), claim(d1.user.uid));
+// Once the company driver's trip is tagged, the self-employed one (claimed
+// first) has had its turn too.
+await until(async () => (await getDoc(doc(D.db, 'rides', 'appjob3'))).data().fleetId === fid, 'company trip tagged');
+await sleep(5000);
+assert.equal((await getDoc(doc(D3.db, 'rides', 'appjob2'))).data().fleetId, undefined, 'self-employed trip not the fleet\'s');
+await adminSet('rides/appjob2', { status: 'completed' }, true);
+await adminSet('rides/appjob3', { status: 'completed' }, true);
+await adminSet('rides/appjob', { status: 'completed' }, true);
+await adminSet(`fleets/${fid}`, { nextBillingDate: new Date(Date.now() - 60000) }, true);
+const before = (await getDoc(doc(O.db, 'fleetWallets', fid))).data().availableBalance;
+const bill = await fetch(`http://127.0.0.1:8085/v1/projects/${PROJECT}/topics/firebase-schedule-billFleets:publish`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: [{ data: Buffer.from('{}').toString('base64') }] }) });
+assert.ok(bill.ok, 'pubsub publish: ' + bill.status);
+const billed = await until(async () => { const w = (await getDoc(doc(O.db, 'fleetWallets', fid))).data(); return w.availableBalance !== before ? w : null; }, 'billFleets');
+assert.equal(billed.availableBalance, before - 50, 'one company driver billed, not the self-employed one');
+const memberships = (await getDocs(collection(O.db, 'fleetWallets', fid, 'transactions'))).docs.map((d) => d.data()).filter((t) => t.type === 'membership');
+assert.deepEqual(memberships[0].driverIds, [d1.user.uid]);
+await assert.rejects(O.call('setFleetDriverType', { driverId: d3.user.uid, driverType: 'company' }), 'fleet changing type later');
+await A.call('setFleetDriverType', { driverId: d3.user.uid, driverType: 'company' });
+d3doc = (await getDoc(doc(D3.db, 'drivers', d3.user.uid))).data();
+assert.equal(d3doc.fleetDriverType, 'company'); assert.equal(d3doc.subscription.paymentMethod, 'fleet'); assert.equal(d3doc.subscriptionBeforeFleet.paymentMethod, 'wallet_deduction');
+await A.call('setFleetDriverType', { driverId: d3.user.uid, driverType: 'self' });
+d3doc = (await getDoc(doc(D3.db, 'drivers', d3.user.uid))).data();
+assert.equal(d3doc.fleetDriverType, 'self'); assert.equal(d3doc.subscription.paymentMethod, 'wallet_deduction'); assert.equal(d3doc.subscription.nextBillingDate, '2026-12-01');
+await assert.rejects(D.call('leaveFleet', {}), /Ask your fleet/);
+await D3.call('leaveFleet', {});
+d3doc = (await getDoc(doc(D3.db, 'drivers', d3.user.uid))).data();
+assert.equal(d3doc.fleetId, null); assert.equal(d3doc.fleetDriverType, undefined); assert.equal(d3doc.subscription.paymentMethod, 'wallet_deduction');
+await assert.rejects(D.call('adminRemoveFleetDriver', { driverId: d1.user.uid }), 'driver using admin removal');
+assert.equal((await A.call('adminRemoveFleetDriver', { driverId: d1.user.uid })).membershipRestored, true);
+assert.equal((await getDoc(doc(D.db, 'drivers', d1.user.uid))).data().fleetId, null);
 
 step('paused fleet cannot book');
 await adminSet(`fleets/${created.fleetId}`, { status: 'suspended' }, true);

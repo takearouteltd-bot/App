@@ -107,7 +107,8 @@ export default function EarningsScreen() {
     const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
       if (snapshot.exists()) {
         setSubscription(snapshot.data().subscription || null);
-        setFleetName(snapshot.data().fleetId ? snapshot.data().fleetName || 'your fleet' : null);
+        // Only company drivers' fares go to the fleet; self-employed keep theirs.
+        setFleetName(snapshot.data().fleetId && snapshot.data().fleetDriverType !== 'self' ? snapshot.data().fleetName || 'your fleet' : null);
         setAutoPayout(snapshot.data().autoPayout === true);
       }
     });

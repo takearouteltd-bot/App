@@ -150,7 +150,8 @@ service cloud.firestore {
         !data.keys().hasAny(["blockedByFleet"]) &&
         data.get("femaleVerified", false) == false &&
         !("subscription" in data) &&
-        !data.keys().hasAny(["fleetId", "fleetName", "fleetRequest", "fleetInvite"]);
+        !data.keys().hasAny(["fleetId", "fleetName", "fleetRequest", "fleetInvite",
+          "fleetDriverType"]);
     }
 
     function driverKeepsGuardedFields() {
@@ -159,7 +160,8 @@ service cloud.firestore {
           "blockedReason", "blockedBy", "blockedAt", "blockedByFleet"]) &&
         /* Joining and leaving a fleet go through functions/fleet.js. */
         !changed.hasAny(["fleetId", "fleetName", "fleetJoinedAt", "fleetRequest",
-          "fleetInvite", "subscriptionBeforeFleet", "lastFleetId", "fleetLeftAt"]) &&
+          "fleetInvite", "subscriptionBeforeFleet", "lastFleetId", "fleetLeftAt",
+          "fleetLeftBy", "fleetDriverType"]) &&
         /* Hours and rest are kept by enforceDriverHours and admins. */
         !changed.hasAny(["workLog", "restUntil", "restStartedAt", "restDue",
           "restEndedEarlyAt", "restEndedEarlyBy"]) &&
