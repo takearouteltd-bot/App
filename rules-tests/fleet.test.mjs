@@ -110,3 +110,16 @@ test('staff see their colleagues, not other fleets', async () => {
   await assertSucceeds(getDoc(doc(as('op1'), 'fleetManagers/own1')));
   await assertFails(getDoc(doc(as('op1'), 'fleetManagers/own2')));
 });
+
+test('staff create a contact card for a new number, nothing more', async () => {
+  const card = { phone: '+447700900123', name: 'Kim', notes: '', places: [], createdAt: new Date(), createdBy: 'op1' };
+  await assertSucceeds(setDoc(doc(as('op1'), 'fleets/f1/customers/+447700900123'), card));
+  await assertFails(setDoc(doc(as('op1'), 'fleets/f1/customers/+447700900124'), { ...card, phone: '+447700900124', bookings: 50 }));
+  await assertFails(setDoc(doc(as('op1'), 'fleets/f1/customers/abc'), { ...card, phone: 'abc' }));
+  await assertFails(setDoc(doc(as('op1'), 'fleets/f1/customers/+447700900125'), { ...card, phone: '+440000' }));
+  await assertFails(setDoc(doc(as('own2'), 'fleets/f1/customers/+447700900126'), { ...card, phone: '+447700900126' }));
+});
+test('staff keep saved places on a card', async () => {
+  await assertSucceeds(updateDoc(doc(as('op1'), 'fleets/f1/customers/+447700900000'), { places: [{ label: 'Home', address: '1 High St', latitude: 51, longitude: 0 }] }));
+  await assertSucceeds(updateDoc(doc(as('op1'), 'fleets/f1/customers/+447700900000'), { notes: 'Ring on arrival' }));
+});

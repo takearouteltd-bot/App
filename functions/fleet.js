@@ -329,29 +329,42 @@ module.exports = (deps) => {
    * @param {string} fleetId Fleet.
    * @param {Object} customer {name, phone}
    * @param {Array} places Points used on this booking.
+   * @param {Object} journey {from, to, rideType} of this booking.
    * @return {Promise<void>}
    */
-  async function rememberCustomer(fleetId, customer, places) {
+  async function rememberCustomer(fleetId, customer, places, journey) {
     const ref = db.collection("fleets").doc(fleetId)
         .collection("customers").doc(customer.phone);
+    const clean = (p) => ({latitude: p.latitude, longitude: p.longitude,
+      address: p.address});
+    const key = (p) => String(p.address).toLowerCase();
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       const old = snap.exists ? snap.data() : {};
       const seen = new Set();
       const addresses = places.concat(old.addresses || [])
           .filter((p) => {
-            const key = String(p.address).toLowerCase();
-            if (seen.has(key)) return false;
-            seen.add(key);
+            if (seen.has(key(p))) return false;
+            seen.add(key(p));
             return true;
           })
           .slice(0, 10)
-          .map((p) => ({latitude: p.latitude, longitude: p.longitude,
-            address: p.address}));
+          .map(clean);
+      // Journeys they have booked, newest first, one entry per route, so
+      // the contact card can rebook (or reverse) one in a tap.
+      const route = (j) => `${key(j.from)}|${key(j.to)}`;
+      const journeys = [{from: clean(journey.from), to: clean(journey.to),
+        rideType: journey.rideType, at: Timestamp.now()}]
+          .concat((old.journeys || [])
+              .filter((j) => route(j) !== route(journey)))
+          .slice(0, 10);
       tx.set(ref, {
         phone: customer.phone,
         name: customer.name || old.name || "",
+        notes: old.notes || "",
+        places: old.places || [],
         addresses,
+        journeys,
         bookings: FieldValue.increment(1),
         lastBookedAt: FieldValue.serverTimestamp(),
         createdAt: old.createdAt || FieldValue.serverTimestamp(),
@@ -965,7 +978,8 @@ module.exports = (deps) => {
     });
 
     await rememberCustomer(me.fleetId, {name, phone},
-        [pickup].concat(stops, [dropoff])).catch((error) => {
+        [pickup].concat(stops, [dropoff]),
+        {from: pickup, to: dropoff, rideType}).catch((error) => {
       console.error("Could not save customer:", error.message);
     });
     return {rideId: rideRef.id, status: later ? "scheduled" : "dispatching",

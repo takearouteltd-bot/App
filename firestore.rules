@@ -586,14 +586,28 @@ service cloud.firestore {
 
       /* Phone booking customers, kept per fleet. Staff may edit a
          customer's name and notes; bookings are counted by the server. */
+      /* A contact card is made as soon as the operator types a new
+         number, keyed by the number (+44...). Staff keep its name, notes
+         and saved places; bookings and journeys are kept by the server. */
       match /customers/{customerId} {
         allow read: if isAdmin() || fleetStaffOf(fleetId);
+        allow create: if isAdmin() || (
+          fleetStaffOf(fleetId) &&
+          customerId.matches('[+][0-9]{8,15}') &&
+          request.resource.data.phone == customerId &&
+          request.resource.data.keys().hasOnly(["phone", "name", "notes", "places", "createdAt", "createdBy"]) &&
+          request.resource.data.get("name", "") is string &&
+          request.resource.data.get("name", "").size() <= 80
+        );
         allow update: if isAdmin() || (
           fleetStaffOf(fleetId) &&
           request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(["name", "notes", "addresses"])
+            .hasOnly(["name", "notes", "places", "addresses", "journeys"]) &&
+          request.resource.data.get("places", []).size() <= 20 &&
+          request.resource.data.get("name", "").size() <= 80 &&
+          request.resource.data.get("notes", "").size() <= 500
         );
-        allow create, delete: if isAdmin();
+        allow delete: if isAdmin();
       }
     }
 
