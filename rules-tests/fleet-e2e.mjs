@@ -149,6 +149,21 @@ const op = await O.call('addFleetOperator', { email: 'op@test.dev', name: 'Op' }
 assert.ok(op.uid);
 await assert.rejects(D.call('createFleetBooking', { customer: { phone: '07700900777' }, pickup: T5, dropoff: PAD }), 'driver is not staff');
 
+step('a caller who also has the app: card linked, booking linked, active trip flagged');
+const RR = mk('rider');
+const ru = await createUserWithEmailAndPassword(RR.auth, 'rider@test.dev', 'secret123');
+await adminSet(`riders/${ru.user.uid}`, { fullName: 'Priya Patel', phoneNumber: '+447700900456' });
+await adminSet('rides/riderlive', { riderId: ru.user.uid, status: 'searching', pickupLocation: { address: 'Kings Cross, London', latitude: 51.53, longitude: -0.12 } });
+await adminSet(`riders/${ru.user.uid}`, { currentRideId: 'riderlive' }, true);
+const look = await O.call('fleetLookupCaller', { phone: '07700 900456' });
+assert.equal(look.appUser, true); assert.equal(look.name, 'Priya Patel'); assert.equal(look.activeRide.status, 'searching');
+let card = (await getDoc(doc(O.db, 'fleets', created.fleetId, 'customers', '+447700900456'))).data();
+assert.equal(card.appUser, true); assert.equal(card.riderId, ru.user.uid); assert.equal(card.name, 'Priya Patel');
+const bApp = await O.call('createFleetBooking', { customer: { phone: '07700900456', name: '' }, pickup: T5, dropoff: PAD });
+const rApp = (await getDoc(doc(O.db, 'rides', bApp.rideId))).data();
+assert.equal(rApp.customer.riderId, ru.user.uid); assert.equal(rApp.customer.name, 'Priya Patel'); assert.equal(rApp.riderId, null, 'booking stays the fleet\'s');
+assert.equal((await O.call('fleetLookupCaller', { phone: '07700 900321' })).appUser, false);
+
 step('paused fleet cannot book');
 await adminSet(`fleets/${created.fleetId}`, { status: 'suspended' }, true);
 await assert.rejects(O.call('createFleetBooking', { customer: { phone: '07700900777' }, pickup: T5, dropoff: PAD }));

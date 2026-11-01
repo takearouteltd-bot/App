@@ -768,6 +768,123 @@ module.exports = (deps) => {
 
   /* --------------------------- phone bookings ------------------------ */
 
+  /* ---------------------- callers who also use the app ---------------------
+     The phone number is the key. A caller whose number is on a passenger
+     account is linked on their contact card (riderId, appUser). The card
+     then shows it, phone bookings for them carry customer.riderId, and
+     they get their phone booking's progress in the app (notifyAppCaller).
+     Their passenger account is never changed. */
+
+  /**
+   * The passenger account with this phone number, if any.
+   * @param {string} e164 Number in +44... form.
+   * @return {Promise<?Object>} {uid, name, currentRideId}
+   */
+  async function findRiderByPhone(e164) {
+    let uid = null;
+    try {
+      uid = (await admin.auth().getUserByPhoneNumber(e164)).uid;
+    } catch (error) {
+      // No phone sign-in with that number; try the number on file.
+    }
+    let snap = uid ? await db.collection("riders").doc(uid).get() : null;
+    if (!snap || !snap.exists) {
+      const national = e164.startsWith("+44") ? "0" + e164.slice(3) : null;
+      const forms = [e164, national].filter(Boolean);
+      for (const field of ["phoneNumber", "phone"]) {
+        const found = await db.collection("riders")
+            .where(field, "in", forms).limit(1).get();
+        if (!found.empty) {
+          snap = found.docs[0];
+          break;
+        }
+      }
+    }
+    if (!snap || !snap.exists) return null;
+    const r = snap.data();
+    return {uid: snap.id, name: r.fullName || r.name || "",
+      currentRideId: r.currentRideId || null};
+  }
+
+  /* The booking form asks this once a number is typed: is the caller an
+     app passenger, and are they on an app trip right now? Links the card. */
+  out.fleetLookupCaller = functions.https.onCall(async (data, context) => {
+    const me = await assertFleetManager(context, false);
+    const phone = toE164(data && data.phone);
+    if (!phone) return {appUser: false};
+    const rider = await findRiderByPhone(phone);
+    const cardRef = db.collection("fleets").doc(me.fleetId)
+        .collection("customers").doc(phone);
+    if (!rider) {
+      await cardRef.set({appUser: false}, {merge: true}).catch(() => {});
+      return {appUser: false};
+    }
+    const card = await cardRef.get();
+    await cardRef.set(Object.assign({appUser: true, riderId: rider.uid},
+        card.exists && card.data().name ? {} : {name: rider.name}),
+    {merge: true});
+    let activeRide = null;
+    if (rider.currentRideId) {
+      const r = await db.collection("rides").doc(rider.currentRideId).get();
+      const live = ["searching", "accepted", "arrived", "ongoing"];
+      if (r.exists && live.includes(r.data().status)) {
+        activeRide = {status: r.data().status,
+          pickup: (r.data().pickupLocation || {}).address || "",
+          withFleet: r.data().fleetId === me.fleetId};
+      }
+    }
+    return {appUser: true, name: rider.name, activeRide};
+  });
+
+  /* A phone booking for a caller who has the app: tell them in the app as
+     it goes, since they have no tracking screen for it. */
+  out.notifyAppCaller = functions.firestore
+      .document("rides/{rideId}")
+      .onUpdate(async (change, context) => {
+        const before = change.before.data();
+        const after = change.after.data();
+        const uid = after.customer && after.customer.riderId;
+        if (after.source !== "phone" || !uid ||
+            before.status === after.status) {
+          return null;
+        }
+        const fleet = after.fleetName || "Your taxi firm";
+        let driver = null;
+        if (after.driverId) {
+          const snap = await db.collection("drivers").doc(after.driverId).get();
+          driver = snap.exists ? snap.data() : null;
+        }
+        const who = driver ?
+          (driver.firstName || String(driver.fullName || "").split(" ")[0] ||
+            "Your driver") : "Your driver";
+        const car = driver ? [driver.vehicleColor, driver.makeModel,
+          driver.registrationNumber ?
+            String(driver.registrationNumber).toUpperCase() : null]
+            .filter(Boolean).join(" ") : "";
+        const total = after.fare ?
+          Number(after.fare.finalTotal || after.fare.total || 0).toFixed(2) :
+          null;
+        const msg = {
+          accepted: {title: `${fleet}: driver on the way`,
+            body: `${who} is coming to pick you up` +
+              `${car ? ` in a ${car}` : ""}.`},
+          arrived: {title: `${fleet}: your driver is here`,
+            body: `${who} is waiting at the pickup${car ? ` (${car})` : ""}.`},
+          completed: {title: `${fleet}: trip complete`,
+            body: total ? `Please pay £${total} in cash to your driver.` :
+              "Thanks for travelling with us."},
+          cancelled: {title: `${fleet}: booking cancelled`,
+            body: after.cancelledBy === "operator" ?
+              "Your booking was cancelled. Call us if this is a mistake." :
+              "Your booking was cancelled. Please call us to rebook."},
+        }[after.status];
+        if (!msg) return null;
+        await sendPush([uid], Object.assign(msg, {channelId: "trip-updates",
+          data: {type: "fleet_booking", rideId: context.params.rideId}}))
+            .catch(() => null);
+        return null;
+      });
+
   /* Address search for the booking form, through Google Places (New), so
      the dashboard needs no Maps key of its own. UK addresses first. */
   out.fleetPlaceSearch = functions.https.onCall(async (data, context) => {
@@ -923,6 +1040,10 @@ module.exports = (deps) => {
       fare = fareAtAgreedPrice(fare, agreed);
     }
 
+    // The same person may also book in the app: link the booking to their
+    // account (notifications only; the booking stays the fleet's, in cash).
+    const appRider = await findRiderByPhone(phone).catch(() => null);
+
     const rideRef = db.collection("rides").doc();
     const ts = FieldValue.serverTimestamp();
     await rideRef.set({
@@ -931,7 +1052,8 @@ module.exports = (deps) => {
       fleetName: me.fleet.name,
       riderId: null,
       driverId: null,
-      customer: {name, phone},
+      customer: {name: name || (appRider ? appRider.name : ""), phone,
+        riderId: appRider ? appRider.uid : null},
       notes: text(d.notes, 500),
       bookedBy: {uid: me.uid, name: me.manager.name || me.manager.email || ""},
       status: later ? "scheduled" : "dispatching",
@@ -977,6 +1099,11 @@ module.exports = (deps) => {
       rating: {riderToDriver: null, driverToRider: null, feedback: null},
     });
 
+    if (appRider) {
+      await db.collection("fleets").doc(me.fleetId).collection("customers")
+          .doc(phone).set({appUser: true, riderId: appRider.uid},
+              {merge: true}).catch(() => null);
+    }
     await rememberCustomer(me.fleetId, {name, phone},
         [pickup].concat(stops, [dropoff]),
         {from: pickup, to: dropoff, rideType}).catch((error) => {
