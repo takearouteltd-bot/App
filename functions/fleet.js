@@ -64,8 +64,9 @@ module.exports = (deps) => {
   const {functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
     hasExpiredDocument, toE164, toMillis, addOneMonth} = deps;
   const {HttpsError} = functions.https;
-  const FieldValue = admin.firestore.FieldValue;
-  const Timestamp = admin.firestore.Timestamp;
+  // From the modular entry point: the functions emulator's stand-in for
+  // admin.firestore does not carry FieldValue or Timestamp.
+  const {FieldValue, Timestamp} = require("firebase-admin/firestore");
   const out = {};
 
   /* ------------------------------ helpers ---------------------------- */
