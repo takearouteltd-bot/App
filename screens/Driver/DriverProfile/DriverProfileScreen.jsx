@@ -242,7 +242,8 @@ export default function DriverProfileScreen() {
           items={[
             { icon: "car-outline", iconColor: COLORS.midnight, title: vehicle || "Vehicle", detail: driver?.registrationNumber ? driver.registrationNumber.toUpperCase() : "Add your vehicle details", onPress: () => navigation.navigate("VehicleInformation") },
             { icon: "folder-open-outline", iconColor: COLORS.midnight, title: "My documents", detail: documentAlerts.length ? `${documentAlerts.length} need${documentAlerts.length === 1 ? "s" : ""} updating` : "Licence, insurance, MOT and more", onPress: () => navigation.navigate("DriverDocuments") },
-            { icon: "ribbon-outline", iconColor: COLORS.midnight, title: "Membership", detail: ({ active: "Active", past_due: "Payment due", suspended: "Paused, payment needed" })[driver?.subscription?.status] || "Not set up", onPress: () => navigation.navigate("SubscriptionDetails") },
+            { icon: "ribbon-outline", iconColor: COLORS.midnight, title: "Membership", detail: driver?.subscription?.paymentMethod === "fleet" ? `Paid by ${driver.fleetName || "your fleet"}` : ({ active: "Active", past_due: "Payment due", suspended: "Paused, payment needed" })[driver?.subscription?.status] || "Not set up", onPress: () => navigation.navigate("SubscriptionDetails") },
+            { icon: "people-outline", iconColor: COLORS.midnight, title: "Fleet", detail: driver?.fleetId ? `You drive for ${driver.fleetName || "a fleet"}` : driver?.fleetInvite ? `${driver.fleetInvite.fleetName || "A fleet"} invited you` : driver?.fleetRequest ? `Waiting for ${driver.fleetRequest.fleetName || "the fleet"}` : "Drive for a taxi firm", onPress: () => navigation.navigate("DriverFleet") },
           ]}
         />
 

@@ -163,6 +163,23 @@ export default function SubscriptionScreen() {
     />
   );
 
+  // A fleet pays this driver's membership (functions/fleet.js).
+  if (subscription?.paymentMethod === 'fleet') {
+    return (
+      <Screen>
+        <ScreenHeader title="Membership" />
+        <Card tone="dark" style={styles.hero}>
+          <View style={styles.heroTop}>
+            <Text style={styles.heroPlan}>Monthly driver plan</Text>
+            <StatusPill status="approved" label="Active" />
+          </View>
+          <Text style={[styles.heroPrice, { fontSize: 28 }]}>Paid by your fleet</Text>
+          <Text style={styles.heroSub}>{subscription.fleetName || 'Your fleet'} pays your membership while you drive for them.</Text>
+        </Card>
+      </Screen>
+    );
+  }
+
   if (status === 'suspended') {
     return (
       <Screen>

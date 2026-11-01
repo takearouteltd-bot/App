@@ -32,6 +32,8 @@ export default function EarningsScreen() {
   const [loading, setLoading] = useState(true);
   const [selectedFilter, setSelectedFilter] = useState('All');
   const [subscription, setSubscription] = useState(null);
+  // Set while the driver works for a fleet: card fares go to the fleet.
+  const [fleetName, setFleetName] = useState(null);
   const [loadError, setLoadError] = useState(false);
   // Withdrawals requested but not yet approved by an admin.
   const [awaitingPayout, setAwaitingPayout] = useState(0);
@@ -105,6 +107,7 @@ export default function EarningsScreen() {
     const unsubscribeSub = onSnapshot(driverRef, (snapshot) => {
       if (snapshot.exists()) {
         setSubscription(snapshot.data().subscription || null);
+        setFleetName(snapshot.data().fleetId ? snapshot.data().fleetName || 'your fleet' : null);
         setAutoPayout(snapshot.data().autoPayout === true);
       }
     });
@@ -246,7 +249,18 @@ export default function EarningsScreen() {
         />
       </Card>
 
-      {subscription && subscription.status === 'active' ? (
+      {fleetName ? (
+        <View style={{ marginTop: SPACE[3] }}>
+          <Banner
+            tone="info"
+            icon="people-outline"
+            title={`You drive for ${fleetName}`}
+            body={`Card fares from now on go to ${fleetName}, who pay you, and they pay your membership. Anything already in your balance above is still yours to withdraw.`}
+          />
+        </View>
+      ) : null}
+
+      {subscription && subscription.status === 'active' && subscription.paymentMethod !== 'fleet' ? (
         <Card style={{ marginTop: SPACE[3] }}>
           <Text style={styles.txTitle}>Subscription {money(appConfig.subscription.monthlyPrice)} a month</Text>
           <Text style={TYPE.small}>

@@ -24,6 +24,7 @@ import { currencySymbol, money } from '../../../utils/appConfig';
 import { noShowFeeFor, noShowWaitMs } from '../../../utils/cancellation';
 import SafetyButton from '../../../components/SafetyButton';
 import PaymentTypeBanner from '../../../components/PaymentTypeBanner';
+import PhoneCustomerCard from '../../../components/PhoneCustomerCard';
 import { confirmMaskedCall } from '../../../utils/calling';
 import { useWaitingClock } from '../../../utils/useWaitingClock';
 import {
@@ -141,9 +142,11 @@ export default function DriverRideInProgressScreen() {
       if (data.status === 'cancelled' || data.status === 'canceled') {
         hasLeftScreen.current = true;
         releaseDriver();
-        Alert.alert('Job cancelled', 'The passenger cancelled this job.', [
-          { text: 'OK', onPress: goHome },
-        ]);
+        Alert.alert(
+          'Job cancelled',
+          data.source === 'phone' ? 'The office cancelled this booking.' : 'The passenger cancelled this job.',
+          [{ text: 'OK', onPress: goHome }]
+        );
         return;
       }
 
@@ -152,7 +155,8 @@ export default function DriverRideInProgressScreen() {
       // else. Free the driver and say why.
       const me = auth.currentUser?.uid;
       const takenAway =
-        data.status === 'searching' || (me && data.driverId && data.driverId !== me);
+        data.status === 'searching' || data.status === 'dispatching' ||
+        (me && data.driverId && data.driverId !== me);
       if (takenAway) {
         hasLeftScreen.current = true;
         releaseDriver();
@@ -281,7 +285,8 @@ export default function DriverRideInProgressScreen() {
           try {
             hasLeftScreen.current = true;
             await updateDoc(doc(db, 'rides', rideId), {
-              status: 'searching',
+              // A fleet's phone booking goes back to its office to resend.
+              status: ride?.source === 'phone' ? 'dispatching' : 'searching',
               driverId: null,
               acceptedAt: null,
               declinedBy: arrayUnion(id),
@@ -298,7 +303,7 @@ export default function DriverRideInProgressScreen() {
         },
       },
     ]);
-  }, [rideId, releaseDriver, goHome]);
+  }, [rideId, releaseDriver, goHome, ride?.source]);
 
   /* After arriving, the driver can end the job if the passenger does not show.
      The ride is cancelled outright (not re-offered) and the passenger told.
@@ -536,6 +541,8 @@ export default function DriverRideInProgressScreen() {
                 </View>
               </View>
             ) : null}
+
+            {ride?.source === 'phone' ? <PhoneCustomerCard ride={ride} /> : null}
 
             <View style={styles.journey}>
               <RouteLine

@@ -23,6 +23,7 @@ import { fareSoFar } from '../../../utils/fareSoFar';
 import { navigationUrl, remainingStops, stopsOf } from '../../../utils/stops';
 import { fetchRoute as fetchDrivingRoute, durationText, distanceText } from '../../../utils/routes';
 import SafetyButton from '../../../components/SafetyButton';
+import PhoneCustomerCard from '../../../components/PhoneCustomerCard';
 import { confirmMaskedCall } from '../../../utils/calling';
 import {
   COLORS, TYPE, SPACE, RADIUS, SHADOW,
@@ -540,6 +541,8 @@ export default function DriverRideToDropoffScreen() {
             </View>
           </View>
         ) : null}
+
+        {ride?.source === 'phone' ? <PhoneCustomerCard ride={ride} compact /> : null}
 
         <Button
           title={arrived ? 'Complete the trip' : 'End trip here'}

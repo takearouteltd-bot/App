@@ -27,6 +27,7 @@ import {
   getDoc,
   runTransaction,
   serverTimestamp,
+  arrayUnion,
 } from 'firebase/firestore';
 import { useDriverPosition, requestDriverPosition } from '../../../utils/driverLocation';
 import { db } from '../../../config/firebase';
@@ -55,6 +56,15 @@ const { width } = Dimensions.get('window');
 const MISSED_SNOOZE_MS = 60000;
 // The price on the table for a job (the passenger's offer when bidding).
 const fareOf = (ride) => Number(ride?.fareEstimate) || 0;
+
+// "14:30" today, or "Tue 4 Nov, 14:30" for a booking on another day.
+function formatPickupTime(ts) {
+  const d = ts?.toDate ? ts.toDate() : new Date(ts);
+  if (Number.isNaN(d.getTime())) return '';
+  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  if (d.toDateString() === new Date().toDateString()) return time;
+  return `${d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}, ${time}`;
+}
 
 // "Online 2h 10m of 12h today": time online in the last 24 hours, across
 // every time they went on and off, against the dashboard's limit.
@@ -106,6 +116,8 @@ export default function DriverHomeScreen() {
   const [membershipStatus, setMembershipStatus] = useState(null);
   const [workingCityId, setWorkingCityId] = useState(null);
   const [femaleVerified, setFemaleVerified] = useState(false);
+  // The taxi firm this driver works for, if any (functions/fleet.js).
+  const [fleetId, setFleetId] = useState(null);
   // What a passenger sees on this driver's counter-offers.
   const [driverCard, setDriverCard] = useState(null);
   // Counter-offers sent, by ride id, so the card can say it is waiting.
@@ -121,6 +133,7 @@ export default function DriverHomeScreen() {
   // Jobs this phone has rung for, with the price at the time.
   const rungFor = useRef(new Map());
   const [searchingRides, setSearchingRides] = useState([]);
+  const [fleetRides, setFleetRides] = useState([]);
 
   const [rideRequests, setRideRequests] = useState([]);
   // The offer being shown, by ride id, so a change to some other searching
@@ -194,6 +207,7 @@ export default function DriverHomeScreen() {
       setMembershipStatus(data.subscription?.status || null);
       setWorkingCityId(data.workingCityId || null);
       setFemaleVerified(data.femaleVerified === true);
+      setFleetId(data.fleetId || null);
       setDriverCard({
         name: data.firstName || (data.fullName || '').split(' ')[0] || 'Driver',
         rating: data.rating || null,
@@ -391,6 +405,25 @@ export default function DriverHomeScreen() {
     });
   }, [isOnline, isApproved]);
 
+  // A fleet driver also gets their fleet's phone bookings, which use their
+  // own status ("dispatching") so that only drivers of that fleet see them.
+  useEffect(() => {
+    if (!isOnline || !isApproved || !fleetId) {
+      setFleetRides([]);
+      return undefined;
+    }
+    const q = query(
+      collection(db, 'rides'),
+      where('status', '==', 'dispatching'),
+      where('fleetId', '==', fleetId)
+    );
+    return onSnapshot(
+      q,
+      (snapshot) => setFleetRides(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      () => setFleetRides([])
+    );
+  }, [isOnline, isApproved, fleetId]);
+
   // The jobs on offer to this driver, nearest first, worked out again when
   // the jobs or the driver's position change.
   useEffect(() => {
@@ -398,6 +431,26 @@ export default function DriverHomeScreen() {
     if (!isOnline || !location || !isApproved) return;
 
     const rides = [];
+    // Phone bookings from this driver's fleet: one sent to this driver comes
+    // whatever the distance (the operator chose them); one sent to the whole
+    // fleet follows the usual radius.
+    fleetRides.forEach((data) => {
+      if (!data.pickupLocation || data.fleetId !== fleetId) return;
+      const target = data.dispatch?.driverId || null;
+      if (target && target !== driverId) return;
+      if (Array.isArray(data.declinedBy) && data.declinedBy.includes(driverId)) return;
+      const snooze = snoozed.current.get(data.id);
+      if (snooze && snooze.until > Date.now()) return;
+      if (!canServe(vehicleType, data.rideType)) return;
+      const distance = getDistanceFromLatLonInKm(
+        location.latitude,
+        location.longitude,
+        data.pickupLocation.latitude,
+        data.pickupLocation.longitude
+      );
+      if (!target && distance > searchRadiusKm * (shownIds.current.has(data.id) ? 1.25 : 1)) return;
+      rides.push({ ...data, pickupDistanceKm: distance, forMe: Boolean(target) });
+    });
     searchingRides.forEach((data) => {
       if (!data.pickupLocation) return;
       // Jobs this driver already cancelled are not offered again.
@@ -432,7 +485,8 @@ export default function DriverHomeScreen() {
       }
     });
 
-    rides.sort((a, b) => a.pickupDistanceKm - b.pickupDistanceKm);
+    // A job the fleet sent to this driver by name comes first.
+    rides.sort((a, b) => (b.forMe ? 1 : 0) - (a.forMe ? 1 : 0) || a.pickupDistanceKm - b.pickupDistanceKm);
     shownIds.current = new Set(rides.map((r) => r.id));
     // Ring for jobs this phone has not seen yet. Not while on a job.
     // A job whose price went up since it rang counts as new.
@@ -449,7 +503,7 @@ export default function DriverHomeScreen() {
       if (next) animateCard();
       return next;
     });
-  }, [searchingRides, isOnline, location, isApproved, searchRadiusKm, driverId, vehicleType, workingCityId, femaleVerified, animateCard]);
+  }, [searchingRides, fleetRides, fleetId, isOnline, location, isApproved, searchRadiusKm, driverId, vehicleType, workingCityId, femaleVerified, animateCard]);
 
   // Going offline takes the offer card down with it.
   useEffect(() => {
@@ -595,6 +649,15 @@ export default function DriverHomeScreen() {
     );
   }, [driverId, navigation, isAccepting]);
 
+  /* Decline: off this driver's list for the rest of the shift. A fleet's
+     phone booking also records it, so the office sees the answer at once. */
+  const declineCurrent = (ride) => {
+    if (ride?.source === 'phone' && driverId) {
+      updateDoc(doc(db, 'rides', ride.id), { declinedBy: arrayUnion(driverId) }).catch(() => {});
+    }
+    advanceQueue(Infinity);
+  };
+
   const handleAcceptRide = async (ride) => {
     if (isAccepting) return;
     if (!isApproved) {
@@ -629,7 +692,19 @@ export default function DriverHomeScreen() {
       await runTransaction(db, async (transaction) => {
         const rideDoc = await transaction.get(rideRef);
         if (!rideDoc.exists()) throw new Error('This job no longer exists.');
-        if (rideDoc.data().status !== 'searching') throw new Error('Another driver took this job.');
+        // Fleet phone bookings wait in "dispatching", app jobs in "searching".
+        const phoneJob = rideDoc.data().source === 'phone';
+        if (rideDoc.data().status !== (phoneJob ? 'dispatching' : 'searching')) {
+          throw new Error(
+            phoneJob && rideDoc.data().status === 'cancelled'
+              ? 'The office cancelled this booking.'
+              : 'Another driver took this job.'
+          );
+        }
+        const target = rideDoc.data().dispatch?.driverId;
+        if (phoneJob && target && target !== driverId) {
+          throw new Error('The office has sent this job to another driver.');
+        }
         // Re-checked here because the list is only a filter: the class could
         // have changed, or the job could have arrived from a stale render.
         // Firestore rules enforce it properly, this is the friendly message.
@@ -934,6 +1009,17 @@ export default function DriverHomeScreen() {
         <Animated.View style={[styles.offerWrap, { transform: [{ translateX: slideAnim }] }]}>
           <Sheet style={styles.offer} grabber={false}>
             <PaymentTypeBanner method={currentRide.paymentMethod} style={{ marginBottom: SPACE[4] }} />
+            {currentRide.source === 'phone' ? (
+              <View style={styles.fleetBanner}>
+                <Ionicons name="call-outline" size={16} color={COLORS.midnight} />
+                <Text style={styles.fleetBannerText} numberOfLines={2}>
+                  {currentRide.forMe ? 'Sent to you by ' : 'Phone booking from '}
+                  {currentRide.fleetName || 'your fleet'}
+                  {currentRide.pickupAt ? ` · pickup ${formatPickupTime(currentRide.pickupAt)}` : ''}
+                  {currentRide.notes ? `\n${currentRide.notes}` : ''}
+                </Text>
+              </View>
+            ) : null}
             <View style={styles.offerTop}>
               <View style={styles.tags}>
                 <Chip label={classLabel(currentRide.rideType)} active />
@@ -1013,7 +1099,7 @@ export default function DriverHomeScreen() {
               )
             ) : null}
 
-            <Button title="Decline" variant="ghost" onPress={() => advanceQueue(Infinity)} style={styles.decline} />
+            <Button title="Decline" variant="ghost" onPress={() => declineCurrent(currentRide)} style={styles.decline} />
           </Sheet>
         </Animated.View>
       ) : null}
@@ -1123,4 +1209,15 @@ const styles = StyleSheet.create({
   counterChip: { flex: 1, backgroundColor: COLORS.limeSoft, borderColor: COLORS.midnight, borderWidth: 2 },
   counterSent: { ...TYPE.small, textAlign: 'center', marginTop: SPACE[3], color: COLORS.midnight, fontWeight: '600' },
   decline: { marginTop: SPACE[2] },
+  fleetBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: SPACE[2],
+    backgroundColor: COLORS.lime,
+    borderRadius: 12,
+    paddingVertical: SPACE[2],
+    paddingHorizontal: SPACE[3],
+    marginBottom: SPACE[3],
+  },
+  fleetBannerText: { flex: 1, color: COLORS.midnight, fontWeight: '600' },
 });

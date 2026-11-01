@@ -754,6 +754,65 @@ module.exports = (deps) => {
 
   /* --------------------------- phone bookings ------------------------ */
 
+  /* Address search for the booking form, through Google Places (New), so
+     the dashboard needs no Maps key of its own. UK addresses first. */
+  out.fleetPlaceSearch = functions.https.onCall(async (data, context) => {
+    await assertFleetManager(context, false);
+    const input = text(data && data.input, 120);
+    if (input.length < 2) return {results: []};
+    const body = {input, includedRegionCodes: ["gb"]};
+    const near = point(data && data.near);
+    if (near) {
+      body.locationBias = {circle: {center: {latitude: near.latitude,
+        longitude: near.longitude}, radius: 50000}};
+    }
+    if (data && typeof data.sessionToken === "string") {
+      body.sessionToken = data.sessionToken.slice(0, 64);
+    }
+    const res = await fetch("https://places.googleapis.com/v1/places:autocomplete",
+        {method: "POST", headers: {"Content-Type": "application/json",
+          "X-Goog-Api-Key": MAPS_KEY}, body: JSON.stringify(body)});
+    const json = await res.json().catch(() => ({}));
+    const results = (json.suggestions || [])
+        .map((s) => s.placePrediction)
+        .filter(Boolean)
+        .slice(0, 6)
+        .map((p) => ({
+          placeId: p.placeId,
+          main: p.structuredFormat && p.structuredFormat.mainText ?
+            p.structuredFormat.mainText.text : (p.text && p.text.text) || "",
+          secondary: p.structuredFormat && p.structuredFormat.secondaryText ?
+            p.structuredFormat.secondaryText.text : "",
+        }));
+    return {results};
+  });
+
+  out.fleetPlaceDetails = functions.https.onCall(async (data, context) => {
+    await assertFleetManager(context, false);
+    const placeId = text(data && data.placeId, 300);
+    if (!/^[A-Za-z0-9_-]+$/.test(placeId)) {
+      throw new HttpsError("invalid-argument", "Unknown place.");
+    }
+    const token = data && typeof data.sessionToken === "string" ?
+      `?sessionToken=${encodeURIComponent(data.sessionToken.slice(0, 64))}` :
+      "";
+    const res = await fetch(
+        `https://places.googleapis.com/v1/places/${placeId}${token}`,
+        {headers: {"X-Goog-Api-Key": MAPS_KEY,
+          "X-Goog-FieldMask": "location,formattedAddress,displayName"}});
+    const p = await res.json().catch(() => ({}));
+    if (!p.location) throw new HttpsError("not-found", "Place not found.");
+    const name = p.displayName && p.displayName.text;
+    const addr = p.formattedAddress || "";
+    return {
+      latitude: p.location.latitude,
+      longitude: p.location.longitude,
+      // "Heathrow Terminal 5, Longford, Hounslow ..." reads better than the
+      // street address alone for named places.
+      address: name && !addr.startsWith(name) ? `${name}, ${addr}` : addr,
+    };
+  });
+
   /* Distance, time and the fare for each vehicle class, for the booking
      form. */
   out.quoteFleetBooking = functions.https.onCall(async (data, context) => {
