@@ -176,9 +176,15 @@ service cloud.firestore {
           (
             request.auth.uid == driverId &&
             driverKeepsGuardedFields() &&
-            /* Only an approved driver can put themselves online. */
+            /* Only an approved driver can put themselves online, and not
+               one an admin has blocked (except finishing a trip they were
+               on when blocked, so the trip still closes; they get no jobs
+               after it). */
             !(request.resource.data.status == "online" &&
               resource.data.approved != true) &&
+            !(request.resource.data.status == "online" &&
+              resource.data.get("blocked", false) == true &&
+              resource.data.get("status", "offline") != "on_ride") &&
             /* ...and not while resting after their hours limit. */
             !(request.resource.data.status == "online" &&
               resource.data.status != "online" &&
@@ -306,6 +312,15 @@ service cloud.firestore {
         // no new job in between.
         get(/databases/$(database)/documents/drivers/$(request.auth.uid))
           .data.get("restDue", false) != true &&
+        // A blocked driver takes nothing, a passenger who blocked this
+        // driver never gets them, and female-only jobs need a verified
+        // female driver. The app filters these too; this makes it binding.
+        get(/databases/$(database)/documents/drivers/$(request.auth.uid))
+          .data.get("blocked", false) != true &&
+        !(request.auth.uid in resource.data.get("blockedDriverIds", [])) &&
+        (resource.data.get("femaleDriverOnly", false) != true ||
+          get(/databases/$(database)/documents/drivers/$(request.auth.uid))
+            .data.get("femaleVerified", false) == true) &&
         myVehicleServes(resource.data);
     }
 
@@ -354,6 +369,7 @@ service cloud.firestore {
         request.resource.data.driverId == request.auth.uid &&
         request.resource.data.walletProcessed == false &&
         driver.approved == true &&
+        driver.get("blocked", false) != true &&
         driver.get("restDue", false) != true &&
         myVehicleServes(resource.data);
     }
@@ -614,7 +630,15 @@ service cloud.firestore {
     match /fleetManagers/{userId} {
       allow read: if isAdmin() || (signedIn() && request.auth.uid == userId) ||
         (resource != null && fleetStaffOf(resource.data.fleetId));
-      allow write: if isAdmin();
+      /* Staff keep their own phone for office calls (fleetCall rings it
+         first); everything else is set by admins and functions/fleet.js. */
+      allow update: if isAdmin() || (
+        signedIn() && request.auth.uid == userId &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(["phone"]) &&
+        request.resource.data.phone is string &&
+        request.resource.data.phone.matches('[+][0-9]{8,15}')
+      );
+      allow create, delete: if isAdmin();
     }
 
     match /fleetWallets/{fleetId} {
@@ -625,6 +649,17 @@ service cloud.firestore {
         allow read: if isAdmin() || fleetStaffOf(fleetId);
         allow write: if isAdmin();
       }
+    }
+
+    /* Zone queues, kept by functions/fleet.js. The office sees them, and
+       so do the fleet's drivers (their place in the queue). */
+    match /fleetQueues/{fleetId} {
+      allow read: if isAdmin() || fleetStaffOf(fleetId) || (
+        signedIn() &&
+        get(/databases/$(database)/documents/drivers/$(request.auth.uid))
+          .data.get("fleetId", null) == fleetId
+      );
+      allow write: if isAdmin();
     }
 
     match /fleetInvites/{phone} {

@@ -3731,6 +3731,74 @@ async function phoneFor(collection, uid) {
   }
 }
 
+/**
+ * Twilio details from Secret Manager, or throws while calling is off.
+ * "placeholder" is what the launch guide stores before the real Twilio
+ * details exist; it, and anything that is not a real account SID, counts as
+ * not configured rather than ringing Twilio.
+ * @return {Object} {sid, token, from}
+ */
+function twilioConfig() {
+  const sid = process.env.TWILIO_SID;
+  const token = process.env.TWILIO_TOKEN;
+  const from = process.env.TWILIO_NUMBER;
+  const unset = (v) => !v || /^placeholder$/i.test(String(v).trim());
+  if (unset(sid) || unset(token) || unset(from) ||
+      !/^AC[0-9a-f]{32}$/i.test(String(sid).trim())) {
+    throw new functions.https.HttpsError("failed-precondition",
+        "Calling is not switched on yet.");
+  }
+  return {sid, token, from};
+}
+
+/**
+ * Rings callerNumber, says a line, then connects them to otherNumber. Both
+ * legs show the TakeARoute number.
+ * @param {Object} twilio From twilioConfig().
+ * @param {string} callerNumber E.164, rung first.
+ * @param {string} otherNumber E.164, rung once the caller answers.
+ * @param {string} say What the caller hears while it connects.
+ * @return {Promise<Object>} Twilio's call record ({sid, ...}).
+ */
+async function bridgeCall(twilio, callerNumber, otherNumber, say) {
+  const {sid, token, from} = twilio;
+  const xml = (v) => String(v).replace(/[<>&"']/g, (c) =>
+    ({"<": "&lt;", ">": "&gt;", "&": "&amp;", "\"": "&quot;",
+      "'": "&apos;"})[c]);
+  const twiml = "<Response><Say voice=\"alice\">" + xml(say) +
+    "</Say><Dial callerId=\"" + from + "\" timeout=\"30\">" +
+    otherNumber + "</Dial></Response>";
+
+  const body = new URLSearchParams({
+    To: callerNumber,
+    From: from,
+    Twiml: twiml,
+    TimeLimit: "900",
+  });
+
+  const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${sid}/Calls.json`,
+      {
+        method: "POST",
+        headers: {
+          "Authorization": "Basic " +
+            Buffer.from(`${sid}:${token}`).toString("base64"),
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: body.toString(),
+      },
+  );
+
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    console.error("Twilio call failed:", response.status,
+        result && result.message ? result.message : "no message");
+    throw new functions.https.HttpsError("internal",
+        "The call could not be connected. Please try again.");
+  }
+  return result;
+}
+
 /* Passenger or driver taps Call during a live trip. */
 exports.startMaskedCall = functions
     .runWith({secrets: TWILIO_SECRETS})
@@ -3739,18 +3807,7 @@ exports.startMaskedCall = functions
         throw new functions.https.HttpsError("unauthenticated",
             "Please sign in.");
       }
-      // "placeholder" is what the launch guide stores before the real
-      // Twilio details exist; treat it, and anything that is not a real
-      // account SID, as not configured rather than ringing Twilio.
-      const sid = process.env.TWILIO_SID;
-      const token = process.env.TWILIO_TOKEN;
-      const from = process.env.TWILIO_NUMBER;
-      const unset = (v) => !v || /^placeholder$/i.test(String(v).trim());
-      if (unset(sid) || unset(token) || unset(from) ||
-          !/^AC[0-9a-f]{32}$/i.test(String(sid).trim())) {
-        throw new functions.https.HttpsError("failed-precondition",
-            "Calling is not switched on yet.");
-      }
+      const twilio = twilioConfig();
 
       const rideId = data && data.rideId;
       if (!rideId) {
@@ -3796,38 +3853,8 @@ exports.startMaskedCall = functions
 
       // Ring the caller first, then bridge to the other party. The caller ID
       // on both legs is the TakeARoute number, so neither sees the other.
-      const twiml = "<Response><Say voice=\"alice\">" +
-        "Connecting you to your TakeARoute trip. Please hold." +
-        "</Say><Dial callerId=\"" + from + "\" timeout=\"30\">" +
-        otherNumber + "</Dial></Response>";
-
-      const body = new URLSearchParams({
-        To: callerNumber,
-        From: from,
-        Twiml: twiml,
-        TimeLimit: "900",
-      });
-
-      const response = await fetch(
-          `https://api.twilio.com/2010-04-01/Accounts/${sid}/Calls.json`,
-          {
-            method: "POST",
-            headers: {
-              "Authorization": "Basic " +
-                Buffer.from(`${sid}:${token}`).toString("base64"),
-              "Content-Type": "application/x-www-form-urlencoded",
-            },
-            body: body.toString(),
-          },
-      );
-
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        console.error("Twilio call failed:", response.status,
-            result && result.message ? result.message : "no message");
-        throw new functions.https.HttpsError("internal",
-            "The call could not be connected. Please try again.");
-      }
+      const result = await bridgeCall(twilio, callerNumber, otherNumber,
+          "Connecting you to your TakeARoute trip. Please hold.");
 
       // Logged for disputes. Numbers are not stored.
       await db.collection("rides").doc(rideId).collection("calls").add({
@@ -4069,4 +4096,5 @@ exports.detectDocumentExpiry = functions
 Object.assign(exports, require("./fleet")({
   functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
   hasExpiredDocument, toE164, toMillis, addOneMonth,
+  TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor,
 }));

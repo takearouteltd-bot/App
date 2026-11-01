@@ -23,7 +23,9 @@
      scheduled    booked for later; dispatchScheduledRides sends it
                   dispatch.leadMinutes before pickupAt
      dispatching  offered to dispatch.driverId, or to the whole fleet when
-                  that is null; a driver who declines is added to declinedBy
+                  that is null; a driver who declines is added to declinedBy.
+                  dispatch.mode says how: "driver" (the operator chose),
+                  "all" (whole fleet) or "queue" (the zone queue, below)
      accepted / arrived / ongoing / completed / cancelled   as app jobs
 
    Collections:
@@ -33,6 +35,15 @@
      fleetWallets/{fleetId}           availableBalance, totalEarned, ...
        /transactions/{id}             ride_earning, membership, payout
      fleetInvites/{e164}              a driver invited by phone number
+     fleetQueues/{fleetId}            who is waiting in each zone, in order
+     fleets/{fleetId}/calls/{id}      calls the office placed (fleetCall)
+
+   Zone queues: the owner draws zones (circles) in Settings. Free drivers
+   inside a zone queue there in the order they arrived or became free
+   (runFleetQueues keeps fleetQueues/{fleetId} up to date every minute). A
+   job sent "by queue" rings the first driver in its pickup zone; a no, or no
+   answer within queueOfferSeconds, sends that driver to the back and rings
+   the next. When nobody in the zone is left it goes to the whole fleet.
 ====================================== */
 
 /* The app's Google Maps key (App/config/maps.js). It ships inside the app,
@@ -59,10 +70,19 @@ const FARE_DEFAULTS = {
 const JOIN_CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const DEFAULT_LEAD_MINUTES = 20;
 const MAX_LEAD_MINUTES = 180;
+const MAX_ZONES = 30;
+const DEFAULT_QUEUE_OFFER_SECONDS = 45;
+/* A driver whose phone has not reported a position for this long is left
+   out of the queues (app closed, no signal). */
+const QUEUE_STALE_MS = 5 * 60 * 1000;
+/* Most calls one fleet's office can place in a day, so a mistake or a
+   misused login cannot run up the Twilio bill. */
+const MAX_FLEET_CALLS_PER_DAY = 300;
 
 module.exports = (deps) => {
   const {functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
-    hasExpiredDocument, toE164, toMillis, addOneMonth} = deps;
+    hasExpiredDocument, toE164, toMillis, addOneMonth,
+    TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor} = deps;
   const {HttpsError} = functions.https;
   // From the modular entry point: the functions emulator's stand-in for
   // admin.firestore does not carry FieldValue or Timestamp.
@@ -277,9 +297,18 @@ module.exports = (deps) => {
    * @return {boolean} Eligible.
    */
   function canTakeFleetJob(d, ride) {
-    return d.fleetId === ride.fleetId && d.approved === true &&
-      d.blocked !== true && !hasExpiredDocument(d) &&
-      d.restDue !== true && canServe(d.vehicleType, ride.rideType);
+    return d.fleetId === ride.fleetId && canWork(d) &&
+      canServe(d.vehicleType, ride.rideType);
+  }
+
+  /**
+   * Approved, not blocked, documents in date and not on a forced rest.
+   * @param {Object} d Driver data.
+   * @return {boolean} May take jobs at all.
+   */
+  function canWork(d) {
+    return d.approved === true && d.blocked !== true &&
+      !hasExpiredDocument(d) && d.restDue !== true;
   }
 
   /**
@@ -322,6 +351,147 @@ module.exports = (deps) => {
     });
     console.log(`Fleet job ${rideId} offered to ${ids.length} driver(s)`);
     return ids.length;
+  }
+
+  /**
+   * The zone a point is in: the smallest circle that contains it, so a
+   * station zone inside a town zone wins.
+   * @param {Array} zones Fleet zones [{id, name, center, radiusKm}].
+   * @param {Object} p {latitude, longitude}.
+   * @return {?Object} Zone, or null.
+   */
+  function zoneFor(zones, p) {
+    if (!p || !Array.isArray(zones)) return null;
+    let best = null;
+    zones.forEach((z) => {
+      if (!z || !z.center) return;
+      if (distanceKm(p, z.center) > z.radiusKm) return;
+      if (!best || z.radiusKm < best.radiusKm) best = z;
+    });
+    return best;
+  }
+
+  /**
+   * Rebuilds a fleet's zone queues from where its free drivers are now.
+   * A driver keeps their place while they stay free in the same zone; one
+   * who has just arrived, or just become free, joins at the back.
+   * @param {string} fleetId Fleet.
+   * @param {Array} zones The fleet's zones.
+   * @return {Promise<Object>} {zoneId: [{driverId, name, vehicleType,
+   *   since}]}, each in queue order (since in ms).
+   */
+  async function refreshQueue(fleetId, zones) {
+    const ref = db.collection("fleetQueues").doc(fleetId);
+    const [queueSnap, drivers] = await Promise.all([ref.get(),
+      db.collection("drivers").where("fleetId", "==", fleetId).get()]);
+    const old = queueSnap.exists ? queueSnap.data().zones || {} : {};
+    const placed = {};
+    Object.keys(old).forEach((zoneId) => (old[zoneId] || []).forEach((e) => {
+      placed[e.driverId] = {zoneId, since: toMillis(e.since)};
+    }));
+    const now = Date.now();
+    const queues = {};
+    (zones || []).forEach((z) => (queues[z.id] = []));
+    drivers.forEach((snap) => {
+      const d = snap.data();
+      if (d.status !== "online" || d.isOnRide === true || !canWork(d)) return;
+      const seen = toMillis(d.lastUpdated);
+      if (!seen || now - seen > QUEUE_STALE_MS) return;
+      const zone = zoneFor(zones, d.location);
+      if (!zone) return;
+      const was = placed[snap.id];
+      queues[zone.id].push({
+        driverId: snap.id,
+        name: [d.firstName, d.lastName].filter(Boolean).join(" ") ||
+          d.name || d.fullName || "Driver",
+        vehicleType: d.vehicleType || "RouteMini",
+        since: was && was.zoneId === zone.id && was.since ? was.since : now,
+      });
+    });
+    const stored = {};
+    Object.keys(queues).forEach((zoneId) => {
+      queues[zoneId].sort((a, b) => a.since - b.since);
+      stored[zoneId] = queues[zoneId].map((e) =>
+        Object.assign({}, e, {since: Timestamp.fromMillis(e.since)}));
+    });
+    const zoneNames = {};
+    (zones || []).forEach((z) => (zoneNames[z.id] = z.name));
+    await ref.set({zones: stored, zoneNames,
+      updatedAt: FieldValue.serverTimestamp()});
+    return queues;
+  }
+
+  /**
+   * Moves a driver to the back of their zone queue (they said no, or did
+   * not answer).
+   * @param {string} fleetId Fleet.
+   * @param {string} driverId Driver.
+   * @return {Promise<void>}
+   */
+  async function sendToBack(fleetId, driverId) {
+    const ref = db.collection("fleetQueues").doc(fleetId);
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return;
+      const zones = snap.data().zones || {};
+      let changed = false;
+      Object.keys(zones).forEach((zoneId) => {
+        const list = zones[zoneId] || [];
+        const i = list.findIndex((e) => e.driverId === driverId);
+        if (i < 0) return;
+        const [entry] = list.splice(i, 1);
+        list.push(Object.assign({}, entry, {since: Timestamp.now()}));
+        changed = true;
+      });
+      if (changed) tx.update(ref, {zones});
+    });
+  }
+
+  /**
+   * Rings the next driver in a queued job's pickup zone, or hands it to
+   * the whole fleet when the zone has nobody left.
+   * @param {Object} rideRef Ride document.
+   * @param {Object} ride Ride data as the trigger saw it.
+   * @return {Promise<void>}
+   */
+  async function offerNextInQueue(rideRef, ride) {
+    const current = ride.dispatch && ride.dispatch.driverId;
+    if (current) {
+      await sendToBack(ride.fleetId, current).catch((error) => {
+        console.error("Queue: could not move driver back:", error.message);
+      });
+    }
+    const fleetSnap = await db.collection("fleets").doc(ride.fleetId).get();
+    const zones = fleetSnap.exists ? fleetSnap.data().zones || [] : [];
+    const zone = zoneFor(zones, ride.pickupLocation);
+    let next = null;
+    if (zone) {
+      const queues = await refreshQueue(ride.fleetId, zones);
+      const skip = new Set(ride.declinedBy || []);
+      next = (queues[zone.id] || []).find((e) => !skip.has(e.driverId) &&
+        canServe(e.vehicleType, ride.rideType)) || null;
+    }
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(rideRef);
+      const now = snap.exists ? snap.data() : null;
+      // Someone took it, the office changed it, or another run got here.
+      if (!now || now.status !== "dispatching" ||
+          !now.dispatch || now.dispatch.mode !== "queue" ||
+          (now.dispatch.driverId || null) !== (current || null)) {
+        return;
+      }
+      tx.update(rideRef, {
+        "dispatch.driverId": next ? next.driverId : null,
+        "dispatch.zoneId": zone ? zone.id : null,
+        "dispatch.zoneName": zone ? zone.name : null,
+        "dispatch.queueDone": !next,
+        "dispatch.offeredAt": FieldValue.serverTimestamp(),
+        "dispatch.queueOffers": FieldValue.increment(next ? 1 : 0),
+      });
+    });
+    console.log(`Queue job ${rideRef.id}: ` + (next ?
+      `offered to ${next.driverId} in ${zone.name}` :
+      `${zone ? zone.name + " empty" : "pickup in no zone"}, sent to fleet`));
   }
 
   /**
@@ -1016,6 +1186,12 @@ module.exports = (deps) => {
 
     // The chosen driver must be in this fleet and able to do the job.
     const driverId = text(d.driverId, 128) || null;
+    const mode = driverId ? "driver" : d.dispatchMode === "queue" ?
+      "queue" : "all";
+    if (mode === "queue" && !(me.fleet.zones || []).length) {
+      throw new HttpsError("failed-precondition",
+          "Add your zones in Settings before sending jobs by queue.");
+    }
     if (driverId) {
       const snap = await db.collection("drivers").doc(driverId).get();
       const drv = snap.exists ? snap.data() : null;
@@ -1088,6 +1264,7 @@ module.exports = (deps) => {
       pickupAt: pickupAtMs === null ? null : Timestamp.fromMillis(pickupAtMs),
       dispatchAt: Timestamp.fromMillis(dispatchAtMs),
       dispatch: {
+        mode,
         driverId,
         leadMinutes: lead,
         offeredAt: later ? null : ts,
@@ -1119,6 +1296,12 @@ module.exports = (deps) => {
     const me = await assertFleetManager(context, false);
     const rideId = text(data && data.rideId, 128);
     const driverId = text(data && data.driverId, 128) || null;
+    const mode = driverId ? "driver" : data && data.mode === "queue" ?
+      "queue" : "all";
+    if (mode === "queue" && !(me.fleet.zones || []).length) {
+      throw new HttpsError("failed-precondition",
+          "Add your zones in Settings before sending jobs by queue.");
+    }
     const rideRef = db.collection("rides").doc(rideId);
     if (driverId) {
       const [snap, rideSnap] = await Promise.all([
@@ -1143,12 +1326,15 @@ module.exports = (deps) => {
       tx.update(rideRef, {
         "status": "dispatching",
         "dispatchAt": Timestamp.now(),
+        "dispatch.mode": mode,
         "dispatch.driverId": driverId,
         "dispatch.offeredAt": FieldValue.serverTimestamp(),
         "dispatch.rounds": FieldValue.increment(1),
         "dispatch.returnedBy": FieldValue.delete(),
-        // Sending to the whole fleet again: anyone who said no before is
-        // asked again, since the operator chose to resend.
+        "dispatch.queueDone": false,
+        "dispatch.missed": [],
+        // Sending to the whole fleet or the queue again: anyone who said no
+        // before is asked again, since the operator chose to resend.
         "declinedBy": driverId ?
           (ride.declinedBy || []).filter((id) => id !== driverId) : [],
       });
@@ -1194,6 +1380,140 @@ module.exports = (deps) => {
     return {ok: true};
   });
 
+  /* The owner saves the fleet's zones (circles) and how long a queued
+     driver has to answer. */
+  out.saveFleetZones = functions.https.onCall(async (data, context) => {
+    const me = await assertFleetManager(context, true);
+    const raw = Array.isArray(data && data.zones) ? data.zones : [];
+    if (raw.length > MAX_ZONES) {
+      throw new HttpsError("invalid-argument",
+          `A fleet can have up to ${MAX_ZONES} zones.`);
+    }
+    const used = new Set();
+    const zones = raw.map((z, i) => {
+      const name = text(z && z.name, 40);
+      const center = point(z && z.center);
+      const radiusKm = Number(z && z.radiusKm);
+      if (!name || !center) {
+        throw new HttpsError("invalid-argument",
+            `Zone ${i + 1} needs a name and a centre.`);
+      }
+      if (!(radiusKm >= 0.2 && radiusKm <= 30)) {
+        throw new HttpsError("invalid-argument",
+            `${name}: the radius must be between 0.2 and 30 km.`);
+      }
+      let id = text(z.id, 20).replace(/[^A-Za-z0-9]/g, "");
+      while (!id || used.has(id)) {
+        id = Math.random().toString(36).slice(2, 10);
+      }
+      used.add(id);
+      return {id, name, center, radiusKm: Math.round(radiusKm * 10) / 10};
+    });
+    const secondsRaw = Number(data && data.queueOfferSeconds);
+    const queueOfferSeconds = Number.isFinite(secondsRaw) ?
+      Math.min(180, Math.max(20, Math.round(secondsRaw))) :
+      me.fleet.queueOfferSeconds || DEFAULT_QUEUE_OFFER_SECONDS;
+    await db.collection("fleets").doc(me.fleetId).update({
+      zones, zoneCount: zones.length, queueOfferSeconds,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    await refreshQueue(me.fleetId, zones).catch(() => null);
+    return {zones, queueOfferSeconds};
+  });
+
+  /* The office calls a customer or one of its drivers. Twilio rings the
+     operator's own phone first, then connects them; both see the
+     TakeARoute number, so the operator's number stays private. */
+  out.fleetCall = functions
+      .runWith({secrets: TWILIO_SECRETS})
+      .https.onCall(async (data, context) => {
+        const me = await assertFleetManager(context, false);
+        const d = data || {};
+
+        const typed = d.myPhone ? toE164(d.myPhone) : null;
+        if (d.myPhone && !typed) {
+          throw new HttpsError("invalid-argument",
+              "Your phone number does not look right.");
+        }
+        const mine = typed || toE164(me.manager.phone);
+        if (!mine) {
+          throw new HttpsError("failed-precondition",
+              "Add the phone you take calls on first.");
+        }
+        if (typed && typed !== me.manager.phone) {
+          await db.collection("fleetManagers").doc(me.uid)
+              .update({phone: typed}).catch(() => null);
+        }
+
+        let other = null;
+        let label = "";
+        let who = null;
+        if (d.to === "driver") {
+          const driverId = text(d.driverId, 128);
+          const snap = driverId ?
+            await db.collection("drivers").doc(driverId).get() : null;
+          const drv = snap && snap.exists ? snap.data() : null;
+          if (!drv || drv.fleetId !== me.fleetId) {
+            throw new HttpsError("not-found", "Not one of your drivers.");
+          }
+          other = await phoneFor("drivers", driverId);
+          label = [drv.firstName, drv.lastName].filter(Boolean).join(" ") ||
+            drv.name || "your driver";
+          who = {driverId};
+        } else {
+          other = toE164(d.phone);
+          if (!other) {
+            throw new HttpsError("invalid-argument",
+                "Enter the customer's phone number.");
+          }
+          // Only people the fleet knows: a contact card is made as soon as
+          // a number is typed on the booking form.
+          const card = await db.collection("fleets").doc(me.fleetId)
+              .collection("customers").doc(other).get();
+          if (!card.exists) {
+            throw new HttpsError("not-found",
+                "That number is not one of your customers.");
+          }
+          label = card.data().name || "your customer";
+          who = {customer: other};
+        }
+        if (!other) {
+          throw new HttpsError("failed-precondition",
+              "There is no phone number on file for them.");
+        }
+        if (other === mine) {
+          throw new HttpsError("invalid-argument",
+              "That is your own number.");
+        }
+
+        const twilio = twilioConfig();
+
+        // A daily cap per fleet.
+        const day = new Date().toISOString().slice(0, 10);
+        const countRef = db.collection("fleets").doc(me.fleetId)
+            .collection("callDays").doc(day);
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(countRef);
+          const count = snap.exists ? snap.data().count || 0 : 0;
+          if (count >= MAX_FLEET_CALLS_PER_DAY) {
+            throw new HttpsError("resource-exhausted",
+                "Your fleet has reached today's call limit.");
+          }
+          tx.set(countRef, {count: count + 1}, {merge: true});
+        });
+
+        const result = await bridgeCall(twilio, mine, other,
+            `Connecting you to ${label}.`);
+        await db.collection("fleets").doc(me.fleetId).collection("calls")
+            .add(Object.assign({
+              callSid: result.sid || null,
+              by: me.uid,
+              rideId: text(d.rideId, 128) || null,
+              createdAt: FieldValue.serverTimestamp(),
+            }, who)).catch(() => null);
+        return {connecting: true, to: label};
+      });
+
   /* Rings the right drivers whenever a phone job starts dispatching, is
      sent again, or a driver gives it back. */
   out.dispatchFleetJob = functions.firestore
@@ -1220,6 +1540,22 @@ module.exports = (deps) => {
           return null;
         }
         if (after.status !== "dispatching") return null;
+
+        // By queue: pick the first driver in the pickup zone, and the next
+        // one each time the current one says no (or runFleetQueues marks
+        // them as not answering). offerNextInQueue writes the choice, which
+        // brings us back here to ring them.
+        const dispatch = after.dispatch || {};
+        if (dispatch.mode === "queue" && !dispatch.returnedBy) {
+          const current = dispatch.driverId || null;
+          const turnedDown = current &&
+            (after.declinedBy || []).includes(current);
+          if ((!current && !dispatch.queueDone) || turnedDown) {
+            await offerNextInQueue(change.after.ref, after);
+            return null;
+          }
+        }
+
         const offeredNow = !before || before.status !== "dispatching" ||
           toMillis(before.dispatch && before.dispatch.offeredAt) !==
             toMillis(after.dispatch && after.dispatch.offeredAt) ||
@@ -1255,6 +1591,60 @@ module.exports = (deps) => {
           });
         }
         if (due.size) console.log(`Sent ${due.size} booked job(s)`);
+        return null;
+      });
+
+  /* Every minute: zone queues follow where free drivers are, and a queued
+     job whose driver has not answered moves to the next in line. */
+  out.runFleetQueues = functions.pubsub
+      .schedule("every 1 minutes")
+      .onRun(async () => {
+        const fleets = await db.collection("fleets")
+            .where("zoneCount", ">", 0).get();
+        const offerMs = {};
+        for (const f of fleets.docs) {
+          const fleet = f.data();
+          offerMs[f.id] = 1000 * (fleet.queueOfferSeconds ||
+            DEFAULT_QUEUE_OFFER_SECONDS);
+          if (fleet.status === "suspended") continue;
+          await refreshQueue(f.id, fleet.zones || []).catch((error) => {
+            console.error("Queue refresh failed:", f.id, error.message);
+          });
+        }
+
+        // Equality filters only, so no composite index is needed.
+        const queued = await db.collection("rides")
+            .where("status", "==", "dispatching")
+            .where("dispatch.mode", "==", "queue")
+            .limit(200).get();
+        let moved = 0;
+        for (const doc of queued.docs) {
+          const ride = doc.data();
+          const current = ride.dispatch && ride.dispatch.driverId;
+          const offered = toMillis(ride.dispatch && ride.dispatch.offeredAt);
+          const limit = offerMs[ride.fleetId] ||
+            DEFAULT_QUEUE_OFFER_SECONDS * 1000;
+          if (!current || !offered || Date.now() - offered < limit ||
+              (ride.declinedBy || []).includes(current)) {
+            continue;
+          }
+          // No answer counts as a no: dispatchFleetJob rings the next.
+          await db.runTransaction(async (tx) => {
+            const snap = await tx.get(doc.ref);
+            const now = snap.exists ? snap.data() : null;
+            if (!now || now.status !== "dispatching" ||
+                (now.dispatch && now.dispatch.driverId) !== current) {
+              return;
+            }
+            tx.update(doc.ref, {
+              "declinedBy": FieldValue.arrayUnion(current),
+              "dispatch.missed": FieldValue.arrayUnion(current),
+            });
+          }).then(() => moved++).catch((error) => {
+            console.error("Queue timeout failed:", doc.id, error.message);
+          });
+        }
+        if (moved) console.log(`Queue: ${moved} unanswered offer(s) moved on`);
         return null;
       });
 

@@ -58,6 +58,13 @@ const MISSED_SNOOZE_MS = 60000;
 const fareOf = (ride) => Number(ride?.fareEstimate) || 0;
 
 // "14:30" today, or "Tue 4 Nov, 14:30" for a booking on another day.
+/* 1st, 2nd, 3rd, 4th… 11th, 12th, 13th, 21st. */
+function ordinal(n) {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return `${n}th`;
+  return `${n}${['th', 'st', 'nd', 'rd'][n % 10] || 'th'}`;
+}
+
 function formatPickupTime(ts) {
   const d = ts?.toDate ? ts.toDate() : new Date(ts);
   if (Number.isNaN(d.getTime())) return '';
@@ -134,6 +141,8 @@ export default function DriverHomeScreen() {
   const rungFor = useRef(new Map());
   const [searchingRides, setSearchingRides] = useState([]);
   const [fleetRides, setFleetRides] = useState([]);
+  // This driver's place in their fleet's zone queue, if any.
+  const [queueSpot, setQueueSpot] = useState(null);
 
   const [rideRequests, setRideRequests] = useState([]);
   // The offer being shown, by ride id, so a change to some other searching
@@ -424,6 +433,29 @@ export default function DriverHomeScreen() {
     );
   }, [isOnline, isApproved, fleetId]);
 
+  // Fleets with zones keep a queue per zone (functions/fleet.js
+  // runFleetQueues); show the driver where they stand.
+  useEffect(() => {
+    if (!isOnline || !isApproved || !fleetId || !driverId) {
+      setQueueSpot(null);
+      return undefined;
+    }
+    return onSnapshot(
+      doc(db, 'fleetQueues', fleetId),
+      (snap) => {
+        const zones = snap.exists() ? snap.data().zones || {} : {};
+        const names = snap.exists() ? snap.data().zoneNames || {} : {};
+        let spot = null;
+        Object.keys(zones).forEach((zoneId) => {
+          const i = (zones[zoneId] || []).findIndex((e) => e.driverId === driverId);
+          if (i >= 0) spot = { name: names[zoneId] || null, position: i + 1, of: zones[zoneId].length };
+        });
+        setQueueSpot(spot);
+      },
+      () => setQueueSpot(null)
+    );
+  }, [isOnline, isApproved, fleetId, driverId]);
+
   // The jobs on offer to this driver, nearest first, worked out again when
   // the jobs or the driver's position change.
   useEffect(() => {
@@ -542,6 +574,18 @@ export default function DriverHomeScreen() {
   const advanceRef = useRef(advanceQueue);
   advanceRef.current = advanceQueue;
 
+  // A fleet job offered to this driver from the zone queue that runs out
+  // unanswered is passed on at once, so the next driver in line gets it
+  // without waiting for the server's own timeout.
+  const passQueueOffer = useCallback((rideId) => {
+    const ride = rideRequests.find((r) => r.id === rideId);
+    if (!ride || ride.source !== 'phone' || ride.dispatch?.mode !== 'queue') return;
+    if (ride.dispatch?.driverId !== driverId) return;
+    updateDoc(doc(db, 'rides', rideId), { declinedBy: arrayUnion(driverId) }).catch(() => {});
+  }, [rideRequests, driverId]);
+  const passQueueOfferRef = useRef(passQueueOffer);
+  passQueueOfferRef.current = passQueueOffer;
+
   useEffect(() => {
     if (isOnline) {
       const pulse = Animated.loop(
@@ -582,6 +626,7 @@ export default function DriverHomeScreen() {
               return next;
             });
           }
+          passQueueOfferRef.current(currentRideId);
           advanceRef.current(MISSED_SNOOZE_MS);
           return 0;
         }
@@ -998,7 +1043,11 @@ export default function DriverHomeScreen() {
           {isOnline ? (
             <View style={styles.waiting}>
               <ActivityIndicator size="small" color={COLORS.midnight} />
-              <Text style={styles.waitingText}>Waiting for jobs nearby</Text>
+              <Text style={styles.waitingText}>
+                {queueSpot
+                  ? `${ordinal(queueSpot.position)} of ${queueSpot.of} in the ${queueSpot.name || 'zone'} queue`
+                  : 'Waiting for jobs nearby'}
+              </Text>
             </View>
           ) : null}
         </View>
@@ -1013,7 +1062,11 @@ export default function DriverHomeScreen() {
               <View style={styles.fleetBanner}>
                 <Ionicons name="call-outline" size={16} color={COLORS.midnight} />
                 <Text style={styles.fleetBannerText} numberOfLines={2}>
-                  {currentRide.forMe ? 'Sent to you by ' : 'Phone booking from '}
+                  {currentRide.forMe && currentRide.dispatch?.mode === 'queue'
+                    ? `Your turn${currentRide.dispatch?.zoneName ? ` in the ${currentRide.dispatch.zoneName} queue` : ''} · `
+                    : currentRide.forMe
+                    ? 'Sent to you by '
+                    : 'Phone booking from '}
                   {currentRide.fleetName || 'your fleet'}
                   {currentRide.pickupAt ? ` · pickup ${formatPickupTime(currentRide.pickupAt)}` : ''}
                   {currentRide.notes ? `\n${currentRide.notes}` : ''}

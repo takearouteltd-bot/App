@@ -123,3 +123,61 @@ test('staff keep saved places on a card', async () => {
   await assertSucceeds(updateDoc(doc(as('op1'), 'fleets/f1/customers/+447700900000'), { places: [{ label: 'Home', address: '1 High St', latitude: 51, longitude: 0 }] }));
   await assertSucceeds(updateDoc(doc(as('op1'), 'fleets/f1/customers/+447700900000'), { notes: 'Ring on arrival' }));
 });
+
+test('zone queues: staff and the fleet\'s drivers read, nobody writes', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'fleetQueues/f1'), { zones: { z1: [{ driverId: 'd1' }] } });
+  });
+  await assertSucceeds(getDoc(doc(as('op1'), 'fleetQueues/f1')));
+  await assertSucceeds(getDoc(doc(as('d2'), 'fleetQueues/f1')));
+  await assertFails(getDoc(doc(as('dx'), 'fleetQueues/f1')));
+  await assertFails(getDoc(doc(as('dind'), 'fleetQueues/f1')));
+  await assertFails(getDoc(doc(as('own2'), 'fleetQueues/f1')));
+  await assertFails(setDoc(doc(as('own1'), 'fleetQueues/f1'), { zones: {} }));
+  await assertFails(updateDoc(doc(as('d1'), 'fleetQueues/f1'), { zones: { z1: [{ driverId: 'd1' }] } }));
+});
+test('owner cannot write zones directly (saveFleetZones checks them)', () =>
+  assertFails(updateDoc(doc(as('own1'), 'fleets/f1'), { zones: [], zoneCount: 0 })));
+
+/* Gaps found in the live test (2026-11-01): the app filtered these, the rules did not. */
+const searching = (extra = {}) => ({ riderId: 'r1', driverId: null, status: 'searching', rideType: 'RouteMini', walletProcessed: false, ...extra });
+test('female-only job needs a verified female driver', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, 'rides/fem'), searching({ femaleDriverOnly: true }));
+    await setDoc(doc(db, 'drivers/dfem'), driver(null, { femaleVerified: true }));
+  });
+  await assertFails(updateDoc(doc(as('dind'), 'rides/fem'), claim('dind')));
+  await assertSucceeds(updateDoc(doc(as('dfem'), 'rides/fem'), claim('dfem')));
+});
+test('driver the passenger blocked cannot take their job', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'rides/blk'), searching({ blockedDriverIds: ['dind'] }));
+  });
+  await assertFails(updateDoc(doc(as('dind'), 'rides/blk'), claim('dind')));
+  await assertSucceeds(updateDoc(doc(as('d1'), 'rides/blk'), claim('d1')));
+});
+test('blocked driver cannot take app or fleet jobs', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, 'rides/open'), searching());
+    await updateDoc(doc(db, 'drivers/d1'), { blocked: true });
+  });
+  await assertFails(updateDoc(doc(as('d1'), 'rides/open'), claim('d1')));
+  await assertFails(updateDoc(doc(as('d1'), 'rides/broad'), claim('d1')));
+});
+test('blocked driver cannot go online, but can finish a trip', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, 'drivers/dblk'), driver(null, { blocked: true, status: 'offline' }));
+    await setDoc(doc(db, 'drivers/dblk2'), driver(null, { blocked: true, status: 'on_ride', isOnRide: true }));
+  });
+  await assertFails(updateDoc(doc(as('dblk'), 'drivers/dblk'), { status: 'online' }));
+  await assertSucceeds(updateDoc(doc(as('dblk2'), 'drivers/dblk2'), { status: 'online', isOnRide: false, currentRideId: null }));
+});
+test('staff save their own phone for calls, nothing else', async () => {
+  await assertSucceeds(updateDoc(doc(as('op1'), 'fleetManagers/op1'), { phone: '+447700900555' }));
+  await assertFails(updateDoc(doc(as('op1'), 'fleetManagers/op1'), { phone: '0770' }));
+  await assertFails(updateDoc(doc(as('op1'), 'fleetManagers/own1'), { phone: '+447700900555' }));
+  await assertFails(updateDoc(doc(as('op1'), 'fleetManagers/op1'), { phone: '+447700900555', role: 'owner' }));
+});

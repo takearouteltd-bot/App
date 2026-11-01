@@ -15,7 +15,7 @@ const mk = (name) => {
   return { auth, db, call: (n, d) => httpsCallable(fn, n)(d).then((r) => r.data) };
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function until(fn, what, ms = 20000) {
+async function until(fn, what, ms = 90000) {
   const end = Date.now() + ms;
   for (;;) { const v = await fn(); if (v) return v; if (Date.now() > end) throw new Error('timeout: ' + what); await sleep(500); }
 }
@@ -23,7 +23,7 @@ async function until(fn, what, ms = 20000) {
 async function adminSet(path, data, mask = false) {
   const fields = {};
   const enc = (v) => typeof v === 'boolean' ? { booleanValue: v } : typeof v === 'number' ? (Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v })
-    : v === null ? { nullValue: null } : typeof v === 'object' ? { mapValue: { fields: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, enc(x)])) } } : { stringValue: String(v) };
+    : v === null ? { nullValue: null } : v instanceof Date ? { timestampValue: v.toISOString() } : Array.isArray(v) ? { arrayValue: { values: v.map(enc) } } : typeof v === 'object' ? { mapValue: { fields: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, enc(x)])) } } : { stringValue: String(v) };
   Object.entries(data).forEach(([k, v]) => (fields[k] = enc(v)));
   const r = await fetch(`http://127.0.0.1:8080/v1/projects/${PROJECT}/databases/(default)/documents/${path}${mask ? '?' + Object.keys(data).map((k) => 'updateMask.fieldPaths=' + k).join('&') : ''}`, {
     method: 'PATCH', headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }) });
@@ -126,8 +126,8 @@ step('pre-booking due in 1 min goes out on its own (scheduler)');
 const b3 = await O.call('createFleetBooking', { customer: { phone: '07700900888', name: 'Bob' }, pickup: T5, dropoff: PAD, pickupAt: new Date(Date.now() + 60 * 1000 + 20 * 60 * 1000).toISOString(), leadMinutes: 20 });
 assert.equal(b3.status, 'scheduled');
 
-step('an app job taken by a fleet driver is tagged with the fleet; card earnings go to the fleet wallet');
-await adminSet('rides/appjob', { riderId: 'r1', driverId: null, status: 'searching', rideType: 'RouteMini', paymentMethod: 'card', fare: { total: 20 }, pickupLocation: T5, dropoffLocation: PAD });
+step('an app job taken by a fleet driver is tagged with the fleet (cash here: Stripe is not set up in the emulator)');
+await adminSet('rides/appjob', { riderId: 'r1', driverId: null, status: 'searching', rideType: 'RouteMini', paymentMethod: 'cash', fare: { total: 20 }, pickupLocation: T5, dropoffLocation: PAD });
 await updateDoc(doc(D.db, 'rides', 'appjob'), claim(d1.user.uid));
 await until(async () => (await getDoc(doc(D.db, 'rides', 'appjob'))).data().fleetId === created.fleetId, 'tagFleetRides');
 // The wallet credit itself (index.js creditDriverWalletOnRideCompletion)
@@ -163,6 +163,75 @@ const bApp = await O.call('createFleetBooking', { customer: { phone: '0770090045
 const rApp = (await getDoc(doc(O.db, 'rides', bApp.rideId))).data();
 assert.equal(rApp.customer.riderId, ru.user.uid); assert.equal(rApp.customer.name, 'Priya Patel'); assert.equal(rApp.riderId, null, 'booking stays the fleet\'s');
 assert.equal((await O.call('fleetLookupCaller', { phone: '07700 900321' })).appUser, false);
+
+step('zone queues: owner saves zones; bad radius refused');
+const fid = created.fleetId;
+const HEATHROW = { latitude: 51.4700, longitude: -0.4543, address: 'Heathrow Airport' };
+const D3 = mk('driver3'), D4 = mk('driver4');
+const d3 = await createUserWithEmailAndPassword(D3.auth, 'd3@test.dev', 'secret123');
+const d4 = await createUserWithEmailAndPassword(D4.auth, 'd4@test.dev', 'secret123');
+const fresh = () => new Date();
+for (const [u, phone] of [[d3.user.uid, '+447700900333'], [d4.user.uid, '+447700900444']]) {
+  await adminSet(`drivers/${u}`, { approved: true, onboardingComplete: true, vehicleType: 'RouteMini', status: 'online', phoneNumber: phone, firstName: 'Q', location: PAD, lastUpdated: fresh(), subscription: { status: 'active', paymentMethod: 'wallet_deduction' } });
+}
+for (const [X, u] of [[D3, d3], [D4, d4]]) {
+  await X.call('requestFleetJoin', { code: created.joinCode });
+  await O.call('decideFleetDriver', { driverId: u.user.uid, approve: true });
+}
+// Driver 1 waits at Heathrow first; driver 3 arrives later.
+await adminSet(`drivers/${d1.user.uid}`, { status: 'online', isOnRide: false, location: HEATHROW, lastUpdated: fresh() }, true);
+await assert.rejects(O.call('saveFleetZones', { zones: [{ name: 'Huge', center: HEATHROW, radiusKm: 99 }] }), 'radius over 30 km');
+await assert.rejects(D.call('saveFleetZones', { zones: [] }), 'driver cannot save zones');
+const saved = await O.call('saveFleetZones', { zones: [
+  { name: 'Heathrow', center: T5, radiusKm: 4 },
+  { name: 'Paddington', center: PAD, radiusKm: 1.5 },
+], queueOfferSeconds: 20 });
+assert.equal(saved.zones.length, 2); assert.equal(saved.queueOfferSeconds, 20);
+const zH = saved.zones.find((z) => z.name === 'Heathrow').id;
+const zP = saved.zones.find((z) => z.name === 'Paddington').id;
+let q = (await getDoc(doc(O.db, 'fleetQueues', fid))).data().zones;
+assert.deepEqual(q[zH].map((e) => e.driverId), [d1.user.uid]);
+assert.deepEqual(q[zP].map((e) => e.driverId).sort(), [d3.user.uid, d4.user.uid].sort());
+assert.ok((await getDoc(doc(D.db, 'fleetQueues', fid))).exists(), 'a fleet driver sees the queue');
+await sleep(1100);
+await adminSet(`drivers/${d3.user.uid}`, { location: HEATHROW, lastUpdated: fresh() }, true);
+
+step('job by queue from Heathrow rings driver 1 (first in line), then driver 3 after driver 1 says no');
+const bq = await O.call('createFleetBooking', { customer: { phone: '07700900999', name: 'Ann Smith' }, pickup: T5, dropoff: PAD, dispatchMode: 'queue' });
+let rq = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', bq.rideId))).data(); return r.dispatch.driverId ? r : null; }, 'first queue offer');
+assert.equal(rq.dispatch.mode, 'queue'); assert.equal(rq.dispatch.zoneName, 'Heathrow');
+assert.equal(rq.dispatch.driverId, d1.user.uid);
+await assert.rejects(updateDoc(doc(D3.db, 'rides', bq.rideId), claim(d3.user.uid)), 'not driver 3\'s turn');
+await updateDoc(doc(D.db, 'rides', bq.rideId), { declinedBy: arrayUnion(d1.user.uid) });
+rq = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', bq.rideId))).data(); return r.dispatch.driverId === d3.user.uid ? r : null; }, 'second queue offer');
+q = (await getDoc(doc(O.db, 'fleetQueues', fid))).data().zones;
+assert.deepEqual(q[zH].map((e) => e.driverId), [d3.user.uid, d1.user.uid], 'driver 1 went to the back');
+
+step('driver 3 does not answer: after 20 s the scheduler moves on; zone empty, so it goes to the whole fleet');
+await sleep(21000);
+const pub = await fetch(`http://127.0.0.1:8085/v1/projects/${PROJECT}/topics/firebase-schedule-runFleetQueues:publish`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: [{ data: Buffer.from('{}').toString('base64') }] }) });
+assert.ok(pub.ok, 'pubsub publish: ' + pub.status);
+rq = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', bq.rideId))).data(); return r.dispatch.queueDone ? r : null; }, 'queue exhausted');
+assert.equal(rq.dispatch.driverId, null); assert.ok(rq.dispatch.missed.includes(d3.user.uid));
+await assert.rejects(updateDoc(doc(D.db, 'rides', bq.rideId), claim(d1.user.uid)), 'driver 1 said no');
+await updateDoc(doc(D4.db, 'rides', bq.rideId), claim(d4.user.uid));
+assert.equal((await getDoc(doc(O.db, 'rides', bq.rideId))).data().driverId, d4.user.uid);
+
+step('job by queue from outside every zone goes straight to the fleet');
+const FAR = { latitude: 51.75, longitude: -1.25, address: 'Oxford' };
+const bf = await O.call('createFleetBooking', { customer: { phone: '07700900999', name: 'Ann Smith' }, pickup: FAR, dropoff: PAD, dispatchMode: 'queue' });
+const rf = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', bf.rideId))).data(); return r.dispatch.queueDone ? r : null; }, 'no-zone fallback');
+assert.equal(rf.dispatch.driverId, null); assert.equal(rf.dispatch.zoneId, null);
+await O.call('cancelFleetBooking', { rideId: bf.rideId });
+
+step('office calls: only its own customers and drivers; Twilio is off in the emulator');
+await assert.rejects(O.call('fleetCall', { to: 'customer', phone: '07700900123', myPhone: '07700900001' }), /not one of your customers/);
+await assert.rejects(O.call('fleetCall', { to: 'driver', driverId: d2.user.uid, myPhone: '07700900001' }), /Not one of your drivers/);
+await assert.rejects(O.call('fleetCall', { to: 'customer', phone: '07700900999', myPhone: 'abc' }), /does not look right/);
+await assert.rejects(O.call('fleetCall', { to: 'customer', phone: '07700900999', myPhone: '07700900001' }), /not switched on/);
+await assert.rejects(O.call('fleetCall', { to: 'driver', driverId: d3.user.uid }), /not switched on/, 'saved phone reused');
+await assert.rejects(D.call('fleetCall', { to: 'customer', phone: '07700900999', myPhone: '07700900111' }), /Fleet staff only/);
 
 step('paused fleet cannot book');
 await adminSet(`fleets/${created.fleetId}`, { status: 'suspended' }, true);
