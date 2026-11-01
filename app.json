@@ -112,7 +112,8 @@
       ],
       "./plugins/withLightOnly",
       "./plugins/withNotificationColorOverride",
-      "./plugins/withReleaseSigning"
+      "./plugins/withReleaseSigning",
+      "./plugins/withPodsMinimumIos"
     ]
   }
 }
