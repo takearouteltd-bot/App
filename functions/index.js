@@ -1234,7 +1234,10 @@ exports.cancelRidePayment = functions
 
           const driverId = after.driverId;
           if (driverId && driverShare > 0) {
-            const walletRef = db.collection("driverWallets").doc(driverId);
+            // A fleet driver's share goes to the fleet, like their fares.
+            const walletRef = after.fleetId ?
+              db.collection("fleetWallets").doc(after.fleetId) :
+              db.collection("driverWallets").doc(driverId);
             await db.runTransaction(async (tx) => {
               const rideRef = db.collection("rides").doc(rideId);
               const rideSnap = await tx.get(rideRef);
@@ -1265,6 +1268,7 @@ exports.cancelRidePayment = functions
                 type: "cancellation_fee",
                 amount: driverShare,
                 rideId,
+                driverId,
                 paymentIntentId,
                 status: "cleared",
                 description: "Cancellation fee for ride " + rideId,
@@ -1495,7 +1499,12 @@ exports.creditDriverWalletOnRideCompletion = functions.firestore
       }
 
       const db = admin.firestore();
-      const walletRef = db.collection("driverWallets").doc(driverId);
+      // A fleet driver's card earnings go to the fleet (tagFleetRides in
+      // fleet.js sets fleetId when they accept), not to their own wallet.
+      const fleetId = after.fleetId || null;
+      const walletRef = fleetId ?
+        db.collection("fleetWallets").doc(fleetId) :
+        db.collection("driverWallets").doc(driverId);
       const rideRef = db.collection("rides").doc(rideId);
 
       try {
@@ -1537,6 +1546,7 @@ exports.creditDriverWalletOnRideCompletion = functions.firestore
             type: "ride_earning",
             amount: driverEarning,
             rideId: rideId,
+            driverId: driverId,
             paymentIntentId: after &&
             after.paymentIntentId ? after.paymentIntentId : null,
             status: "cleared",
@@ -1547,6 +1557,7 @@ exports.creditDriverWalletOnRideCompletion = functions.firestore
           transaction.update(rideRef, {
             "walletProcessed": true,
             "earnings.driverEarning": driverEarning,
+            "earnings.paidTo": fleetId ? "fleet" : "driver",
             "earnings.creditedAt": admin.firestore.FieldValue.serverTimestamp(),
           });
         });
@@ -4051,3 +4062,11 @@ exports.detectDocumentExpiry = functions
           found ? found.date : "none");
       return null;
     });
+
+/* ======================================
+   FLEETS AND PHONE BOOKINGS (fleet.js)
+====================================== */
+Object.assign(exports, require("./fleet")({
+  functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
+  hasExpiredDocument, toE164, toMillis, addOneMonth,
+}));

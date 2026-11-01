@@ -21,6 +21,20 @@ service cloud.firestore {
       return isAdmin() && adminDoc().data.role == "super_admin";
     }
 
+    /* Fleet staff (owner or operator) of a taxi firm on TakeARoute. See
+       functions/fleet.js. */
+    function fleetStaffOf(fleetId) {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/fleetManagers/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/fleetManagers/$(request.auth.uid)).data.isActive == true &&
+        get(/databases/$(database)/documents/fleetManagers/$(request.auth.uid)).data.fleetId == fleetId;
+    }
+
+    function fleetOwnerOf(fleetId) {
+      return fleetStaffOf(fleetId) &&
+        get(/databases/$(database)/documents/fleetManagers/$(request.auth.uid)).data.role == "owner";
+    }
+
     /* ================= APP CONFIG ================= */
 
     match /config/{docId} {
@@ -134,12 +148,16 @@ service cloud.firestore {
       return data.get("approved", false) == false &&
         data.get("blocked", false) == false &&
         data.get("femaleVerified", false) == false &&
-        !("subscription" in data);
+        !("subscription" in data) &&
+        !data.keys().hasAny(["fleetId", "fleetName", "fleetRequest", "fleetInvite"]);
     }
 
     function driverKeepsGuardedFields() {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       return !changed.hasAny(["subscription", "femaleVerified", "blocked"]) &&
+        /* Joining and leaving a fleet go through functions/fleet.js. */
+        !changed.hasAny(["fleetId", "fleetName", "fleetJoinedAt", "fleetRequest",
+          "fleetInvite", "subscriptionBeforeFleet", "lastFleetId", "fleetLeftAt"]) &&
         /* Hours and rest are kept by enforceDriverHours and admins. */
         !changed.hasAny(["workLog", "restUntil", "restStartedAt", "restDue",
           "restEndedEarlyAt", "restEndedEarlyBy"]) &&
@@ -312,11 +330,43 @@ service cloud.firestore {
         resource.data.status == "ongoing" && request.resource.data.status == "completed";
     }
 
+    /* An app job goes back to searching; a phone job goes back to its
+       fleet's operator (dispatching). */
     function driverGivesBack() {
       return rideChanged().hasOnly(["status", "driverId", "acceptedAt", "declinedBy", "lastDriverCancelAt"]) &&
         resource.data.status in ["accepted", "arrived"] &&
-        request.resource.data.status == "searching" &&
+        request.resource.data.status ==
+          (resource.data.get("source", "app") == "phone" ? "dispatching" : "searching") &&
         request.resource.data.driverId == null;
+    }
+
+    /* Phone jobs (functions/fleet.js): a driver of the job's fleet takes
+       one sent to them, or to the whole fleet. */
+    function driverClaimsFleetJob() {
+      let driver = get(/databases/$(database)/documents/drivers/$(request.auth.uid)).data;
+      return rideChanged().hasOnly(["status", "driverId", "acceptedAt", "walletProcessed"]) &&
+        resource.data.status == "dispatching" &&
+        resource.data.get("fleetId", null) is string &&
+        driver.get("fleetId", null) == resource.data.fleetId &&
+        resource.data.dispatch.get("driverId", null) in [null, request.auth.uid] &&
+        !(request.auth.uid in resource.data.get("declinedBy", [])) &&
+        request.resource.data.status == "accepted" &&
+        request.resource.data.driverId == request.auth.uid &&
+        request.resource.data.walletProcessed == false &&
+        driver.approved == true &&
+        driver.get("restDue", false) != true &&
+        myVehicleServes(resource.data);
+    }
+
+    /* The chosen driver, or one of the fleet, says no to a phone job. */
+    function driverDeclinesFleetJob() {
+      let driver = get(/databases/$(database)/documents/drivers/$(request.auth.uid)).data;
+      return rideChanged().hasOnly(["declinedBy"]) &&
+        resource.data.status == "dispatching" &&
+        driver.get("fleetId", null) == resource.data.get("fleetId", "") &&
+        request.resource.data.declinedBy.toSet() ==
+          resource.data.get("declinedBy", []).toSet().union([request.auth.uid].toSet()) &&
+        request.resource.data.declinedBy.size() <= resource.data.get("declinedBy", []).size() + 1;
     }
 
     function driverCancels() {
@@ -359,7 +409,8 @@ service cloud.firestore {
          these fields, which is why they are locked. */
       allow update: if isAdmin() || (
         signedIn() && (
-          riderRideUpdate(rideId) || driverClaimsRide() || driverRideUpdate()
+          riderRideUpdate(rideId) || driverClaimsRide() || driverRideUpdate() ||
+          driverClaimsFleetJob() || driverDeclinesFleetJob()
         )
       );
       allow delete: if isAdmin();
@@ -515,6 +566,56 @@ service cloud.firestore {
         );
         allow update, delete: if isAdmin();
       }
+    }
+
+    /* ================= FLEETS (functions/fleet.js) ================= */
+    /* Created and changed by admins and the fleet functions. The owner may
+       change the fleet's contact details and dispatch timing only. */
+
+    match /fleets/{fleetId} {
+      allow read: if isAdmin() || fleetStaffOf(fleetId);
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        fleetOwnerOf(fleetId) &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(["phone", "address", "dispatchLeadMinutes", "updatedAt"]) &&
+        request.resource.data.get("dispatchLeadMinutes", 20) is int &&
+        request.resource.data.get("dispatchLeadMinutes", 20) >= 0 &&
+        request.resource.data.get("dispatchLeadMinutes", 20) <= 180
+      );
+
+      /* Phone booking customers, kept per fleet. Staff may edit a
+         customer's name and notes; bookings are counted by the server. */
+      match /customers/{customerId} {
+        allow read: if isAdmin() || fleetStaffOf(fleetId);
+        allow update: if isAdmin() || (
+          fleetStaffOf(fleetId) &&
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(["name", "notes", "addresses"])
+        );
+        allow create, delete: if isAdmin();
+      }
+    }
+
+    match /fleetManagers/{userId} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId) ||
+        (resource != null && fleetStaffOf(resource.data.fleetId));
+      allow write: if isAdmin();
+    }
+
+    match /fleetWallets/{fleetId} {
+      allow read: if isAdmin() || fleetStaffOf(fleetId);
+      allow write: if isAdmin();
+
+      match /transactions/{transactionId} {
+        allow read: if isAdmin() || fleetStaffOf(fleetId);
+        allow write: if isAdmin();
+      }
+    }
+
+    match /fleetInvites/{phone} {
+      allow read: if isAdmin() || (resource != null && fleetStaffOf(resource.data.fleetId));
+      allow write: if isAdmin();
     }
 
     /* ================= ADMINS ================= */
