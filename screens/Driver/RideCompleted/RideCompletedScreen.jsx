@@ -79,7 +79,9 @@ export default function RideCompletedScreen() {
             <Text style={styles.heroLabel}>Trip complete</Text>
             <Text style={styles.heroAmount}>{money(earned, currency)}</Text>
             <Text style={styles.heroSub}>
-              {ride.paymentMethod === 'cash'
+              {ride.collectBy === 'card'
+                ? 'Paid on your card terminal'
+                : ride.paymentMethod === 'cash'
                 ? 'Paid to you in cash by the passenger'
                 : ride.walletProcessed === true
                 ? 'Added to your wallet'

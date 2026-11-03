@@ -159,7 +159,7 @@ export default function DriverTripDetailsScreen() {
           items={[
             { value: durationMinutes ? `${Math.ceil(durationMinutes)} min` : 'N/A', label: 'Duration' },
             { value: distanceKm ? `${distanceKm.toFixed(1)} km` : 'N/A', label: 'Distance' },
-            { value: paymentMethod === 'cash' ? 'Cash' : 'Card', label: 'Paid by' },
+            { value: trip.collectBy === 'card' ? 'Card terminal' : paymentMethod === 'cash' ? 'Cash' : 'Card', label: 'Paid by' },
           ]}
         />
       </Card>

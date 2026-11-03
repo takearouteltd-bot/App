@@ -1057,7 +1057,7 @@ export default function DriverHomeScreen() {
       {currentRide ? (
         <Animated.View style={[styles.offerWrap, { transform: [{ translateX: slideAnim }] }]}>
           <Sheet style={styles.offer} grabber={false}>
-            <PaymentTypeBanner method={currentRide.paymentMethod} style={{ marginBottom: SPACE[4] }} />
+            <PaymentTypeBanner method={currentRide.paymentMethod} collectBy={currentRide.collectBy} style={{ marginBottom: SPACE[4] }} />
             {currentRide.source === 'phone' ? (
               <View style={styles.fleetBanner}>
                 <Ionicons name="call-outline" size={16} color={COLORS.midnight} />

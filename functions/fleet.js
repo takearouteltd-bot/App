@@ -444,21 +444,27 @@ module.exports = (deps) => {
   }
 
   /**
-   * The zone a point is in: the smallest circle that contains it, so a
+   * Every zone a point is in, smallest first.
+   * @param {Array} zones Fleet zones [{id, name, center, radiusKm}].
+   * @param {Object} p {latitude, longitude}.
+   * @return {Array} Zones containing the point.
+   */
+  function zonesAt(zones, p) {
+    if (!p || !Array.isArray(zones)) return [];
+    return zones
+        .filter((z) => z && z.center && distanceKm(p, z.center) <= z.radiusKm)
+        .sort((a, b) => a.radiusKm - b.radiusKm);
+  }
+
+  /**
+   * The zone a point belongs to: the smallest circle that contains it, so a
    * station zone inside a town zone wins.
    * @param {Array} zones Fleet zones [{id, name, center, radiusKm}].
    * @param {Object} p {latitude, longitude}.
    * @return {?Object} Zone, or null.
    */
   function zoneFor(zones, p) {
-    if (!p || !Array.isArray(zones)) return null;
-    let best = null;
-    zones.forEach((z) => {
-      if (!z || !z.center) return;
-      if (distanceKm(p, z.center) > z.radiusKm) return;
-      if (!best || z.radiusKm < best.radiusKm) best = z;
-    });
-    return best;
+    return zonesAt(zones, p)[0] || null;
   }
 
   /**
@@ -538,8 +544,9 @@ module.exports = (deps) => {
   }
 
   /**
-   * Rings the next driver in a queued job's pickup zone, or hands it to
-   * the whole fleet when the zone has nobody left.
+   * Rings the next driver for a queued job: first in its pickup zone, then
+   * in each larger zone that also contains the pickup, and hands it to the
+   * whole fleet when all of them have nobody left.
    * @param {Object} rideRef Ride document.
    * @param {Object} ride Ride data as the trigger saw it.
    * @return {Promise<void>}
@@ -553,14 +560,24 @@ module.exports = (deps) => {
     }
     const fleetSnap = await db.collection("fleets").doc(ride.fleetId).get();
     const zones = fleetSnap.exists ? fleetSnap.data().zones || [] : [];
-    const zone = zoneFor(zones, ride.pickupLocation);
+    const tried = zonesAt(zones, ride.pickupLocation);
+    let zone = tried[0] || null;
     let next = null;
-    if (zone) {
+    if (tried.length) {
       const queues = await refreshQueue(ride.fleetId, zones);
       const skip = new Set(ride.declinedBy || []);
-      next = (queues[zone.id] || []).find((e) => !skip.has(e.driverId) &&
-        canServe(e.vehicleType, ride.rideType)) || null;
+      for (const z of tried) {
+        next = (queues[z.id] || []).find((e) => !skip.has(e.driverId) &&
+          canServe(e.vehicleType, ride.rideType)) || null;
+        if (next) {
+          zone = z;
+          break;
+        }
+      }
     }
+    // Nobody anywhere: name every zone tried, for the office.
+    const zoneName = next ? zone.name :
+      tried.map((z) => z.name).join(", ") || null;
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(rideRef);
       const now = snap.exists ? snap.data() : null;
@@ -573,7 +590,7 @@ module.exports = (deps) => {
       tx.update(rideRef, {
         "dispatch.driverId": next ? next.driverId : null,
         "dispatch.zoneId": zone ? zone.id : null,
-        "dispatch.zoneName": zone ? zone.name : null,
+        "dispatch.zoneName": zoneName,
         "dispatch.queueDone": !next,
         "dispatch.offeredAt": FieldValue.serverTimestamp(),
         "dispatch.queueOffers": FieldValue.increment(next ? 1 : 0),
@@ -581,7 +598,8 @@ module.exports = (deps) => {
     });
     console.log(`Queue job ${rideRef.id}: ` + (next ?
       `offered to ${next.driverId} in ${zone.name}` :
-      `${zone ? zone.name + " empty" : "pickup in no zone"}, sent to fleet`));
+      `${zoneName ? zoneName + " empty" : "pickup in no zone"}, ` +
+      "sent to fleet"));
   }
 
   /**
@@ -1393,7 +1411,9 @@ module.exports = (deps) => {
           arrived: {title: `${fleet}: your driver is here`,
             body: `${who} is waiting at the pickup${car ? ` (${car})` : ""}.`},
           completed: {title: `${fleet}: trip complete`,
-            body: total ? `Please pay £${total} in cash to your driver.` :
+            body: total ? `Please pay £${total} ` +
+              `${after.collectBy === "card" ? "by card" : "in cash"} ` +
+              "to your driver." :
               "Thanks for travelling with us."},
           cancelled: {title: `${fleet}: booking cancelled`,
             body: after.cancelledBy === "operator" ?
@@ -1572,6 +1592,11 @@ module.exports = (deps) => {
     // account (notifications only; the booking stays the fleet's, in cash).
     const appRider = await findRiderByPhone(phone).catch(() => null);
 
+    // How the driver takes the money. A label only: TakeARoute never handles
+    // it, so paymentMethod stays "cash" and nothing is charged or credited.
+    const collectBy = d.collectBy === "card" ? "card" : "cash";
+    const notes = text(d.notes, 500);
+
     const rideRef = db.collection("rides").doc();
     const ts = FieldValue.serverTimestamp();
     await rideRef.set({
@@ -1582,7 +1607,9 @@ module.exports = (deps) => {
       driverId: null,
       customer: {name: name || (appRider ? appRider.name : ""), phone,
         riderId: appRider ? appRider.uid : null},
-      notes: text(d.notes, 500),
+      // Driver apps up to 1.0.11 only know "CASH JOB", so say it in the notes.
+      notes: collectBy === "card" ?
+        `CARD PAYMENT: take it on your terminal. ${notes}`.trim() : notes,
       bookedBy: {uid: me.uid, name: me.manager.name || me.manager.email || ""},
       status: later ? "scheduled" : "dispatching",
       rideType,
@@ -1612,6 +1639,7 @@ module.exports = (deps) => {
         noShowWaitMinutes: cfg.cancellation.noShowWaitMinutes,
         driverSharePercent: 0},
       paymentMethod: "cash",
+      collectBy,
       payment: {method: "cash", status: "pending", transactionId: null},
       pickupAt: pickupAtMs === null ? null : Timestamp.fromMillis(pickupAtMs),
       dispatchAt: Timestamp.fromMillis(dispatchAtMs),

@@ -227,12 +227,15 @@ export default function DriverRideToDropoffScreen() {
   const finish = (extra) => {
     if (ride?.paymentMethod !== 'cash') return completeRide(extra);
     const leftKm = extra?.completedAwayFromDropoff ? extra.completeDistanceKm : null;
+    const terminal = ride?.collectBy === 'card';
     Alert.alert(
-      `Collect ${money(amountDue(leftKm), ride?.currency)} in cash`,
-      'This is a cash ride. Take payment from the passenger, then confirm.',
+      `Collect ${money(amountDue(leftKm), ride?.currency)} ${terminal ? 'by card' : 'in cash'}`,
+      terminal
+        ? 'Take the card payment on your terminal, then confirm.'
+        : 'This is a cash ride. Take payment from the passenger, then confirm.',
       [
         { text: 'Not yet', style: 'cancel' },
-        { text: 'Cash received', onPress: () => completeRide({ ...extra, cashCollected: true }) },
+        { text: terminal ? 'Card payment taken' : 'Cash received', onPress: () => completeRide({ ...extra, cashCollected: true }) },
       ]
     );
   };
@@ -491,7 +494,11 @@ export default function DriverRideToDropoffScreen() {
               {currencySymbol()}
               {Number(ride.fare?.total || 0).toFixed(2)}
             </Text>
-            {ride.paymentMethod === 'cash' ? <Chip label="Cash" icon="cash-outline" /> : null}
+            {ride.paymentMethod === 'cash' ? (
+              ride.collectBy === 'card'
+                ? <Chip label="Card" icon="card-outline" />
+                : <Chip label="Cash" icon="cash-outline" />
+            ) : null}
           </View>
         </View>
 

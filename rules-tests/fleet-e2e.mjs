@@ -239,6 +239,40 @@ const rf = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', 
 assert.equal(rf.dispatch.driverId, null); assert.equal(rf.dispatch.zoneId, null);
 await O.call('cancelFleetBooking', { rideId: bf.rideId });
 
+step('nested zones: nobody free in the small zone, so the larger zone around it is next, then the whole fleet');
+const nested = await O.call('saveFleetZones', { zones: [
+  { name: 'Inner', center: PAD, radiusKm: 1.5 },
+  { name: 'Outer', center: PAD, radiusKm: 10 },
+] });
+const zOuter = nested.zones.find((z) => z.name === 'Outer').id;
+for (const u of [d1.user.uid, d4.user.uid]) await adminSet(`drivers/${u}`, { status: 'offline' }, true);
+await adminSet(`drivers/${d3.user.uid}`, { status: 'online', isOnRide: false, location: { latitude: PAD.latitude + 0.04, longitude: PAD.longitude, address: 'Outer only' }, lastUpdated: fresh() }, true);
+const bn = await O.call('createFleetBooking', { customer: { phone: '07700900999', name: 'Ann Smith' }, pickup: PAD, dropoff: T5, dispatchMode: 'queue' });
+let rn = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', bn.rideId))).data(); return r.dispatch.driverId ? r : null; }, 'offer from the larger zone');
+assert.equal(rn.dispatch.driverId, d3.user.uid); assert.equal(rn.dispatch.zoneName, 'Outer'); assert.equal(rn.dispatch.zoneId, zOuter);
+await updateDoc(doc(D3.db, 'rides', bn.rideId), { declinedBy: arrayUnion(d3.user.uid) });
+rn = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', bn.rideId))).data(); return r.dispatch.queueDone ? r : null; }, 'nested zones exhausted');
+assert.equal(rn.dispatch.driverId, null); assert.equal(rn.dispatch.zoneName, 'Inner, Outer');
+await O.call('cancelFleetBooking', { rideId: bn.rideId });
+
+step('a driver in the small zone still goes first');
+await adminSet(`drivers/${d4.user.uid}`, { status: 'online', isOnRide: false, location: PAD, lastUpdated: fresh() }, true);
+const bi = await O.call('createFleetBooking', { customer: { phone: '07700900999', name: 'Ann Smith' }, pickup: PAD, dropoff: T5, dispatchMode: 'queue' });
+const ri = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', bi.rideId))).data(); return r.dispatch.driverId ? r : null; }, 'offer from the small zone');
+assert.equal(ri.dispatch.driverId, d4.user.uid); assert.equal(ri.dispatch.zoneName, 'Inner');
+await O.call('cancelFleetBooking', { rideId: bi.rideId });
+
+step('card on a phone booking is a label: never a card charge');
+const bc = await O.call('createFleetBooking', { customer: { phone: '07700900999', name: 'Ann Smith' }, pickup: PAD, dropoff: T5, collectBy: 'card', notes: 'Ring on arrival' });
+const rc = (await getDoc(doc(O.db, 'rides', bc.rideId))).data();
+assert.equal(rc.collectBy, 'card'); assert.equal(rc.paymentMethod, 'cash'); assert.equal(rc.payment.method, 'cash');
+assert.equal(rc.notes, 'CARD PAYMENT: take it on your terminal. Ring on arrival');
+await O.call('cancelFleetBooking', { rideId: bc.rideId });
+const bd = await O.call('createFleetBooking', { customer: { phone: '07700900999', name: 'Ann Smith' }, pickup: PAD, dropoff: T5, collectBy: 'bitcoin', notes: 'Ring on arrival' });
+const rd = (await getDoc(doc(O.db, 'rides', bd.rideId))).data();
+assert.equal(rd.collectBy, 'cash'); assert.equal(rd.notes, 'Ring on arrival');
+await O.call('cancelFleetBooking', { rideId: bd.rideId });
+
 step('office calls: only its own customers and drivers; Twilio is off in the emulator');
 await assert.rejects(O.call('fleetCall', { to: 'customer', phone: '07700900123', myPhone: '07700900001' }), /not one of your customers/);
 await assert.rejects(O.call('fleetCall', { to: 'driver', driverId: d2.user.uid, myPhone: '07700900001' }), /Not one of your drivers/);

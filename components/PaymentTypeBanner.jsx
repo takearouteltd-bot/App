@@ -6,8 +6,22 @@ import { StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, RADIUS, SPACE } from './ui/kit';
 
-export default function PaymentTypeBanner({ method, style }) {
+export default function PaymentTypeBanner({ method, collectBy, style }) {
   const cash = method === 'cash';
+  // A fleet's phone booking paid by card on the driver's own terminal.
+  const terminal = cash && collectBy === 'card';
+  if (terminal) {
+    return (
+      <View
+        style={[styles.banner, styles.cash, style]}
+        accessibilityLabel="Card job. Take the fare on your own card terminal."
+      >
+        <Ionicons name="card-outline" size={20} color={COLORS.amber} />
+        <Text style={[styles.title, { color: COLORS.amber }]}>CARD JOB</Text>
+        <Text style={styles.detail}>Take the fare on your terminal</Text>
+      </View>
+    );
+  }
   return (
     <View
       style={[styles.banner, cash ? styles.cash : styles.card, style]}
