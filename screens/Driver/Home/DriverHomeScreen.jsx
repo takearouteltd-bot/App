@@ -121,6 +121,7 @@ export default function DriverHomeScreen() {
   // are shown; see constants/vehicleClasses.js.
   const [vehicleType, setVehicleType] = useState(null);
   const [membershipStatus, setMembershipStatus] = useState(null);
+  const [firstMonthOwed, setFirstMonthOwed] = useState(false);
   const [workingCityId, setWorkingCityId] = useState(null);
   const [femaleVerified, setFemaleVerified] = useState(false);
   // The taxi firm this driver works for, if any (functions/fleet.js).
@@ -214,6 +215,11 @@ export default function DriverHomeScreen() {
       setOnRide(data.isOnRide === true);
       setVehicleType(data.vehicleType || null);
       setMembershipStatus(data.subscription?.status || null);
+      setFirstMonthOwed(
+        data.subscription?.paymentMethod !== 'fleet' &&
+        Number(data.subscription?.debtAmount) > 0 &&
+        !data.subscription?.lastPaidAt
+      );
       setWorkingCityId(data.workingCityId || null);
       setFemaleVerified(data.femaleVerified === true);
       setFleetId(data.fleetId || null);
@@ -336,6 +342,20 @@ export default function DriverHomeScreen() {
         [
           { text: 'Not now', style: 'cancel' },
           { text: 'Update', onPress: () => navigation.navigate('DriverDocuments') },
+        ]
+      );
+      return;
+    }
+
+    // The first month is paid before the first time online (the rules
+    // enforce this as well).
+    if (newStatus === 'online' && firstMonthOwed) {
+      Alert.alert(
+        'Pay your membership first',
+        'Your first month must be paid before you can go online.',
+        [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Pay now', onPress: () => navigation.navigate('Membership') },
         ]
       );
       return;

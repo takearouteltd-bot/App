@@ -106,14 +106,14 @@ export default function SubscriptionScreen() {
       const { data } = await activate({});
 
       Alert.alert(
-        'Membership active',
+        data?.alreadyActive || data?.paid ? 'Membership active' : 'Payment needed',
         data?.alreadyActive
           ? 'Your membership is already active.'
           : data?.paid
           ? data.method === 'card'
             ? `${money(MONTHLY_PRICE)} was charged to your card. You are all set.`
             : `${money(MONTHLY_PRICE)} has been taken from your wallet. You are all set.`
-          : `${money(MONTHLY_PRICE)} is owed. Add a card under Membership to pay it, or it is taken from your wallet once card rides have topped it up.`
+          : `${money(MONTHLY_PRICE)} is owed. Add a card under Membership and pay it, then you can go online.`
       );
 
       // Staying put and re-reading, rather than replacing to a screen in
@@ -214,6 +214,8 @@ export default function SubscriptionScreen() {
 
   if (subscription && (status === 'active' || status === 'past_due')) {
     const debtAmount = Number(subscription.debtAmount) || 0;
+    // Nothing paid yet: the driver cannot go online until this is settled.
+    const firstMonthOwed = debtAmount > 0 && !subscription.lastPaidAt;
 
     return (
       <Screen>
@@ -222,7 +224,7 @@ export default function SubscriptionScreen() {
         <Card tone="dark" style={styles.hero}>
           <View style={styles.heroTop}>
             <Text style={styles.heroPlan}>Monthly driver plan</Text>
-            {status === 'past_due' ? (
+            {status === 'past_due' || firstMonthOwed ? (
               <StatusPill status="expiring" label="Payment due" />
             ) : (
               <StatusPill status="approved" label="Active" />
@@ -259,7 +261,9 @@ export default function SubscriptionScreen() {
             <Banner
               tone="warning"
               title={`${money(debtAmount)} outstanding`}
-              body="Card rides you complete top up your wallet and this is taken from it. Otherwise it is charged to your saved card."
+              body={firstMonthOwed
+                ? 'Pay this by card to go online.'
+                : 'Card rides you complete top up your wallet and this is taken from it. Otherwise it is charged to your saved card.'}
               action={
                 <Button
                   title={card ? 'Pay by card now' : 'Add a card to pay'}
@@ -307,7 +311,7 @@ export default function SubscriptionScreen() {
     <Screen>
       <ScreenHeader
         title="Activate your account"
-        subtitle="One monthly fee, taken from what you earn."
+        subtitle="One monthly fee, paid before you start driving."
       />
 
       <Card tone="dark" style={styles.hero}>
@@ -355,7 +359,7 @@ export default function SubscriptionScreen() {
         ) : (
           <Banner
             tone="info"
-            body={`If your wallet already holds ${money(MONTHLY_PRICE)} we take it now. If not, we charge your saved card. Card rides you complete top up your wallet for next month; cash fares stay with you and do not count.`}
+            body={`If your wallet already holds ${money(MONTHLY_PRICE)} we take it now. If not, we charge your saved card. You can go online once it is paid. Card rides you complete top up your wallet for next month; cash fares stay with you and do not count.`}
           />
         )}
       </View>

@@ -83,8 +83,13 @@ export default function DriverTripDetailsScreen() {
     ['Distance Fare', trip.fare?.distanceFare],
     ['Time Fare', trip.fare?.timeFare],
     trip.fare?.vat > 0 ? ['VAT', trip.fare?.vat] : null,
+    trip.fare?.fullTotal > trip.fare?.total ? ['Full journey', trip.fare.fullTotal] : null,
+    trip.fare?.fullTotal > trip.fare?.total ? ['Ended early, fare so far', trip.fare.total] : null,
     trip.fare?.waitingCharge > 0 ? ['Waiting time', trip.fare.waitingCharge] : null,
   ].filter(Boolean);
+  // A phone booking has the name the operator took, and no app profile.
+  const phoneCustomer = trip.source === 'phone' ? trip.customer : null;
+  const passengerName = phoneCustomer?.name || rider?.name || 'Passenger';
 
   return (
     <Screen>
@@ -170,15 +175,17 @@ export default function DriverTripDetailsScreen() {
         ) : (
           <Card>
             <View style={styles.riderRow}>
-              <Avatar uri={rider?.image} name={rider?.name} size={52} />
+              <Avatar uri={rider?.image} name={passengerName} size={52} />
               <View style={{ flex: 1 }}>
-                <Text style={TYPE.subhead}>{rider?.name || 'Passenger'}</Text>
-                <Text style={TYPE.small}>Passenger</Text>
+                <Text style={TYPE.subhead}>{passengerName}</Text>
+                <Text style={TYPE.small}>{phoneCustomer?.phone || 'Passenger'}</Text>
               </View>
-              <View style={styles.rating}>
-                <Ionicons name="star" size={14} color={COLORS.star} />
-                <Text style={styles.ratingText}>{rider?.rating || 'New'}</Text>
-              </View>
+              {phoneCustomer ? null : (
+                <View style={styles.rating}>
+                  <Ionicons name="star" size={14} color={COLORS.star} />
+                  <Text style={styles.ratingText}>{rider?.rating || 'New'}</Text>
+                </View>
+              )}
             </View>
           </Card>
         )}

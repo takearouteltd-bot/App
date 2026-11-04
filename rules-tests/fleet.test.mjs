@@ -186,3 +186,26 @@ test('driver cannot touch who suspended them', async () => {
   await assertFails(updateDoc(doc(as('d1'), 'drivers/d1'), { blockedReason: '' }));
   await assertFails(setDoc(doc(as('dnew2'), 'drivers/dnew2'), { approved: false, blockedByFleet: 'f1' }));
 });
+
+const owes = { status: 'active', paymentMethod: 'wallet_deduction', debtAmount: 299, lastPaidAt: null };
+const member = async (subscription, status = 'offline') => env.withSecurityRulesDisabled((ctx) => updateDoc(doc(ctx.firestore(), 'drivers/d1'), { subscription, status }));
+test('driver who has not paid their first month cannot go online', async () => {
+  await member(owes);
+  await assertFails(updateDoc(doc(as('d1'), 'drivers/d1'), { status: 'online' }));
+});
+test('driver who has paid can go online', async () => {
+  await member({ ...owes, debtAmount: 0, lastPaidAt: new Date() });
+  await assertSucceeds(updateDoc(doc(as('d1'), 'drivers/d1'), { status: 'online' }));
+});
+test('a renewal owed in its grace period does not stop going online', async () => {
+  await member({ ...owes, status: 'past_due', lastPaidAt: new Date() });
+  await assertSucceeds(updateDoc(doc(as('d1'), 'drivers/d1'), { status: 'online' }));
+});
+test('company driver whose fleet pays can go online', async () => {
+  await member({ ...owes, paymentMethod: 'fleet' });
+  await assertSucceeds(updateDoc(doc(as('d1'), 'drivers/d1'), { status: 'online' }));
+});
+test('unpaid driver can still finish a trip in progress', async () => {
+  await member(owes, 'on_ride');
+  await assertSucceeds(updateDoc(doc(as('d1'), 'drivers/d1'), { status: 'online' }));
+});

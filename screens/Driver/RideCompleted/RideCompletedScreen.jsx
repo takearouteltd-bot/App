@@ -62,11 +62,13 @@ export default function RideCompletedScreen() {
     fare.timeFare !== undefined ? ['Time', show(fare.timeFare)] : null,
     fare.surgeMultiplier > 1 ? ['Busy-time pricing', `×${fare.surgeMultiplier}`] : null,
     fare.discountAmount > 0 ? ['Promo discount', `-${show(fare.discountAmount)}`] : null,
-    fare.vat !== undefined ? [`VAT (${fare.vatPercent || 20}%)`, show(fare.vat)] : null,
+    fare.vat > 0 ? [`VAT (${fare.vatPercent}%)`, show(fare.vat)] : null,
+    fare.fullTotal > fare.total ? ['Full journey', show(fare.fullTotal)] : null,
+    fare.fullTotal > fare.total ? ['Ended early, fare so far', show(fare.total)] : null,
     fare.waitingCharge > 0 ? ['Waiting time', show(fare.waitingCharge)] : null,
   ].filter(Boolean);
 
-  const riderName = rider?.fullName || rider?.firstName || 'the passenger';
+  const riderName = rider?.fullName || rider?.firstName || ride.customer?.name || 'the passenger';
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -118,7 +120,7 @@ export default function RideCompletedScreen() {
               </View>
             ))}
             <View style={[styles.lineRow, styles.totalRow]}>
-              <Text style={styles.totalLabel}>Fare (incl. VAT)</Text>
+              <Text style={styles.totalLabel}>{fare.vat > 0 ? 'Fare (incl. VAT)' : 'Fare'}</Text>
               <Text style={styles.totalLabel}>{money(earned, currency)}</Text>
             </View>
           </Card>

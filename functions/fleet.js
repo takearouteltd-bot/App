@@ -52,6 +52,8 @@
    job sent "by queue" rings the first driver in its pickup zone; a no, or no
    answer within queueOfferSeconds, sends that driver to the back and rings
    the next. When nobody in the zone is left it goes to the whole fleet.
+   dispatch.nearest uses the same steps without zones: it rings the closest
+   free driver, then the next closest, then the whole fleet.
 ====================================== */
 
 /* The app's Google Maps key (App/config/maps.js). It ships inside the app,
@@ -343,6 +345,51 @@ module.exports = (deps) => {
   }
 
   /**
+   * How a phone job should be sent, from the dashboard's choice.
+   * @param {*} raw "queue", "nearest" or anything else for the whole fleet.
+   * @param {?string} driverId A driver chosen by name, if any.
+   * @param {Object} fleet Fleet data.
+   * @return {{mode: string, nearest: boolean}} dispatch.mode and whether the
+   *   queue steps through the closest drivers rather than a zone's line.
+   */
+  function dispatchChoice(raw, driverId, fleet) {
+    if (driverId) return {mode: "driver", nearest: false};
+    if (raw === "nearest") return {mode: "queue", nearest: true};
+    if (raw !== "queue") return {mode: "all", nearest: false};
+    if (!(fleet.zones || []).length) {
+      throw new HttpsError("failed-precondition",
+          "Add your zones in Settings before sending jobs by queue.");
+    }
+    return {mode: "queue", nearest: false};
+  }
+
+  /**
+   * The closest free driver of the fleet who has not yet turned this job
+   * down, within the search radius.
+   * @param {Object} ride Ride data.
+   * @return {Promise<?Object>} {driverId}, or null when nobody is left.
+   */
+  async function nearestFreeDriver(ride) {
+    const cfg = await loadAppConfig();
+    const skip = new Set(ride.declinedBy || []);
+    const drivers = await db.collection("drivers")
+        .where("fleetId", "==", ride.fleetId).get();
+    let best = null;
+    drivers.forEach((snap) => {
+      const d = snap.data();
+      if (skip.has(snap.id) || d.status !== "online" ||
+          d.isOnRide === true || !canTakeFleetJob(d, ride)) {
+        return;
+      }
+      const km = distanceKm(d.location, ride.pickupLocation);
+      if (km <= cfg.dispatch.searchRadiusKm && (!best || km < best.km)) {
+        best = {driverId: snap.id, km};
+      }
+    });
+    return best;
+  }
+
+  /**
    * Sends a dispatching phone job: a ring to the chosen driver, or to the
    * fleet's nearby online drivers.
    * @param {string} rideId Ride id.
@@ -374,7 +421,8 @@ module.exports = (deps) => {
     await sendPush(ids, {
       title: target ? `Job from ${ride.fleetName || "your fleet"}` :
         "New fleet job",
-      body: `Pickup at ${pickup}. Open TakeARoute to accept.`,
+      body: `${ride.collectBy === "card" ? "Card" : "Cash"} job. ` +
+        `Pickup at ${pickup}. Open TakeARoute to accept.`,
       channelId: "job-ring",
       sound: "job_ring.wav",
       ttlSeconds: 60,
@@ -553,16 +601,17 @@ module.exports = (deps) => {
    */
   async function offerNextInQueue(rideRef, ride) {
     const current = ride.dispatch && ride.dispatch.driverId;
-    if (current) {
+    const nearest = ride.dispatch && ride.dispatch.nearest === true;
+    if (current && !nearest) {
       await sendToBack(ride.fleetId, current).catch((error) => {
         console.error("Queue: could not move driver back:", error.message);
       });
     }
     const fleetSnap = await db.collection("fleets").doc(ride.fleetId).get();
     const zones = fleetSnap.exists ? fleetSnap.data().zones || [] : [];
-    const tried = zonesAt(zones, ride.pickupLocation);
+    const tried = nearest ? [] : zonesAt(zones, ride.pickupLocation);
     let zone = tried[0] || null;
-    let next = null;
+    let next = nearest ? await nearestFreeDriver(ride) : null;
     if (tried.length) {
       const queues = await refreshQueue(ride.fleetId, zones);
       const skip = new Set(ride.declinedBy || []);
@@ -576,7 +625,7 @@ module.exports = (deps) => {
       }
     }
     // Nobody anywhere: name every zone tried, for the office.
-    const zoneName = next ? zone.name :
+    const zoneName = next && zone ? zone.name :
       tried.map((z) => z.name).join(", ") || null;
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(rideRef);
@@ -597,9 +646,8 @@ module.exports = (deps) => {
       });
     });
     console.log(`Queue job ${rideRef.id}: ` + (next ?
-      `offered to ${next.driverId} in ${zone.name}` :
-      `${zoneName ? zoneName + " empty" : "pickup in no zone"}, ` +
-      "sent to fleet"));
+      `offered to ${next.driverId}${zone ? ` in ${zone.name}` : " (nearest)"}` :
+      `${zoneName ? zoneName + " empty" : "nobody in reach"}, sent to fleet`));
   }
 
   /**
@@ -1558,12 +1606,7 @@ module.exports = (deps) => {
 
     // The chosen driver must be in this fleet and able to do the job.
     const driverId = text(d.driverId, 128) || null;
-    const mode = driverId ? "driver" : d.dispatchMode === "queue" ?
-      "queue" : "all";
-    if (mode === "queue" && !(me.fleet.zones || []).length) {
-      throw new HttpsError("failed-precondition",
-          "Add your zones in Settings before sending jobs by queue.");
-    }
+    const {mode, nearest} = dispatchChoice(d.dispatchMode, driverId, me.fleet);
     if (driverId) {
       const snap = await db.collection("drivers").doc(driverId).get();
       const drv = snap.exists ? snap.data() : null;
@@ -1645,6 +1688,7 @@ module.exports = (deps) => {
       dispatchAt: Timestamp.fromMillis(dispatchAtMs),
       dispatch: {
         mode,
+        nearest,
         driverId,
         leadMinutes: lead,
         offeredAt: later ? null : ts,
@@ -1676,12 +1720,8 @@ module.exports = (deps) => {
     const me = await assertFleetManager(context, false);
     const rideId = text(data && data.rideId, 128);
     const driverId = text(data && data.driverId, 128) || null;
-    const mode = driverId ? "driver" : data && data.mode === "queue" ?
-      "queue" : "all";
-    if (mode === "queue" && !(me.fleet.zones || []).length) {
-      throw new HttpsError("failed-precondition",
-          "Add your zones in Settings before sending jobs by queue.");
-    }
+    const {mode, nearest} = dispatchChoice(data && data.mode, driverId,
+        me.fleet);
     const rideRef = db.collection("rides").doc(rideId);
     if (driverId) {
       const [snap, rideSnap] = await Promise.all([
@@ -1707,6 +1747,7 @@ module.exports = (deps) => {
         "status": "dispatching",
         "dispatchAt": Timestamp.now(),
         "dispatch.mode": mode,
+        "dispatch.nearest": nearest,
         "dispatch.driverId": driverId,
         "dispatch.offeredAt": FieldValue.serverTimestamp(),
         "dispatch.rounds": FieldValue.increment(1),
@@ -1720,6 +1761,33 @@ module.exports = (deps) => {
       });
     });
     return {ok: true};
+  });
+
+  /* The office sends one of its drivers a short message. It arrives as a
+     notification; the driver phones the office to answer. */
+  out.messageFleetDriver = functions.https.onCall(async (data, context) => {
+    const me = await assertFleetManager(context, false);
+    const driverId = text(data && data.driverId, 128);
+    const body = text(data && data.text, 300);
+    if (!driverId || !body) {
+      throw new HttpsError("invalid-argument", "Write a message first.");
+    }
+    const snap = await db.collection("drivers").doc(driverId).get();
+    if (!snap.exists || snap.data().fleetId !== me.fleetId) {
+      throw new HttpsError("not-found", "Not one of your drivers.");
+    }
+    const notified = await sendPush([driverId], {
+      title: `Message from ${me.fleet.name}`,
+      body,
+      channelId: "general",
+      data: {type: "fleet_message"},
+    });
+    await db.collection("fleets").doc(me.fleetId)
+        .collection("driverMessages").add({
+          driverId, text: body, sentBy: me.uid, notified,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+    return {notified};
   });
 
   out.cancelFleetBooking = functions.https.onCall(async (data, context) => {

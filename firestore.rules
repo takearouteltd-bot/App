@@ -154,6 +154,16 @@ service cloud.firestore {
           "fleetDriverType"]);
     }
 
+    /* The first month's membership has not been paid. Later renewals have a
+       grace period instead, and a fleet pays for its company drivers. */
+    function owesFirstMembership() {
+      let sub = resource.data.get("subscription", null);
+      return sub is map &&
+        sub.get("paymentMethod", "") != "fleet" &&
+        sub.get("debtAmount", 0) > 0 &&
+        sub.get("lastPaidAt", null) == null;
+    }
+
     function driverKeepsGuardedFields() {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       return !changed.hasAny(["subscription", "femaleVerified", "blocked",
@@ -189,6 +199,11 @@ service cloud.firestore {
             !(request.resource.data.status == "online" &&
               resource.data.get("blocked", false) == true &&
               resource.data.get("status", "offline") != "on_ride") &&
+            /* ...and not before paying for their first month. Only from
+               offline, so a trip in progress can still finish. */
+            !(request.resource.data.status == "online" &&
+              resource.data.get("status", "offline") == "offline" &&
+              owesFirstMembership()) &&
             /* ...and not while resting after their hours limit. */
             !(request.resource.data.status == "online" &&
               resource.data.status != "online" &&

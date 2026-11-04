@@ -273,6 +273,24 @@ const rd = (await getDoc(doc(O.db, 'rides', bd.rideId))).data();
 assert.equal(rd.collectBy, 'cash'); assert.equal(rd.notes, 'Ring on arrival');
 await O.call('cancelFleetBooking', { rideId: bd.rideId });
 
+step('nearest driver first: closest free driver rings, then the next closest, with no zone involved');
+await adminSet(`drivers/${d4.user.uid}`, { status: 'online', isOnRide: false, location: PAD, lastUpdated: fresh() }, true);
+await adminSet(`drivers/${d3.user.uid}`, { status: 'online', isOnRide: false, location: HEATHROW, lastUpdated: fresh() }, true);
+const bNear = await O.call('createFleetBooking', { customer: { phone: '07700900999', name: 'Ann Smith' }, pickup: PAD, dropoff: T5, dispatchMode: 'nearest' });
+let rNear = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', bNear.rideId))).data(); return r.dispatch.driverId ? r : null; }, 'nearest offer');
+assert.equal(rNear.dispatch.nearest, true); assert.equal(rNear.dispatch.mode, 'queue'); assert.equal(rNear.dispatch.zoneName, null);
+assert.equal(rNear.dispatch.driverId, d4.user.uid, 'the driver at the pickup is closest');
+await updateDoc(doc(D4.db, 'rides', bNear.rideId), { declinedBy: arrayUnion(d4.user.uid) });
+rNear = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', bNear.rideId))).data(); return r.dispatch.driverId && r.dispatch.driverId !== d4.user.uid ? r : null; }, 'next nearest offer');
+assert.notEqual(rNear.dispatch.driverId, d4.user.uid);
+await O.call('cancelFleetBooking', { rideId: bNear.rideId });
+
+step('office messages a driver: its own only, and not an empty message');
+assert.equal(typeof (await O.call('messageFleetDriver', { driverId: d4.user.uid, text: 'Please call the office' })).notified, 'number');
+await assert.rejects(O.call('messageFleetDriver', { driverId: d4.user.uid, text: '  ' }));
+await assert.rejects(O.call('messageFleetDriver', { driverId: 'someone-else', text: 'Hello' }));
+await assert.rejects(D.call('messageFleetDriver', { driverId: d4.user.uid, text: 'Hello' }));
+
 step('office calls: only its own customers and drivers; Twilio is off in the emulator');
 await assert.rejects(O.call('fleetCall', { to: 'customer', phone: '07700900123', myPhone: '07700900001' }), /not one of your customers/);
 await assert.rejects(O.call('fleetCall', { to: 'driver', driverId: d2.user.uid, myPhone: '07700900001' }), /Not one of your drivers/);
