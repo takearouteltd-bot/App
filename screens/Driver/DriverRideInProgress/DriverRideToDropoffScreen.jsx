@@ -225,7 +225,8 @@ export default function DriverRideToDropoffScreen() {
 
   // Cash rides: the driver confirms they have been paid before the trip closes.
   const finish = (extra) => {
-    if (ride?.paymentMethod !== 'cash') return completeRide(extra);
+    // An account job goes on the client's bill, so there is nothing to collect.
+    if (ride?.paymentMethod !== 'cash' || ride?.collectBy === 'account') return completeRide(extra);
     const leftKm = extra?.completedAwayFromDropoff ? extra.completeDistanceKm : null;
     const terminal = ride?.collectBy === 'card';
     Alert.alert(
@@ -495,7 +496,9 @@ export default function DriverRideToDropoffScreen() {
               {Number(ride.fare?.total || 0).toFixed(2)}
             </Text>
             {ride.paymentMethod === 'cash' ? (
-              ride.collectBy === 'card'
+              ride.collectBy === 'account'
+                ? <Chip label="Account" icon="business-outline" />
+                : ride.collectBy === 'card'
                 ? <Chip label="Card" icon="card-outline" />
                 : <Chip label="Cash" icon="cash-outline" />
             ) : null}

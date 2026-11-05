@@ -256,7 +256,7 @@ export default function EarningsScreen() {
             tone="info"
             icon="people-outline"
             title={`You drive for ${fleetName}`}
-            body={`Card fares from now on go to ${fleetName}, who pay you, and they pay your membership. Anything already in your balance above is still yours to withdraw.`}
+            body={`Card fares from now on go to ${fleetName}, who pay you, and they pay your membership. See what they owe you under Account > Fleet > My statement. Anything already in your balance above is still yours to withdraw.`}
           />
         </View>
       ) : null}

@@ -20,7 +20,7 @@ import {
 
 const call = (name, data) => httpsCallable(functions, name)(data).then((r) => r.data);
 
-export default function DriverFleetScreen() {
+export default function DriverFleetScreen({ navigation }) {
   const uid = getAuth().currentUser?.uid;
   const [driver, setDriver] = useState(undefined);
   const [code, setCode] = useState('');
@@ -84,6 +84,7 @@ export default function DriverFleetScreen() {
                 </Text>
               </>
             )}
+            <Button title="My statement" variant="secondary" onPress={() => navigation.navigate('DriverStatement')} style={{ marginTop: SPACE[4] }} />
             {selfEmployed ? (
               <Button title="Leave fleet" variant="secondary" loading={working} onPress={leave} style={{ marginTop: SPACE[4] }} />
             ) : null}

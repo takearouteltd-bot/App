@@ -6,8 +6,21 @@ import { StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS, RADIUS, SPACE } from './ui/kit';
 
-export default function PaymentTypeBanner({ method, collectBy, style }) {
+export default function PaymentTypeBanner({ method, collectBy, account, style }) {
   const cash = method === 'cash';
+  // A fleet's account job: the client is billed, the driver takes no money.
+  if (collectBy === 'account') {
+    return (
+      <View
+        style={[styles.banner, styles.card, style]}
+        accessibilityLabel={`Account job for ${account?.company || 'a client'}. Do not take payment.`}
+      >
+        <Ionicons name="business-outline" size={20} color={COLORS.limeInk} />
+        <Text style={[styles.title, { color: COLORS.limeInk }]}>ACCOUNT JOB</Text>
+        <Text style={styles.detail}>{account?.company ? `${account.company}. ` : ''}Do not take payment</Text>
+      </View>
+    );
+  }
   // A fleet's phone booking paid by card on the driver's own terminal.
   const terminal = cash && collectBy === 'card';
   if (terminal) {

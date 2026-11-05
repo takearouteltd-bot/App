@@ -469,7 +469,7 @@ export default function DriverRideInProgressScreen() {
           </Text>
         </View>
 
-        <PaymentTypeBanner method={ride.paymentMethod} collectBy={ride.collectBy} style={{ marginBottom: SPACE[4] }} />
+        <PaymentTypeBanner method={ride.paymentMethod} collectBy={ride.collectBy} account={ride.account} style={{ marginBottom: SPACE[4] }} />
 
         {/* Stays reachable even with the sheet collapsed. */}
         <Button

@@ -45,6 +45,24 @@
      fleetInvites/{e164}              a driver invited by phone number
      fleetQueues/{fleetId}            who is waiting in each zone, in order
      fleets/{fleetId}/calls/{id}      calls the office placed (fleetCall)
+     fleets/{fleetId}/accounts/{id}   account clients: company, address,
+                                      telephone, email (kept by staff)
+     fleets/{fleetId}/driverAccounts/{driverId}  commissionPercent, owedPence
+     fleets/{fleetId}/driverPayments/{id}  money recorded between fleet, driver
+     fleets/{fleetId}/invoices/{id}   invoices the fleet sends its clients
+
+   Account jobs and driver balances: a phone job can be charged to an account
+   client (collectBy "account"). The fleet bills the client and pays the driver
+   itself; TakeARoute only keeps the record. When a fleet job finishes,
+   settleFleetJob locks the driver's commission rate onto rides/{id}.settlement
+   and moves the driver's balance (owedPence, what the fleet owes them; below
+   zero, they owe the fleet):
+     account job, app card fare, cancellation fee share
+                    + amount less commission (the fleet holds the money)
+     cash or their own card terminal
+                    - commission (the driver already holds the money)
+   Fleet jobs are phone jobs, and company drivers' app trips (tagFleetRides).
+   A self-employed driver's app trips are their own and stay out.
 
    Zone queues: the owner draws zones (circles) in Settings. Free drivers
    inside a zone queue there in the order they arrived or became free
@@ -88,6 +106,8 @@ const QUEUE_STALE_MS = 5 * 60 * 1000;
 /* Most calls one fleet's office can place in a day, so a mistake or a
    misused login cannot run up the Twilio bill. */
 const MAX_FLEET_CALLS_PER_DAY = 300;
+const EMAIL_SECRETS = ["RESEND_API_KEY"];
+const MAX_INVOICE_LINES = 200;
 
 module.exports = (deps) => {
   const {functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
@@ -97,6 +117,7 @@ module.exports = (deps) => {
   // From the modular entry point: the functions emulator's stand-in for
   // admin.firestore does not carry FieldValue or Timestamp.
   const {FieldValue, Timestamp} = require("firebase-admin/firestore");
+  const {invoiceEmail, balanceEmail} = require("./fleetInvoiceEmail");
   const out = {};
 
   /* ------------------------------ helpers ---------------------------- */
@@ -421,7 +442,9 @@ module.exports = (deps) => {
     await sendPush(ids, {
       title: target ? `Job from ${ride.fleetName || "your fleet"}` :
         "New fleet job",
-      body: `${ride.collectBy === "card" ? "Card" : "Cash"} job. ` +
+      body: `${ride.collectBy === "account" ?
+        `Account job, ${(ride.account || {}).company || "client"}` :
+        ride.collectBy === "card" ? "Card job" : "Cash job"}. ` +
         `Pickup at ${pickup}. Open TakeARoute to accept.`,
       channelId: "job-ring",
       sound: "job_ring.wav",
@@ -1459,7 +1482,10 @@ module.exports = (deps) => {
           arrived: {title: `${fleet}: your driver is here`,
             body: `${who} is waiting at the pickup${car ? ` (${car})` : ""}.`},
           completed: {title: `${fleet}: trip complete`,
-            body: total ? `Please pay £${total} ` +
+            body: after.collectBy === "account" ?
+              "Thanks for travelling with us. This trip goes on your " +
+              "company's account." :
+              total ? `Please pay £${total} ` +
               `${after.collectBy === "card" ? "by card" : "in cash"} ` +
               "to your driver." :
               "Thanks for travelling with us."},
@@ -1637,8 +1663,24 @@ module.exports = (deps) => {
 
     // How the driver takes the money. A label only: TakeARoute never handles
     // it, so paymentMethod stays "cash" and nothing is charged or credited.
-    const collectBy = d.collectBy === "card" ? "card" : "cash";
+    const collectBy = ["card", "account"].includes(d.collectBy) ?
+      d.collectBy : "cash";
     const notes = text(d.notes, 500);
+    // An account job goes on the client's bill: the driver takes no money.
+    let account = null;
+    if (collectBy === "account") {
+      const accountId = text(d.accountId, 128);
+      const snap = accountId ? await db.collection("fleets").doc(me.fleetId)
+          .collection("accounts").doc(accountId).get() : null;
+      if (!snap || !snap.exists || snap.data().active === false) {
+        throw new HttpsError("invalid-argument",
+            "Choose which account this job goes on.");
+      }
+      account = {id: snap.id, company: snap.data().company || ""};
+    }
+    const notePrefix = account ?
+      `ACCOUNT JOB for ${account.company}: do not take payment.` :
+      collectBy === "card" ? "CARD PAYMENT: take it on your terminal." : "";
 
     const rideRef = db.collection("rides").doc();
     const ts = FieldValue.serverTimestamp();
@@ -1650,9 +1692,8 @@ module.exports = (deps) => {
       driverId: null,
       customer: {name: name || (appRider ? appRider.name : ""), phone,
         riderId: appRider ? appRider.uid : null},
-      // Driver apps up to 1.0.11 only know "CASH JOB", so say it in the notes.
-      notes: collectBy === "card" ?
-        `CARD PAYMENT: take it on your terminal. ${notes}`.trim() : notes,
+      // Older driver apps only know "CASH JOB", so say it in the notes too.
+      notes: `${notePrefix} ${notes}`.trim(),
       bookedBy: {uid: me.uid, name: me.manager.name || me.manager.email || ""},
       status: later ? "scheduled" : "dispatching",
       rideType,
@@ -1683,6 +1724,7 @@ module.exports = (deps) => {
         driverSharePercent: 0},
       paymentMethod: "cash",
       collectBy,
+      account,
       payment: {method: "cash", status: "pending", transactionId: null},
       pickupAt: pickupAtMs === null ? null : Timestamp.fromMillis(pickupAtMs),
       dispatchAt: Timestamp.fromMillis(dispatchAtMs),
@@ -2170,6 +2212,459 @@ module.exports = (deps) => {
         }
         return null;
       });
+
+  /* ---------------- driver balances, account clients, invoices ------- */
+
+  const toPence = (v) => Math.round(Number(v || 0) * 100);
+  const fareOf = (ride) => {
+    const fare = ride.fare || {};
+    return toPence(fare.finalTotal !== undefined && fare.finalTotal !== null ?
+      fare.finalTotal : fare.total);
+  };
+  const fleetDoc = (fleetId) => db.collection("fleets").doc(fleetId);
+  const validEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+
+  /**
+   * Which money rule a ride falls under, once it counts towards the driver's
+   * balance. Card fares on the app only count once the fleet's wallet has
+   * them, so a failed payment never shows as owed to the driver.
+   * @param {Object} ride Ride document.
+   * @return {?string} Kind of settlement, or null if it doesn't count yet.
+   */
+  function settlementKind(ride) {
+    if (!ride.fleetId || !ride.driverId) return null;
+    if (ride.source === "phone") {
+      if (ride.status !== "completed") return null;
+      return ride.collectBy === "account" ? "account" :
+        ride.collectBy === "card" ? "card" : "cash";
+    }
+    if (ride.status === "completed") {
+      if (ride.paymentMethod === "cash") return "appCash";
+      return ride.walletProcessed && ride.earnings &&
+        ride.earnings.paidTo === "fleet" ? "appCard" : null;
+    }
+    return ride.cancellationFeePaid &&
+      Number(ride.cancellationFeeDriverShare) > 0 ? "cancelFee" : null;
+  }
+
+  /**
+   * The amount a ride's settlement is worked out on.
+   * @param {Object} ride Ride document.
+   * @param {string} kind From settlementKind.
+   * @return {number} Pence.
+   */
+  function settledPence(ride, kind) {
+    // What actually reached the fleet's wallet, which never changes afterwards.
+    if (kind === "appCard") return toPence(ride.earnings.driverEarning);
+    if (kind === "cancelFee") return toPence(ride.cancellationFeeDriverShare);
+    return fareOf(ride);
+  }
+
+  /**
+   * What one finished job does to the driver's balance. Money the fleet holds
+   * (account jobs, app card fares, cancellation fees) is owed on to the driver
+   * less commission. Money the driver holds (cash, their own card terminal)
+   * means the driver owes the fleet its commission.
+   * @param {Object} ride Ride document.
+   * @param {string} kind From settlementKind.
+   * @param {number} percent Driver's commission percent.
+   * @return {Object} Settlement to store on the ride.
+   */
+  function settlementOf(ride, kind, percent) {
+    const farePence = settledPence(ride, kind);
+    const commissionPence = Math.round(farePence * percent / 100);
+    const fleetHoldsIt = ["account", "appCard", "cancelFee"].includes(kind);
+    return {
+      kind, farePence, commissionPercent: percent, commissionPence,
+      balancePence: fleetHoldsIt ? farePence - commissionPence :
+        -commissionPence,
+    };
+  }
+
+  /* Locks the commission onto a finished job and moves the driver's balance.
+     A fare that changes after completion (waiting time is added then) moves
+     it by the difference, at the same locked rate. */
+  out.settleFleetJob = functions.firestore
+      .document("rides/{rideId}")
+      .onUpdate(async (change) => {
+        const seen = change.after.data();
+        const kind = settlementKind(seen);
+        if (!kind) return null;
+        // Jobs finished before this existed stay out of the balance, even if
+        // something on them changes later.
+        if (!seen.settlement && settlementKind(change.before.data())) {
+          return null;
+        }
+        if (seen.settlement &&
+            seen.settlement.farePence === settledPence(seen, kind)) {
+          return null;
+        }
+        const accountRef = fleetDoc(seen.fleetId).collection("driverAccounts")
+            .doc(seen.driverId);
+        await db.runTransaction(async (tx) => {
+          const [rideSnap, accountSnap] = await Promise.all([
+            tx.get(change.after.ref), tx.get(accountRef)]);
+          const ride = rideSnap.data();
+          const old = ride.settlement || null;
+          const nowKind = settlementKind(ride);
+          if (!nowKind ||
+              (old && old.farePence === settledPence(ride, nowKind))) {
+            return;
+          }
+          const percent = old ? old.commissionPercent :
+            Number((accountSnap.exists && accountSnap.data()
+                .commissionPercent) || 0);
+          const next = settlementOf(ride, nowKind, percent);
+          tx.update(change.after.ref, {settlement: Object.assign({}, next, {
+            settledAt: FieldValue.serverTimestamp()})});
+          tx.set(accountRef, {
+            driverId: seen.driverId,
+            owedPence: FieldValue.increment(
+                next.balancePence - (old ? old.balancePence : 0)),
+            updatedAt: FieldValue.serverTimestamp(),
+          }, {merge: true});
+        });
+        return null;
+      });
+
+  /* The owner sets a driver's commission. It applies to jobs that complete
+     from now on; finished jobs keep the rate they were settled at. */
+  out.setFleetDriverCommission = functions.https.onCall(
+      async (data, context) => {
+        const me = await assertFleetManager(context, true);
+        const driverId = text(data && data.driverId, 128);
+        const percent = Number(data && data.percent);
+        if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+          throw new HttpsError("invalid-argument",
+              "Commission must be between 0 and 100 percent.");
+        }
+        const snap = driverId ?
+          await db.collection("drivers").doc(driverId).get() : null;
+        if (!snap || !snap.exists || snap.data().fleetId !== me.fleetId) {
+          throw new HttpsError("not-found", "Not one of your drivers.");
+        }
+        await fleetDoc(me.fleetId).collection("driverAccounts").doc(driverId)
+            .set({
+              driverId,
+              commissionPercent: Math.round(percent * 100) / 100,
+              updatedAt: FieldValue.serverTimestamp(),
+            }, {merge: true});
+        return {percent};
+      });
+
+  /* The owner records money that moved outside TakeARoute: the fleet paid the
+     driver, or the driver paid the fleet. To correct a mistake, record the
+     same amount the other way. */
+  out.recordFleetDriverPayment = functions.https.onCall(
+      async (data, context) => {
+        const me = await assertFleetManager(context, true);
+        const d = data || {};
+        const driverId = text(d.driverId, 128);
+        const pence = toPence(d.amount);
+        const direction = d.direction === "fromDriver" ?
+          "fromDriver" : "toDriver";
+        if (!(pence > 0) || pence > 10000000) {
+          throw new HttpsError("invalid-argument", "Enter an amount above £0.");
+        }
+        const accountRef = fleetDoc(me.fleetId).collection("driverAccounts")
+            .doc(driverId || "-");
+        const [driver, account] = await Promise.all([
+          driverId ? db.collection("drivers").doc(driverId).get() : null,
+          accountRef.get()]);
+        const inFleet = driver && driver.exists &&
+          driver.data().fleetId === me.fleetId;
+        // Someone who has left can still be paid what they are owed.
+        if (!inFleet && !account.exists) {
+          throw new HttpsError("not-found", "Not one of your drivers.");
+        }
+        const ref = fleetDoc(me.fleetId).collection("driverPayments").doc();
+        const batch = db.batch();
+        batch.set(ref, {
+          driverId, direction, amountPence: pence, note: text(d.note, 200),
+          recordedBy: {uid: me.uid, name: me.manager.name || ""},
+          paidAt: FieldValue.serverTimestamp(),
+        });
+        batch.set(accountRef, {
+          driverId,
+          owedPence: FieldValue.increment(
+              direction === "toDriver" ? -pence : pence),
+          updatedAt: FieldValue.serverTimestamp(),
+        }, {merge: true});
+        await batch.commit();
+        return {paymentId: ref.id};
+      });
+
+  /**
+   * The fleet's details as printed on an invoice.
+   * @param {Object} fleet Fleet document.
+   * @return {Object} Name, address, phone, vatNumber, footer.
+   */
+  function invoiceFrom(fleet) {
+    return {name: fleet.name || "", address: fleet.address || "",
+      phone: fleet.phone || "", vatNumber: fleet.vatNumber || "",
+      footer: fleet.invoiceFooter || ""};
+  }
+
+  /* Creates an invoice: jobs from an account, lines typed in, or both. Prices
+     include any VAT, so a job's line is exactly its fare and the total never
+     changes with the rate; the VAT within it is shown separately. */
+  out.createFleetInvoice = functions.https.onCall(async (data, context) => {
+    const me = await assertFleetManager(context, false);
+    const d = data || {};
+    const rideIds = [...new Set((Array.isArray(d.rideIds) ? d.rideIds : [])
+        .map((id) => text(id, 128)).filter(Boolean))];
+    const typed = (Array.isArray(d.lines) ? d.lines : []).map((l) => {
+      const quantity = Number(l && l.quantity);
+      const unitPence = toPence(l && l.unitPrice);
+      return {description: text(l && l.description, 200), quantity, unitPence,
+        amountPence: Math.round(quantity * unitPence)};
+    });
+    if (typed.some((l) => !l.description || !(l.quantity > 0) ||
+        l.quantity > 10000 || !l.unitPence ||
+        Math.abs(l.amountPence) > 100000000)) {
+      throw new HttpsError("invalid-argument",
+          "Each line needs a description, a quantity and a price.");
+    }
+    if (rideIds.length + typed.length > MAX_INVOICE_LINES) {
+      throw new HttpsError("invalid-argument",
+          `An invoice can have up to ${MAX_INVOICE_LINES} lines.`);
+    }
+    const vatPercent = Number(d.vatPercent || 0);
+    if (!Number.isFinite(vatPercent) || vatPercent < 0 || vatPercent > 100) {
+      throw new HttpsError("invalid-argument",
+          "VAT must be between 0 and 100 percent.");
+    }
+    const dueDays = Math.min(365, Math.max(0, Math.round(
+        Number(d.dueDays === undefined ? 30 : d.dueDays) || 0)));
+    const accountId = text(d.accountId, 128) || null;
+    if (rideIds.length && !accountId) {
+      throw new HttpsError("invalid-argument",
+          "Jobs can only go on an invoice to their own account.");
+    }
+
+    let billTo;
+    if (accountId) {
+      const snap = await fleetDoc(me.fleetId).collection("accounts")
+          .doc(accountId).get();
+      if (!snap.exists) throw new HttpsError("not-found", "Account not found.");
+      const a = snap.data();
+      billTo = {company: a.company || "", address: a.address || "",
+        telephone: a.telephone || "", email: a.email || ""};
+    } else {
+      const b = d.billTo || {};
+      billTo = {company: text(b.company, 120), address: text(b.address, 300),
+        telephone: text(b.telephone, 30), email: text(b.email, 200)};
+      if (!billTo.company) {
+        throw new HttpsError("invalid-argument",
+            "Enter who the invoice is for.");
+      }
+      if (billTo.email && !validEmail(billTo.email)) {
+        throw new HttpsError("invalid-argument",
+            "That email address does not look right.");
+      }
+    }
+
+    const fleetRef = fleetDoc(me.fleetId);
+    const invoiceRef = fleetRef.collection("invoices").doc();
+    const number = await db.runTransaction(async (tx) => {
+      const refs = rideIds.map((id) => db.collection("rides").doc(id));
+      const [fleetSnap, ...rides] = await Promise.all([
+        tx.get(fleetRef), ...refs.map((r) => tx.get(r))]);
+      const jobLines = rides.map((snap) => {
+        const r = snap.exists ? snap.data() : null;
+        if (!r || r.fleetId !== me.fleetId || r.status !== "completed" ||
+            !r.account || r.account.id !== accountId) {
+          throw new HttpsError("failed-precondition",
+              "One of those jobs is not a finished job on this account.");
+        }
+        if (r.invoiceId) {
+          throw new HttpsError("failed-precondition",
+              "One of those jobs is already on an invoice.");
+        }
+        const place = (p) => ((p && p.address) || "").split(",")[0];
+        const at = r.completedAt || (r.timestamps || {}).completedAt ||
+          (r.timestamps || {}).createdAt;
+        const when = at && at.toDate ? at.toDate().toLocaleDateString("en-GB", {
+          day: "numeric", month: "short", timeZone: "Europe/London"}) : "";
+        const who = (r.customer || {}).name;
+        const amountPence = fareOf(r);
+        return {
+          description: [when, `${place(r.pickupLocation)} to ` +
+            place(r.dropoffLocation), who ? `(${who})` : ""]
+              .filter(Boolean).join(" "),
+          quantity: 1, unitPence: amountPence, amountPence, rideId: snap.id,
+        };
+      });
+      const lines = jobLines.concat(typed);
+      const totalPence = lines.reduce((sum, l) => sum + l.amountPence, 0);
+      if (!lines.length || !(totalPence > 0)) {
+        throw new HttpsError("invalid-argument",
+            "Add at least one job or line, with a total above £0.");
+      }
+      const seq = Number(fleetSnap.data().invoiceSeq || 0) + 1;
+      const invoiceNumber = `INV-${String(seq).padStart(4, "0")}`;
+      const now = Date.now();
+      tx.update(fleetRef, {invoiceSeq: seq});
+      tx.set(invoiceRef, {
+        number: invoiceNumber, accountId, billTo, from: invoiceFrom(me.fleet),
+        lines, rideIds, totalPence, vatPercent,
+        vatPence: Math.round(totalPence * vatPercent / (100 + vatPercent)),
+        currency: me.fleet.currency || "GBP", notes: text(d.notes, 1000),
+        status: "unpaid", issuedAt: Timestamp.fromMillis(now),
+        dueAt: Timestamp.fromMillis(now + dueDays * 24 * 3600 * 1000),
+        sentAt: null, sentTo: null, paidAt: null,
+        createdBy: {uid: me.uid, name: me.manager.name || ""},
+      });
+      refs.forEach((r) => tx.update(r, {invoiceId: invoiceRef.id,
+        invoiceNumber}));
+      return invoiceNumber;
+    });
+    return {invoiceId: invoiceRef.id, number};
+  });
+
+  /**
+   * Sends one email through Resend, with replies going to the fleet.
+   * @param {Object} fleet Fleet document.
+   * @param {string} to Recipient.
+   * @param {Object} mail {subject, html, text}.
+   * @return {Promise<void>}
+   */
+  async function sendFleetEmail(fleet, to, mail) {
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) {
+      throw new HttpsError("failed-precondition",
+          "Email is not set up. Please contact TakeARoute.");
+    }
+    const name = String(fleet.name || "TakeARoute").replace(/[<>"\r\n]/g, "");
+    const response = await fetch(
+        process.env.RESEND_API_URL || "https://api.resend.com/emails", {
+          method: "POST",
+          headers: {"Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json"},
+          body: JSON.stringify(Object.assign({
+            from: `${name} <invoices@invoice.takearoute.ltd>`,
+            to: [to], subject: mail.subject, html: mail.html, text: mail.text,
+          }, fleet.ownerEmail ? {reply_to: fleet.ownerEmail} : {})),
+        });
+    if (!response.ok) {
+      console.error("Invoice email failed:", response.status,
+          (await response.text()).slice(0, 300));
+      throw new HttpsError("internal",
+          "The email could not be sent. Try again.");
+    }
+  }
+
+  const asDate = (t) => (t && t.toDate ? t.toDate() : null);
+
+  /* Emails an invoice to the address on file. */
+  out.sendFleetInvoice = functions.runWith({secrets: EMAIL_SECRETS}).https
+      .onCall(async (data, context) => {
+        const me = await assertFleetManager(context, false);
+        const ref = fleetDoc(me.fleetId).collection("invoices")
+            .doc(text(data && data.invoiceId, 128) || "-");
+        const snap = await ref.get();
+        if (!snap.exists) {
+          throw new HttpsError("not-found", "Invoice not found.");
+        }
+        const invoice = snap.data();
+        if (invoice.status === "void") {
+          throw new HttpsError("failed-precondition",
+              "This invoice has been cancelled.");
+        }
+        // Use the account's current email, in case it changed since.
+        let to = (invoice.billTo || {}).email || "";
+        if (invoice.accountId) {
+          const account = await fleetDoc(me.fleetId).collection("accounts")
+              .doc(invoice.accountId).get();
+          if (account.exists && account.data().email) {
+            to = account.data().email;
+          }
+        }
+        if (!validEmail(to)) {
+          throw new HttpsError("failed-precondition",
+              "There is no email address on file for this client.");
+        }
+        await sendFleetEmail(me.fleet, to, invoiceEmail(Object.assign({},
+            invoice, {issuedAt: asDate(invoice.issuedAt),
+              dueAt: asDate(invoice.dueAt)})));
+        await ref.update({sentAt: FieldValue.serverTimestamp(), sentTo: to});
+        return {sentTo: to};
+      });
+
+  /* Emails an account client the total they owe: unpaid invoices, plus
+     finished jobs not on an invoice yet. */
+  out.emailFleetAccountBalance = functions.runWith({secrets: EMAIL_SECRETS})
+      .https.onCall(async (data, context) => {
+        const me = await assertFleetManager(context, false);
+        const accountId = text(data && data.accountId, 128);
+        const snap = accountId ? await fleetDoc(me.fleetId)
+            .collection("accounts").doc(accountId).get() : null;
+        if (!snap || !snap.exists) {
+          throw new HttpsError("not-found", "Account not found.");
+        }
+        const account = snap.data();
+        if (!validEmail(account.email || "")) {
+          throw new HttpsError("failed-precondition",
+              "There is no email address on file for this client.");
+        }
+        const [invoices, rides] = await Promise.all([
+          fleetDoc(me.fleetId).collection("invoices")
+              .where("accountId", "==", accountId)
+              .where("status", "==", "unpaid").get(),
+          db.collection("rides").where("fleetId", "==", me.fleetId)
+              .where("account.id", "==", accountId)
+              .where("status", "==", "completed").get(),
+        ]);
+        const jobs = rides.docs.map((r) => r.data())
+            .filter((r) => !r.invoiceId);
+        const owed = {
+          invoices: invoices.docs.map((i) => ({number: i.data().number,
+            dueAt: asDate(i.data().dueAt), totalPence: i.data().totalPence})),
+          jobs: jobs.length,
+          jobsPence: jobs.reduce((sum, r) => sum + fareOf(r), 0),
+        };
+        const total = owed.invoices.reduce((sum, i) => sum + i.totalPence, 0) +
+          owed.jobsPence;
+        if (!(total > 0)) {
+          throw new HttpsError("failed-precondition",
+              "This account owes nothing at the moment.");
+        }
+        await sendFleetEmail(me.fleet, account.email,
+            balanceEmail(invoiceFrom(me.fleet), account, owed));
+        return {sentTo: account.email, totalPence: total};
+      });
+
+  /* The owner marks an invoice paid or unpaid, or cancels it. Cancelling
+     frees its jobs, so they can go on a new invoice. */
+  out.setFleetInvoiceStatus = functions.https.onCall(async (data, context) => {
+    const me = await assertFleetManager(context, true);
+    const status = data && data.status;
+    if (!["paid", "unpaid", "void"].includes(status)) {
+      throw new HttpsError("invalid-argument", "Unknown status.");
+    }
+    const ref = fleetDoc(me.fleetId).collection("invoices")
+        .doc(text(data && data.invoiceId, 128) || "-");
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) throw new HttpsError("not-found", "Invoice not found.");
+      const invoice = snap.data();
+      if (invoice.status === "void") {
+        throw new HttpsError("failed-precondition",
+            "This invoice has been cancelled.");
+      }
+      tx.update(ref, {status, paidAt: status === "paid" ?
+        FieldValue.serverTimestamp() : null});
+      if (status === "void") {
+        (invoice.rideIds || []).forEach((id) => {
+          tx.update(db.collection("rides").doc(id), {
+            invoiceId: FieldValue.delete(),
+            invoiceNumber: FieldValue.delete(),
+          });
+        });
+      }
+    });
+    return {status};
+  });
 
   return out;
 };

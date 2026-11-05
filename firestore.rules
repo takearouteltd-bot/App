@@ -613,7 +613,14 @@ service cloud.firestore {
       allow update: if isAdmin() || (
         fleetOwnerOf(fleetId) &&
         request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(["phone", "address", "dispatchLeadMinutes", "updatedAt"]) &&
+          .hasOnly(["phone", "address", "dispatchLeadMinutes", "vatNumber", "invoiceVatPercent", "invoiceFooter", "updatedAt"]) &&
+        request.resource.data.get("vatNumber", "") is string &&
+        request.resource.data.get("vatNumber", "").size() <= 30 &&
+        request.resource.data.get("invoiceFooter", "") is string &&
+        request.resource.data.get("invoiceFooter", "").size() <= 1000 &&
+        request.resource.data.get("invoiceVatPercent", 0) is number &&
+        request.resource.data.get("invoiceVatPercent", 0) >= 0 &&
+        request.resource.data.get("invoiceVatPercent", 0) <= 100 &&
         request.resource.data.get("dispatchLeadMinutes", 20) is int &&
         request.resource.data.get("dispatchLeadMinutes", 20) >= 0 &&
         request.resource.data.get("dispatchLeadMinutes", 20) <= 180
@@ -643,6 +650,40 @@ service cloud.firestore {
           request.resource.data.get("notes", "").size() <= 500
         );
         allow delete: if isAdmin();
+      }
+
+      /* Account clients the fleet bills. Staff keep them; an account with
+         history is switched off with active, not deleted. */
+      match /accounts/{accountId} {
+        allow read: if isAdmin() || fleetStaffOf(fleetId);
+        allow create, update: if isAdmin() || (
+          fleetStaffOf(fleetId) &&
+          request.resource.data.keys().hasOnly(["company", "address", "telephone", "email", "active", "createdAt", "createdBy", "updatedAt"]) &&
+          request.resource.data.company is string &&
+          request.resource.data.company.size() > 0 &&
+          request.resource.data.company.size() <= 120 &&
+          request.resource.data.get("address", "").size() <= 300 &&
+          request.resource.data.get("telephone", "").size() <= 30 &&
+          request.resource.data.get("email", "").size() <= 200 &&
+          request.resource.data.get("active", true) is bool
+        );
+        allow delete: if isAdmin();
+      }
+
+      /* Money records, written only by functions/fleet.js. */
+      match /driverAccounts/{driverId} {
+        allow read: if isAdmin() || fleetStaffOf(fleetId) ||
+          (signedIn() && request.auth.uid == driverId);
+        allow write: if isAdmin();
+      }
+      match /driverPayments/{paymentId} {
+        allow read: if isAdmin() || fleetStaffOf(fleetId) ||
+          (signedIn() && resource.data.driverId == request.auth.uid);
+        allow write: if isAdmin();
+      }
+      match /invoices/{invoiceId} {
+        allow read: if isAdmin() || fleetStaffOf(fleetId);
+        allow write: if isAdmin();
       }
     }
 
