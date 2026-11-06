@@ -492,6 +492,33 @@ await assert.rejects(D7.call('approveFleetDriver', { driverId: d7.user.uid }), '
 await O.call('approveFleetDriver', { driverId: d7.user.uid });
 assert.equal((await getDoc(doc(D7.db, 'drivers', d7.user.uid))).data().approved, true);
 
+step('flat monthly plan: fleet pays self-employed drivers\' memberships too; plan changes move them over and back');
+const D8 = mk('driver8');
+const d8 = await createUserWithEmailAndPassword(D8.auth, 'd8@test.dev', 'secret123');
+await adminSet(`drivers/${d8.user.uid}`, { approved: true, onboardingComplete: true, onboardingStatus: 'approved', vehicleType: 'RouteMini', status: 'offline', phoneNumber: '+447700900888', firstName: 'Eight', subscription: { status: 'active', paymentMethod: 'wallet_deduction', nextBillingDate: '2026-12-01' } });
+await D8.call('requestFleetJoin', { code: other.joinCode });
+await adminSet(`fleets/${other.fleetId}`, { billingPlan: 'monthly', monthlyFee: 500 }, true);
+const OO = mk('otherOwner');
+const ou = (await (await fetch(`http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/projects/${PROJECT}/accounts:query`, { method: 'POST', headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' }, body: '{}' })).json()).userInfo.find((u) => u.email === 'other@test.dev');
+await fetch(`http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/projects/${PROJECT}/accounts:update`, { method: 'POST', headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' }, body: JSON.stringify({ localId: ou.localId, password: 'other123' }) });
+await signInWithEmailAndPassword(OO.auth, 'other@test.dev', 'other123');
+await OO.call('decideFleetDriver', { driverId: d8.user.uid, approve: true, driverType: 'self' });
+let d8doc = (await getDoc(doc(D8.db, 'drivers', d8.user.uid))).data();
+assert.equal(d8doc.fleetDriverType, 'self'); assert.equal(d8doc.subscription.paymentMethod, 'fleet', 'monthly fleet pays a self-employed driver');
+assert.equal(d8doc.subscriptionBeforeFleet.paymentMethod, 'wallet_deduction');
+await adminSet(`fleets/${other.fleetId}`, { billingPlan: 'per_driver' }, true);
+await until(async () => (await getDoc(doc(D8.db, 'drivers', d8.user.uid))).data().subscription.paymentMethod === 'wallet_deduction', 'per-driver plan gives the own membership back');
+d8doc = (await getDoc(doc(D8.db, 'drivers', d8.user.uid))).data();
+assert.equal(d8doc.subscription.nextBillingDate, '2026-12-01'); assert.equal(d8doc.subscriptionBeforeFleet, undefined);
+await adminSet(`fleets/${other.fleetId}`, { billingPlan: 'monthly' }, true);
+await until(async () => (await getDoc(doc(D8.db, 'drivers', d8.user.uid))).data().subscription.paymentMethod === 'fleet', 'back on monthly');
+await A.call('setFleetDriverType', { driverId: d8.user.uid, driverType: 'company' });
+await A.call('setFleetDriverType', { driverId: d8.user.uid, driverType: 'self' });
+assert.equal((await getDoc(doc(D8.db, 'drivers', d8.user.uid))).data().subscription.paymentMethod, 'fleet', 'self on monthly stays fleet-paid');
+await D8.call('leaveFleet', {});
+d8doc = (await getDoc(doc(D8.db, 'drivers', d8.user.uid))).data();
+assert.equal(d8doc.subscription.paymentMethod, 'wallet_deduction', 'leaving gives the own membership back'); assert.equal(d8doc.blocked, undefined);
+
 step('paused fleet cannot book');
 await adminSet(`fleets/${created.fleetId}`, { status: 'suspended' }, true);
 await assert.rejects(O.call('createFleetBooking', { customer: { phone: '07700900777' }, pickup: T5, dropoff: PAD }));

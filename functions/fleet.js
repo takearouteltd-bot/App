@@ -952,7 +952,23 @@ module.exports = (deps) => {
       fleetJoinedAt: FieldValue.serverTimestamp(),
       fleetRequest: FieldValue.delete(),
       fleetInvite: FieldValue.delete(),
-    }, type === "company" ? fleetPaysFields(driver, fleetId, fleet.name) : {}));
+    }, fleetCovers(type, fleet) ?
+      fleetPaysFields(driver, fleetId, fleet.name) : {}));
+  }
+
+  /**
+   * Whether the fleet pays this driver's membership. It always does for a
+   * company driver. A fleet on a flat monthly plan pays one price for all
+   * its drivers, so it covers self-employed drivers' memberships too (their
+   * card fares still go to their own wallet). On a per-driver plan a
+   * self-employed driver pays their own.
+   * @param {string} type "company" or "self".
+   * @param {?Object} fleet Fleet data.
+   * @return {boolean} True when the fleet pays.
+   */
+  function fleetCovers(type, fleet) {
+    return type === "company" || Boolean(fleet &&
+      fleet.billingPlan === "monthly");
   }
 
   /**
@@ -1353,7 +1369,9 @@ module.exports = (deps) => {
         lastFleetId: fleetId,
       }));
       return {fleetId, fleetName: driver.fleetName || "your fleet", type,
-        restored: own.restored, suspended: suspendNow};
+        restored: own.restored, suspended: suspendNow,
+        coveredBefore: Boolean(driver.subscription &&
+          driver.subscription.paymentMethod === "fleet")};
     });
 
     // Offers that were waiting for this driver go back to the office.
@@ -1366,7 +1384,7 @@ module.exports = (deps) => {
       channelId: "general",
     } : {
       title: `You left ${result.fleetName}`,
-      body: result.type === "self" ?
+      body: result.type === "self" && !result.coveredBefore ?
         "You now drive independently. Nothing changes with your " +
           "membership or your wallet." :
         result.restored ?
@@ -1519,6 +1537,59 @@ module.exports = (deps) => {
     return {ok: true};
   });
 
+  /* A fleet's plan changes (the admin dashboard writes fleets/{id}
+     directly): self-employed drivers' memberships follow it. Onto a flat
+     monthly plan the fleet takes them over; back to per driver, each gets
+     their own membership back (or activates one). Company drivers are
+     always the fleet's and are not touched. */
+  out.syncFleetPlanMemberships = functions.firestore
+      .document("fleets/{fleetId}")
+      .onUpdate(async (change, context) => {
+        const before = change.before.data() || {};
+        const after = change.after.data() || {};
+        const wasMonthly = before.billingPlan === "monthly";
+        const isMonthly = after.billingPlan === "monthly";
+        if (wasMonthly === isMonthly) return null;
+        const fleetId = context.params.fleetId;
+        const snap = await db.collection("drivers")
+            .where("fleetId", "==", fleetId)
+            .where("fleetDriverType", "==", "self").get();
+        const told = [];
+        for (const d of snap.docs) {
+          const changed = await db.runTransaction(async (tx) => {
+            const fresh = await tx.get(d.ref);
+            const driver = fresh.data();
+            if (!driver || driver.fleetId !== fleetId ||
+                fleetTypeOf(driver) !== "self") {
+              return false;
+            }
+            const paidByFleet = Boolean(driver.subscription &&
+              driver.subscription.paymentMethod === "fleet");
+            if (isMonthly === paidByFleet) return false;
+            tx.update(d.ref, isMonthly ?
+              fleetPaysFields(driver, fleetId, after.name) :
+              ownMembershipFields(driver).fields);
+            return true;
+          });
+          if (changed) told.push(d.id);
+        }
+        if (told.length) {
+          await sendPush(told, isMonthly ? {
+            title: `${after.name || "Your fleet"} now pays your membership`,
+            body: "Your card fares still go to your wallet.",
+            channelId: "general",
+          } : {
+            title: "Your membership is your own again",
+            body: `${after.name || "Your fleet"} no longer pays it. Check ` +
+              "Membership in the app.",
+            channelId: "general",
+          }).catch(() => null);
+        }
+        console.log("syncFleetPlanMemberships", fleetId,
+            isMonthly ? "monthly" : "per_driver", told.length);
+        return null;
+      });
+
   /* A TakeARoute admin changes a fleet driver between company car and
      self-employed; membership and earnings follow from the next trip. */
   out.setFleetDriverType = functions.https.onCall(async (data, context) => {
@@ -1535,12 +1606,15 @@ module.exports = (deps) => {
       if (fleetTypeOf(driver) === type && driver.fleetDriverType === type) {
         return {changed: false, fleetName: driver.fleetName};
       }
-      const fields = type === "company" ?
+      const fleetSnap = await tx.get(db.collection("fleets")
+          .doc(driver.fleetId));
+      const covered = fleetCovers(type, fleetSnap.data());
+      const fields = covered ?
         fleetPaysFields(driver, driver.fleetId, driver.fleetName) :
         ownMembershipFields(driver).fields;
       tx.update(driverRef, Object.assign(fields, {fleetDriverType: type}));
       return {changed: fleetTypeOf(driver) !== type,
-        fleetName: driver.fleetName};
+        fleetName: driver.fleetName, covered};
     });
     if (result.changed) {
       await sendPush([driverId], {
@@ -1549,8 +1623,11 @@ module.exports = (deps) => {
         body: type === "company" ?
           `${result.fleetName || "Your fleet"} now receives your card ` +
             "earnings and pays your membership." :
-          "Card fares now go to your wallet, and you pay your own " +
-            "membership.",
+          (result.covered ?
+            "Card fares now go to your wallet. Your fleet still pays " +
+              "your membership." :
+            "Card fares now go to your wallet, and you pay your own " +
+              "membership."),
         channelId: "general",
       }).catch(() => null);
     }

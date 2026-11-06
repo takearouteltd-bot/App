@@ -49,9 +49,11 @@ export default function DriverFleetScreen({ navigation }) {
   const request = driver?.fleetRequest;
   const fleetName = driver?.fleetName || 'your fleet';
   const selfEmployed = driver?.fleetDriverType === 'self';
+  // A fleet on a flat monthly plan pays every driver's membership.
+  const fleetPaysMembership = driver?.subscription?.paymentMethod === 'fleet';
 
   const leave = () =>
-    Alert.alert(`Leave ${fleetName}?`, 'You stop getting their jobs and drive independently. Your wallet and membership stay as they are.', [
+    Alert.alert(`Leave ${fleetName}?`, fleetPaysMembership ? `You stop getting their jobs and drive independently. Your wallet stays as it is; ${fleetName} stops paying your membership, so the one you had before comes back (or you activate one).` : 'You stop getting their jobs and drive independently. Your wallet and membership stay as they are.', [
       { text: 'Stay', style: 'cancel' },
       {
         text: 'Leave',
@@ -71,7 +73,7 @@ export default function DriverFleetScreen({ navigation }) {
             <Text style={[TYPE.small, { marginTop: SPACE[1] }]}>{selfEmployed ? 'Self-employed, own car' : 'Company car driver'}</Text>
             {selfEmployed ? (
               <Text style={[TYPE.body, { marginTop: SPACE[2] }]}>
-                You get their phone bookings as well as normal app jobs. Card fares still go to your wallet, and you pay your own membership.
+                You get their phone bookings as well as normal app jobs. Card fares still go to your wallet{fleetPaysMembership ? `, and ${fleetName} pays your TakeARoute membership` : ', and you pay your own membership'}.
               </Text>
             ) : (
               <>
