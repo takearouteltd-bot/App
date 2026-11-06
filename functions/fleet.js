@@ -956,6 +956,59 @@ module.exports = (deps) => {
   }
 
   /**
+   * A company driver removed from a fleet stays tied to it (see
+   * takeOutOfFleet): no other fleet with this account.
+   * @param {Object} driver Driver data.
+   */
+  function refuseIfRemoved(driver) {
+    if (driver && driver.blockedKind === "fleet_removed" && driver.blocked) {
+      throw new HttpsError("failed-precondition",
+          `${driver.removedFromFleetName || "Your fleet"} removed you and ` +
+          "only they can reinstate this account. To drive with your own " +
+          "car for another fleet, delete this account and register again.");
+    }
+  }
+
+  /**
+   * The fields that record a fleet approving a driver's application. The
+   * fleet has checked the documents and is answerable for it under its
+   * contract with TakeARoute; TakeARoute can still overturn it.
+   * @param {Object} driver Driver data.
+   * @param {Object} me assertFleetManager result.
+   * @return {Object} Fields to write, or {} when already approved.
+   */
+  function fleetApprovalFields(driver, me) {
+    if (driver.approved === true) return {};
+    if (!driver.onboardingComplete) {
+      throw new HttpsError("failed-precondition",
+          "This driver has not finished signing up yet.");
+    }
+    if (driver.onboardingStatus === "rejected") {
+      throw new HttpsError("failed-precondition",
+          "TakeARoute turned this application down. Please contact " +
+          "TakeARoute.");
+    }
+    if (hasExpiredDocument(driver)) {
+      throw new HttpsError("failed-precondition",
+          "One of this driver's documents has expired. They need to " +
+          "upload a new one first.");
+    }
+    return {
+      approved: true,
+      onboardingStatus: "approved",
+      rejectionReason: null,
+      decidedAt: new Date().toISOString(),
+      approvedByFleet: {
+        fleetId: me.fleetId,
+        fleetName: me.fleet.name || "",
+        by: me.manager.name || me.manager.email || "Staff",
+        byUid: me.uid,
+        at: new Date().toISOString(),
+      },
+    };
+  }
+
+  /**
    * What the driver is told on joining.
    * @param {string} type "company" or "self".
    * @return {string} Message.
@@ -989,6 +1042,7 @@ module.exports = (deps) => {
           "Finish your driver sign-up first.");
     }
     const driver = driverSnap.data();
+    refuseIfRemoved(driver);
     if (driver.fleetId === fleetDoc.id) {
       throw new HttpsError("already-exists", "You are already in this fleet.");
     }
@@ -1037,6 +1091,7 @@ module.exports = (deps) => {
         throw new HttpsError("failed-precondition",
             `You drive for ${driver.fleetName || "another fleet"}.`);
       }
+      refuseIfRemoved(driver);
       // Invitations from before the kinds existed made company drivers.
       const type = invite.driverType === "self" ? "self" : "company";
       joinInTx(tx, driverRef, driver, invite.fleetId, fleetSnap.data(), type);
@@ -1054,6 +1109,7 @@ module.exports = (deps) => {
     const approve = data && data.approve === true;
     const type = approve ? chosenType(data.driverType) : null;
     const driverRef = db.collection("drivers").doc(driverId);
+    let newlyApproved = false;
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(driverRef);
       const driver = snap.exists ? snap.data() : null;
@@ -1069,12 +1125,82 @@ module.exports = (deps) => {
         throw new HttpsError("failed-precondition",
             "This driver has joined another fleet.");
       }
+      refuseIfRemoved(driver);
+      const approval = fleetApprovalFields(driver, me);
       joinInTx(tx, driverRef, driver, me.fleetId, me.fleet, type);
+      if (approval.approved) {
+        tx.update(driverRef, approval);
+        newlyApproved = true;
+      }
     });
     await sendPush([driverId], {
-      title: approve ? `You joined ${me.fleet.name}` : "Fleet request declined",
-      body: approve ? joinedText(type) :
-        `${me.fleet.name} did not accept your request.`,
+      title: !approve ? "Fleet request declined" : newlyApproved ?
+        `${me.fleet.name} approved you` : `You joined ${me.fleet.name}`,
+      body: !approve ? `${me.fleet.name} did not accept your request.` :
+        (newlyApproved ? "You can now go online. " : "") + joinedText(type),
+      channelId: "general",
+    }).catch(() => null);
+    return {ok: true, approved: newlyApproved};
+  });
+
+  /* The fleet approves the application of a driver already in it (one who
+     accepted the fleet's invitation before TakeARoute or the fleet had
+     checked their documents). */
+  out.approveFleetDriver = functions.https.onCall(async (data, context) => {
+    const me = await assertFleetManager(context, false);
+    const driverId = text(data && data.driverId, 128);
+    const driverRef = db.collection("drivers").doc(driverId);
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(driverRef);
+      const driver = snap.exists ? snap.data() : null;
+      if (!driver || driver.fleetId !== me.fleetId) {
+        throw new HttpsError("not-found", "Not one of your drivers.");
+      }
+      if (driver.approved === true) {
+        throw new HttpsError("already-exists", "Already approved.");
+      }
+      tx.update(driverRef, fleetApprovalFields(driver, me));
+    });
+    await sendPush([driverId], {
+      title: `${me.fleet.name} approved you`,
+      body: "You can now go online and take jobs.",
+      channelId: "general",
+    }).catch(() => null);
+    return {ok: true};
+  });
+
+  /* The fleet takes back a company driver it removed: they rejoin as a
+     company driver and the suspension ends. */
+  out.reinstateFleetDriver = functions.https.onCall(async (data, context) => {
+    const me = await assertFleetManager(context, false);
+    const driverId = text(data && data.driverId, 128);
+    const driverRef = db.collection("drivers").doc(driverId);
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(driverRef);
+      const driver = snap.exists ? snap.data() : null;
+      if (!driver || driver.blockedKind !== "fleet_removed" ||
+          driver.removedFromFleetId !== me.fleetId || !driver.blocked) {
+        throw new HttpsError("not-found",
+            "This driver is not waiting to be reinstated by you.");
+      }
+      if (driver.fleetId) {
+        throw new HttpsError("failed-precondition",
+            "This driver is in a fleet already.");
+      }
+      joinInTx(tx, driverRef, driver, me.fleetId, me.fleet, "company");
+      tx.update(driverRef, {
+        blocked: false, blockedReason: "", blockedByFleet: null,
+        blockedKind: FieldValue.delete(),
+        removedFromFleetId: FieldValue.delete(),
+        removedFromFleetName: FieldValue.delete(),
+        unblockedAt: new Date().toISOString(),
+        unblockedBy: `${me.manager.name || me.manager.email || "Staff"}, ` +
+          `${me.fleet.name} (reinstated)`,
+      });
+    });
+    await sendPush([driverId], {
+      title: `${me.fleet.name} reinstated you`,
+      body: "Your driver account is active again. " + joinedText("company"),
       channelId: "general",
     }).catch(() => null);
     return {ok: true};
@@ -1193,9 +1319,13 @@ module.exports = (deps) => {
       const liftOwn = driver.blocked === true &&
         driver.blockedByFleet === fleetId;
       // A company driver drove the fleet's car, so leaving it does not make
-      // them an independent driver: their driver account is suspended until
-      // TakeARoute lifts it (setAccountSuspension). Only self-employed
-      // drivers go on independently. Their passenger account is untouched.
+      // them an independent driver: their driver account is suspended, and
+      // the suspension is the fleet's. Only that fleet can reinstate them
+      // (reinstateFleetDriver), with a TakeARoute admin as a backup
+      // (setAccountSuspension). With this account they cannot join another
+      // fleet; to drive elsewhere with their own car they delete it and
+      // register again. Only self-employed drivers go on independently.
+      // Their passenger account is untouched.
       const suspendNow = type === "company";
       const fleetName = driver.fleetName || "the fleet";
       const blockFields = suspendNow ? {
@@ -1204,7 +1334,9 @@ module.exports = (deps) => {
         blockedKind: "fleet_removed",
         blockedAt: new Date().toISOString(),
         blockedBy: by,
-        blockedByFleet: null,
+        blockedByFleet: fleetId,
+        removedFromFleetId: fleetId,
+        removedFromFleetName: fleetName,
         status: "offline",
       } : liftOwn ? {
         blocked: false, blockedReason: "", blockedByFleet: null,
@@ -1229,8 +1361,8 @@ module.exports = (deps) => {
 
     await sendPush([driverId], result.suspended ? {
       title: `You were removed from ${result.fleetName}`,
-      body: "Your driver account is suspended. Contact TakeARoute to drive " +
-        "independently or to join another fleet.",
+      body: "Your driver account is suspended. Only " +
+        `${result.fleetName} can reinstate it.`,
       channelId: "general",
     } : {
       title: `You left ${result.fleetName}`,
@@ -1505,6 +1637,8 @@ module.exports = (deps) => {
       }, coll === "drivers" ? {status: "offline"} : {}) : {
         blocked: false, blockedReason: "", blockedByFleet: null,
         blockedKind: FieldValue.delete(),
+        removedFromFleetId: FieldValue.delete(),
+        removedFromFleetName: FieldValue.delete(),
         unblockedAt: new Date().toISOString(), unblockedBy: who,
       });
     }

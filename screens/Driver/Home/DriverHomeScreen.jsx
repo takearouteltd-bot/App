@@ -117,6 +117,8 @@ export default function DriverHomeScreen() {
   const [isApproved, setIsApproved] = useState(false);
   // Set when an admin declined the application; holds the reason they gave.
   const [rejection, setRejection] = useState(null);
+  // Where a driver still under review stands with a fleet, for the hint below.
+  const [fleetHint, setFleetHint] = useState(null);
   // The class this driver's vehicle was approved as. Decides which jobs they
   // are shown; see constants/vehicleClasses.js.
   const [vehicleType, setVehicleType] = useState(null);
@@ -211,6 +213,17 @@ export default function DriverHomeScreen() {
         data.onboardingStatus === 'rejected'
           ? data.rejectionReason || 'Contact support to find out why.'
           : null
+      );
+      setFleetHint(
+        data.approved === true || data.onboardingStatus === 'rejected'
+          ? null
+          : data.fleetId
+          ? `${data.fleetName || 'Your fleet'} or TakeARoute will check your documents and approve you.`
+          : data.fleetRequest
+          ? `${data.fleetRequest.fleetName || 'The fleet'} will check your documents and approve you.`
+          : data.fleetInvite
+          ? `${data.fleetInvite.fleetName || 'A fleet'} invited you. Accept it in Account > Fleet, and they can approve you.`
+          : 'Driving for a taxi firm? Enter its join code in Account > Fleet, and the firm can approve you.'
       );
       setOnRide(data.isOnRide === true);
       setVehicleType(data.vehicleType || null);
@@ -964,6 +977,17 @@ export default function DriverHomeScreen() {
             </Text>
           </TouchableOpacity>
         </View>
+
+        {fleetHint ? (
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => navigation.navigate('Account', { screen: 'DriverFleet' })}
+            style={styles.docAlert}
+            accessibilityRole="button"
+          >
+            <Banner tone="info" icon="people-outline" title="Approval through a fleet" body={fleetHint} />
+          </TouchableOpacity>
+        ) : null}
 
         {alert ? (
           <TouchableOpacity

@@ -147,7 +147,7 @@ export default function App() {
         (snap) => {
           const data = snap.exists() ? snap.data() : null;
           setIsBlocked(data?.blocked === true);
-          setBlockInfo(data?.blocked === true ? { reason: data.blockedReason || '', byFleet: Boolean(data.blockedByFleet), fleetName: data.fleetName || '', kind: data.blockedKind || '' } : null);
+          setBlockInfo(data?.blocked === true ? { reason: data.blockedReason || '', byFleet: Boolean(data.blockedByFleet), fleetName: data.fleetName || '', kind: data.blockedKind || '', removedFrom: data.removedFromFleetName || '' } : null);
 
           if (role === "rider") {
             if (!data || !data.fullName) {
@@ -331,7 +331,7 @@ export default function App() {
         </Text>
         <Text style={[TYPE.body, { color: COLORS.muted, textAlign: "center", marginBottom: SPACE[6] }]}>
           {blockInfo?.kind === 'fleet_removed'
-            ? `${blockInfo.reason || 'You were removed from your fleet'}, so your driver account is suspended. To drive independently or join another fleet, please contact TakeARoute.`
+            ? `${blockInfo.removedFrom || 'Your fleet'} removed you, so this driver account is suspended. Only ${blockInfo.removedFrom || 'your fleet'} can reinstate it. To drive with your own car, for another fleet or for TakeARoute, delete this account below and register again.`
             : <>
               {blockInfo?.byFleet
                 ? `${blockInfo.fleetName || 'Your fleet'} has suspended your account for breaking the terms and conditions.`

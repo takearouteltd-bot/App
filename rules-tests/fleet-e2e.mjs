@@ -211,7 +211,7 @@ const d2doc = (await getDoc(doc(D2.db, 'drivers', d2.user.uid))).data();
 assert.equal(d2doc.fleetId, null);
 assert.equal(removed.membershipRestored, true);
 assert.equal(removed.suspended, true); assert.equal(d2doc.blocked, true, 'company driver removed -> suspended');
-assert.equal(d2doc.blockedKind, 'fleet_removed'); assert.equal(d2doc.blockedByFleet, null); assert.equal(d2doc.status, 'offline');
+assert.equal(d2doc.blockedKind, 'fleet_removed'); assert.equal(d2doc.blockedByFleet, created.fleetId); assert.equal(d2doc.removedFromFleetName, 'Star Cars'); assert.equal(d2doc.status, 'offline');
 assert.match(d2doc.blockedReason, /Removed from Star Cars/);
 await A.call('setAccountSuspension', { uid: d2.user.uid, suspend: false });
 assert.equal((await getDoc(doc(D2.db, 'drivers', d2.user.uid))).data().blocked, false, 'admin lifts it');
@@ -398,7 +398,7 @@ await O.call('suspendFleetDriver', { driverId: d4.user.uid, reason: 'Leaving' })
 await O.call('removeFleetDriver', { driverId: d4.user.uid });
 d4doc = (await getDoc(doc(D4.db, 'drivers', d4.user.uid))).data();
 assert.equal(d4doc.fleetId, null); assert.equal(d4doc.blocked, true, 'company driver: the fleet suspension becomes a TakeARoute one');
-assert.equal(d4doc.blockedByFleet, null); assert.equal(d4doc.blockedKind, 'fleet_removed');
+assert.equal(d4doc.blockedByFleet, created.fleetId); assert.equal(d4doc.blockedKind, 'fleet_removed');
 await A.call('setAccountSuspension', { uid: d4.user.uid, suspend: false });
 
 step('self-employed driver: joins keeping own membership; fleet cannot remove; app trips stay theirs; not billed to the fleet; admin switches type; driver leaves (not suspended); admin removes a company driver (suspended)');
@@ -449,6 +449,48 @@ assert.equal((await A.call('adminRemoveFleetDriver', { driverId: d1.user.uid }))
 assert.equal((await getDoc(doc(D.db, 'drivers', d1.user.uid))).data().fleetId, null);
 assert.equal((await getDoc(doc(D.db, 'drivers', d1.user.uid))).data().blockedKind, 'fleet_removed', 'admin removal of a company driver suspends too');
 assert.equal(d3doc.blocked, false, 'self-employed driver who leaves is not suspended');
+
+step('removed company driver: tied to the fleet; cannot join another; only that fleet reinstates (admin as backup)');
+const D5 = mk('driver5'), D6 = mk('driver6'), D7 = mk('driver7');
+const other = await A.call('createFleet', { name: 'Other Cars', ownerName: 'X', email: 'other@test.dev', phone: '07700900002' });
+const d5 = await createUserWithEmailAndPassword(D5.auth, 'd5@test.dev', 'secret123');
+await adminSet(`drivers/${d5.user.uid}`, { approved: true, onboardingComplete: true, onboardingStatus: 'approved', vehicleType: 'RouteMini', status: 'offline', phoneNumber: '+447700900555', firstName: 'Five' });
+await D5.call('requestFleetJoin', { code: created.joinCode });
+await O.call('decideFleetDriver', { driverId: d5.user.uid, approve: true, driverType: 'company' });
+await O.call('removeFleetDriver', { driverId: d5.user.uid });
+await assert.rejects(D5.call('requestFleetJoin', { code: other.joinCode }), /only they can reinstate/);
+await assert.rejects(O.call('suspendFleetDriver', { driverId: d5.user.uid, suspend: false }), 'suspension lift is not the way back');
+assert.equal((await getDoc(doc(D5.db, 'drivers', d5.user.uid))).data().blocked, true);
+await assert.rejects(D5.call('reinstateFleetDriver', { driverId: d5.user.uid }), 'driver cannot reinstate themselves');
+await O.call('reinstateFleetDriver', { driverId: d5.user.uid });
+let d5doc = (await getDoc(doc(D5.db, 'drivers', d5.user.uid))).data();
+assert.equal(d5doc.blocked, false); assert.equal(d5doc.fleetId, created.fleetId); assert.equal(d5doc.fleetDriverType, 'company');
+assert.equal(d5doc.removedFromFleetId, undefined); assert.equal(d5doc.blockedKind, undefined);
+await assert.rejects(O.call('reinstateFleetDriver', { driverId: d5.user.uid }), /not waiting to be reinstated/);
+
+step('fleet approves drivers who apply to it: by request (approves + joins) and by invite (approve after); refused if not signed up, TakeARoute rejected or a document expired');
+const d6 = await createUserWithEmailAndPassword(D6.auth, 'd6@test.dev', 'secret123');
+await adminSet(`drivers/${d6.user.uid}`, { approved: false, onboardingComplete: false, onboardingStatus: 'pending', vehicleType: 'RouteMini', status: 'offline', phoneNumber: '+447700900666', firstName: 'Six', documentExpiry: { insurance: '2020-01-01' } });
+await D6.call('requestFleetJoin', { code: created.joinCode });
+await assert.rejects(O.call('decideFleetDriver', { driverId: d6.user.uid, approve: true, driverType: 'self' }), /not finished signing up/);
+await adminSet(`drivers/${d6.user.uid}`, { onboardingComplete: true }, true);
+await assert.rejects(O.call('decideFleetDriver', { driverId: d6.user.uid, approve: true, driverType: 'self' }), /has expired/);
+await adminSet(`drivers/${d6.user.uid}`, { documentExpiry: { insurance: '2030-01-01' } }, true);
+const dec = await O.call('decideFleetDriver', { driverId: d6.user.uid, approve: true, driverType: 'self' });
+assert.equal(dec.approved, true);
+let d6doc = (await getDoc(doc(D6.db, 'drivers', d6.user.uid))).data();
+assert.equal(d6doc.approved, true); assert.equal(d6doc.onboardingStatus, 'approved'); assert.equal(d6doc.fleetId, created.fleetId);
+assert.equal(d6doc.approvedByFleet.fleetId, created.fleetId); assert.equal(d6doc.approvedByFleet.fleetName, 'Star Cars'); assert.ok(d6doc.approvedByFleet.at);
+const d7 = await createUserWithEmailAndPassword(D7.auth, 'd7@test.dev', 'secret123');
+await adminSet(`drivers/${d7.user.uid}`, { approved: false, onboardingComplete: true, onboardingStatus: 'rejected', vehicleType: 'RouteMini', status: 'offline', phoneNumber: '+447700900777', firstName: 'Seven' });
+await O.call('inviteFleetDriver', { phone: '07700 900777', driverType: 'company' });
+assert.equal((await D7.call('answerFleetInvite', { accept: true })).joined, true);
+await assert.rejects(O.call('approveFleetDriver', { driverId: d7.user.uid }), /turned this application down/);
+await adminSet(`drivers/${d7.user.uid}`, { onboardingStatus: 'pending' }, true);
+await assert.rejects(O.call('approveFleetDriver', { driverId: d6.user.uid }), /Already approved/);
+await assert.rejects(D7.call('approveFleetDriver', { driverId: d7.user.uid }), 'driver cannot approve themselves');
+await O.call('approveFleetDriver', { driverId: d7.user.uid });
+assert.equal((await getDoc(doc(D7.db, 'drivers', d7.user.uid))).data().approved, true);
 
 step('paused fleet cannot book');
 await adminSet(`fleets/${created.fleetId}`, { status: 'suspended' }, true);
