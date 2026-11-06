@@ -57,6 +57,11 @@ module.exports = (deps) => {
     "http://com.twilio.sounds.music.s3.amazonaws.com/MARKOVICHAMP-Borghestral.mp3";
   const RING_SECONDS = 25;
   const MAX_ROUNDS = 4; // ring rounds before a call counts as missed
+  // Twilio rings at most 10 browsers for one call.
+  const MAX_OPERATORS = 10;
+  // An operator marked on a call longer than this is treated as free (a
+  // flag left behind by a closed browser).
+  const ON_CALL_STALE_MS = 2 * 3600 * 1000;
   const LIVE_TRIP = ["accepted", "arrived", "ongoing"];
 
   /* ------------------------------ helpers ---------------------------- */
@@ -235,6 +240,41 @@ module.exports = (deps) => {
     });
   }
 
+  /**
+   * Whether an operator is free to ring: not on a call (or the flag is
+   * stale).
+   * @param {Object} m fleetManagers data.
+   * @return {boolean} Free.
+   */
+  function freeToRing(m) {
+    const on = m.phoneOnCall;
+    return !on || !on.since || Date.now() - Date.parse(on.since) >
+      ON_CALL_STALE_MS;
+  }
+
+  /**
+   * Marks an operator on a call, or free again (only if it is that call).
+   * @param {string} uid Operator.
+   * @param {?string} callSid The call, or null to clear.
+   * @param {string=} clearing The call being cleared.
+   * @return {Promise<void>}
+   */
+  async function markOnCall(uid, callSid, clearing) {
+    if (!uid) return;
+    const ref = db.collection("fleetManagers").doc(uid);
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return;
+      const on = snap.data().phoneOnCall;
+      if (callSid) {
+        tx.update(ref, {phoneOnCall: {callSid,
+          since: new Date().toISOString()}});
+      } else if (on && (!clearing || on.callSid === clearing)) {
+        tx.update(ref, {phoneOnCall: FieldValue.delete()});
+      }
+    }).catch((e) => console.error("markOnCall", uid, e.message));
+  }
+
   const callRef = (fleetId, callSid) => db.collection("fleets").doc(fleetId)
       .collection("phoneCalls").doc(callSid);
 
@@ -269,6 +309,13 @@ module.exports = (deps) => {
             return res.status(204).send("");
           }
           if (step === "outgoing") return send(await outgoing(tw, p));
+          if (step === "outDone") {
+            await markOnCall(String(req.query.uid || ""), null, p.CallSid);
+            await callRef(String(req.query.fleet || ""), p.CallSid).set({
+              seconds: Number(p.DialCallDuration) || 0,
+              endedAt: new Date().toISOString()}, {merge: true});
+            return send("<Hangup/>");
+          }
           if (step === "test") return send("<Pause length=\"20\"/>");
           return res.status(404).send("Unknown step");
         } catch (error) {
@@ -345,7 +392,13 @@ module.exports = (deps) => {
     const ops = await db.collection("fleetManagers")
         .where("fleetId", "==", fleetId)
         .where("phoneAvailable", "==", true).get();
-    const operators = ops.docs.filter((d) => d.data().isActive === true);
+    // Only free operators ring: anyone already on a call is skipped, so the
+    // next call goes to whoever is free. Longest-waiting first, up to 10.
+    const operators = ops.docs.filter((d) => d.data().isActive === true &&
+      freeToRing(d.data()))
+        .sort((a, b) => String(a.data().phoneLastCallAt || "")
+            .localeCompare(String(b.data().phoneLastCallAt || "")))
+        .slice(0, MAX_OPERATORS);
     const greeting = round === 1 ? say(`Thank you for calling ${fleetName}.`) :
       "";
     if (!operators.length) {
@@ -397,6 +450,8 @@ module.exports = (deps) => {
     if (p.DialCallStatus === "completed" || p.DialCallStatus === "answered") {
       await ref.set({status: "completed", endedAt: new Date().toISOString(),
         seconds: Number(p.DialCallDuration) || 0}, {merge: true});
+      const c = (await ref.get()).data() || {};
+      await markOnCall(c.answeredBy, null, p.CallSid);
       return "<Hangup/>";
     }
     const fleet = (await db.collection("fleets").doc(fleetId).get()).data() ||
@@ -426,6 +481,11 @@ module.exports = (deps) => {
       answeredBy: who || null,
       answeredByName: manager ? (manager.name || manager.email || "") : "",
       answeredAt: new Date().toISOString()}, {merge: true});
+    if (manager) {
+      await markOnCall(who, callSid);
+      await db.collection("fleetManagers").doc(who).update({
+        phoneLastCallAt: new Date().toISOString()}).catch(() => null);
+    }
   }
 
   /**
@@ -454,6 +514,7 @@ module.exports = (deps) => {
         endedAt: new Date().toISOString(),
         seconds: Number(p.CallDuration) || 0});
     }
+    if (c.answeredBy) await markOnCall(c.answeredBy, null, p.CallSid);
   }
 
   /**
@@ -492,8 +553,10 @@ module.exports = (deps) => {
       name: card.exists ? (card.data().name || "") : "",
       by: uid, byName: manager.name || manager.email || "",
       status: "completed", startedAt: new Date().toISOString()});
-    return `<Dial callerId="${xml(line.number)}" timeout="30">` +
-      `${xml(to)}</Dial>`;
+    await markOnCall(uid, p.CallSid);
+    return `<Dial callerId="${xml(line.number)}" timeout="30" ` +
+      `action="${xml(voiceUrl({step: "outDone", fleet: manager.fleetId,
+        uid}))}" method="POST">${xml(to)}</Dial>`;
   }
 
   /* ----------------------------- operators --------------------------- */
@@ -519,6 +582,8 @@ module.exports = (deps) => {
     await db.collection("fleetManagers").doc(me.uid).update({
       phoneAvailable: available,
       phoneAvailableAt: new Date().toISOString(),
+      // Switching on or off starts clean (a closed browser can leave it).
+      phoneOnCall: FieldValue.delete(),
     });
     return {ok: true, available};
   });

@@ -145,7 +145,13 @@ step('operator picks up: answered by them; then completed with its length');
 await twilio({ step: 'answered', fleet: f.fleetId, call: 'CA1' }, { CallSid: 'CAchild', To: `client:fm_${opUid}`, CallStatus: 'in-progress' });
 c1 = await adminGet(`fleets/${f.fleetId}/phoneCalls/CA1`);
 assert.equal(c1.status, 'answered'); assert.equal(c1.answeredBy, opUid); assert.equal(c1.answeredByName, 'Olivia');
+step('while Olivia is on that call, the next call rings only the free operator (Sarfaraz: busy ones are skipped)');
+assert.equal((await adminGet(`fleetManagers/${opUid}`)).phoneOnCall.callSid, 'CA1');
+r = await twilio({ step: 'incoming' }, { From: '+447700900124', To: APP_NUMBER, CallSid: 'CA1b' });
+assert.match(r.body, new RegExp(`<Identity>fm_${ownerUid}</Identity>`)); assert.doesNotMatch(r.body, new RegExp(`fm_${opUid}`));
+await twilio({ step: 'status' }, { CallSid: 'CA1b', To: APP_NUMBER, CallStatus: 'completed' });
 r = await twilio({ step: 'after', fleet: f.fleetId, round: '1' }, { CallSid: 'CA1', DialCallStatus: 'completed', DialCallDuration: '95' });
+assert.equal((await adminGet(`fleetManagers/${opUid}`)).phoneOnCall, undefined, 'free again once the call ends');
 assert.match(r.body, /<Hangup\/>/);
 c1 = await adminGet(`fleets/${f.fleetId}/phoneCalls/CA1`);
 assert.equal(c1.status, 'completed'); assert.equal(c1.seconds, 95);
@@ -202,6 +208,10 @@ step('calling out from the dashboard: own customers and drivers only, shown as t
 r = await twilio({ step: 'outgoing' }, { CallSid: 'CA7', From: `client:fm_${opUid}`, To: '07700 900123' });
 assert.match(r.body, new RegExp(`<Dial callerId="\\${APP_NUMBER}"`)); assert.match(r.body, /\+447700900123<\/Dial>/);
 assert.equal((await adminGet(`fleets/${f.fleetId}/phoneCalls/CA7`)).direction, 'out');
+assert.equal((await adminGet(`fleetManagers/${opUid}`)).phoneOnCall.callSid, 'CA7', 'busy while calling out');
+await twilio({ step: 'outDone', fleet: f.fleetId, uid: opUid }, { CallSid: 'CA7', DialCallStatus: 'completed', DialCallDuration: '30' });
+assert.equal((await adminGet(`fleetManagers/${opUid}`)).phoneOnCall, undefined);
+assert.equal((await adminGet(`fleets/${f.fleetId}/phoneCalls/CA7`)).seconds, 30);
 r = await twilio({ step: 'outgoing' }, { CallSid: 'CA8', From: `client:fm_${opUid}`, To: '+447700900555' });
 assert.match(r.body, /Only your own customers and drivers/); assert.doesNotMatch(r.body, /<Dial/);
 r = await twilio({ step: 'outgoing' }, { CallSid: 'CA9', From: 'client:fm_nobody', To: '+447700900123' });
@@ -209,7 +219,7 @@ assert.match(r.body, /can&apos;t call from here/);
 
 step('call log for the office, newest first');
 const log = await OP.call('listFleetPhoneCalls', {});
-assert.equal(log.calls.length, 4, "CA1, CA2, CA3 in and CA7 out; refused and test calls are not logged"); assert.ok(log.calls[0].startedAt >= log.calls[log.calls.length - 1].startedAt);
+assert.equal(log.calls.length, 5, "CA1, CA1b, CA2, CA3 in and CA7 out; refused and test calls are not logged"); assert.ok(log.calls[0].startedAt >= log.calls[log.calls.length - 1].startedAt);
 
 step('a second fleet cannot borrow the app number; admin searches and buys it a number; release returns it');
 const f2 = await A.call('createFleet', { name: 'Time Taxis', ownerName: 'T', email: 'owner2@test.dev', phone: '07700900002' });
