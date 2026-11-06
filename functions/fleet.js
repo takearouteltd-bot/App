@@ -100,6 +100,9 @@ const DEFAULT_LEAD_MINUTES = 20;
 const MAX_LEAD_MINUTES = 180;
 const MAX_ZONES = 30;
 const DEFAULT_QUEUE_OFFER_SECONDS = 45;
+// An unanswered whole-fleet offer rings again every 2 minutes, 3 times.
+const RE_RING_MS = 2 * 60 * 1000;
+const MAX_RE_RINGS = 3;
 /* A driver whose phone has not reported a position for this long is left
    out of the queues (app closed, no signal). */
 const QUEUE_STALE_MS = 5 * 60 * 1000;
@@ -112,7 +115,8 @@ const MAX_INVOICE_LINES = 200;
 module.exports = (deps) => {
   const {functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
     hasExpiredDocument, toE164, toMillis, addOneMonth,
-    TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor} = deps;
+    TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor, STRIPE_SECRETS,
+    fleetBilling} = deps;
   const {HttpsError} = functions.https;
   // From the modular entry point: the functions emulator's stand-in for
   // admin.firestore does not carry FieldValue or Timestamp.
@@ -745,6 +749,15 @@ module.exports = (deps) => {
       throw new HttpsError("invalid-argument",
           "The monthly price per driver must be a number.");
     }
+    // How the fleet is billed: per company driver, or one flat amount.
+    const billingPlan = data && data.billingPlan === "monthly" ?
+      "monthly" : "per_driver";
+    const monthlyFee = billingPlan === "monthly" ?
+      Number(data && data.monthlyFee) : null;
+    if (billingPlan === "monthly" && !(monthlyFee >= 0)) {
+      throw new HttpsError("invalid-argument",
+          "Enter the fleet's monthly price.");
+    }
 
     let user;
     try {
@@ -772,6 +785,10 @@ module.exports = (deps) => {
       name, joinCode, status: "active",
       ownerName, ownerEmail: email, ownerUid: user.uid, phone,
       perDriverMonthly: price,
+      billingPlan,
+      monthlyFee: monthlyFee === null ? null :
+        Math.round(monthlyFee * 100) / 100,
+      billing: {status: "ok"},
       currency: cfg.currency,
       dispatchLeadMinutes: DEFAULT_LEAD_MINUTES,
       nextBillingDate: Timestamp.fromDate(addOneMonth(new Date())),
@@ -1796,6 +1813,7 @@ module.exports = (deps) => {
         "dispatch.returnedBy": FieldValue.delete(),
         "dispatch.queueDone": false,
         "dispatch.missed": [],
+        "dispatch.reRings": 0,
         // Sending to the whole fleet or the queue again: anyone who said no
         // before is asked again, since the operator chose to resend.
         "declinedBy": driverId ?
@@ -1803,6 +1821,163 @@ module.exports = (deps) => {
       });
     });
     return {ok: true};
+  });
+
+  /* The office changes a phone booking before any driver has accepted it:
+     customer, addresses, car type, time, price, payment and notes. A
+     changed route is priced again (or keeps the agreed price). A new time
+     moves the release time; a job already being offered that changes where
+     it goes is offered again from the start. */
+  out.editFleetBooking = functions.https.onCall(async (data, context) => {
+    const me = await assertFleetManager(context, false);
+    const d = data || {};
+    const rideRef = db.collection("rides").doc(text(d.rideId, 128) || "-");
+    const first = await rideRef.get();
+    const ride = first.exists ? first.data() : null;
+    if (!ride || ride.fleetId !== me.fleetId || ride.source !== "phone") {
+      throw new HttpsError("not-found", "Not one of your bookings.");
+    }
+    if (!["scheduled", "dispatching"].includes(ride.status) || ride.driverId) {
+      throw new HttpsError("failed-precondition",
+          "A driver has already accepted this job, so it can no longer be " +
+          "changed. Cancel it and book again if needed.");
+    }
+
+    const update = {};
+    // Customer.
+    if (d.customer) {
+      const phone = toE164(d.customer.phone) || ride.customer.phone;
+      update.customer = Object.assign({}, ride.customer, {
+        name: text(d.customer.name, 80), phone});
+    }
+    // Where and what.
+    const pickup = d.pickup ? point(d.pickup) : ride.pickupLocation;
+    const dropoff = d.dropoff ? point(d.dropoff) : ride.dropoffLocation;
+    const stops = d.stops ? d.stops.map(point).filter(Boolean).slice(0, 3) :
+      ride.stops || [];
+    if (!pickup || !dropoff) {
+      throw new HttpsError("invalid-argument",
+          "Choose a pickup and a drop-off.");
+    }
+    const rideType = CLASS_MULTIPLIERS[d.rideType] ? d.rideType :
+      ride.rideType;
+    const key = (p) => p ? `${p.latitude},${p.longitude}` : "";
+    const moved = key(pickup) !== key(ride.pickupLocation) ||
+      key(dropoff) !== key(ride.dropoffLocation) ||
+      stops.map(key).join("|") !== (ride.stops || []).map(key).join("|");
+    const priceGiven = d.agreedPrice !== undefined;
+    const agreed = priceGiven && d.agreedPrice !== null &&
+      d.agreedPrice !== "" ? Number(d.agreedPrice) : null;
+    if (agreed !== null && (!(agreed > 0) || agreed > 10000)) {
+      throw new HttpsError("invalid-argument",
+          "Enter a price above zero, or leave it empty.");
+    }
+    if (moved || rideType !== ride.rideType || priceGiven) {
+      const [route, raw] = await Promise.all([
+        routeFor(pickup, dropoff, stops), rawConfig()]);
+      let fare = fareFor(raw, route, rideType);
+      // Keep an agreed price unless the office cleared or changed it.
+      const keep = !priceGiven && ride.fare && ride.fare.agreedPrice === true ?
+        Number(ride.fare.total) : null;
+      const price = priceGiven ? agreed : keep;
+      if (price !== null) fare = fareAtAgreedPrice(fare, price);
+      Object.assign(update, {
+        pickupLocation: pickup, dropoffLocation: dropoff, stops, rideType,
+        route: {
+          distanceKm: Number(route.distanceKm.toFixed(2)),
+          distanceMiles: fare.distanceInMiles,
+          durationMinutes: Number(route.durationMinutes.toFixed(2)),
+          status: "calculated",
+        },
+        fare, fareEstimate: fare.total, currency: fare.currency,
+      });
+    }
+
+    // Payment and notes. The note prefix tells older driver apps how the
+    // money is taken, as on a new booking.
+    const collectBy = d.collectBy === undefined ? ride.collectBy || "cash" :
+      ["card", "account"].includes(d.collectBy) ? d.collectBy : "cash";
+    let account = ride.account || null;
+    if (collectBy === "account" && (d.accountId !== undefined || !account)) {
+      const accountId = text(d.accountId, 128) || (account && account.id);
+      const snap = accountId ? await fleetDoc(me.fleetId)
+          .collection("accounts").doc(accountId).get() : null;
+      if (!snap || !snap.exists || snap.data().active === false) {
+        throw new HttpsError("invalid-argument",
+            "Choose which account this job goes on.");
+      }
+      account = {id: snap.id, company: snap.data().company || ""};
+    }
+    if (collectBy !== "account") account = null;
+    const prefixes = new RegExp("^(ACCOUNT JOB for .*?: do not take " +
+        "payment\\.|CARD PAYMENT: take it on your terminal\\.)\\s*");
+    const plainNotes = d.notes !== undefined ? text(d.notes, 500) :
+      String(ride.notes || "").replace(prefixes, "");
+    const notePrefix = account ?
+      `ACCOUNT JOB for ${account.company}: do not take payment.` :
+      collectBy === "card" ? "CARD PAYMENT: take it on your terminal." : "";
+    Object.assign(update, {collectBy, account,
+      notes: `${notePrefix} ${plainNotes}`.trim()});
+
+    // Time and release.
+    const now = Date.now();
+    let pickupAtMs = toMillis(ride.pickupAt) || null;
+    if (d.pickupAt !== undefined) {
+      pickupAtMs = d.pickupAt ? Number(new Date(d.pickupAt)) : null;
+      if (pickupAtMs !== null && (!Number.isFinite(pickupAtMs) ||
+          pickupAtMs < now - 60 * 1000)) {
+        throw new HttpsError("invalid-argument",
+            "That pickup time is not valid or has passed.");
+      }
+      update.pickupAt = pickupAtMs === null ? null :
+        Timestamp.fromMillis(pickupAtMs);
+    }
+    const leadRaw = d.leadMinutes !== undefined ? Number(d.leadMinutes) :
+      (ride.dispatch || {}).leadMinutes;
+    const lead = Number.isFinite(Number(leadRaw)) ?
+      Math.min(MAX_LEAD_MINUTES, Math.max(0, Math.round(Number(leadRaw)))) :
+      DEFAULT_LEAD_MINUTES;
+    const dispatchAtMs = pickupAtMs === null ? now :
+      Math.max(now, pickupAtMs - lead * 60 * 1000);
+    const later = dispatchAtMs > now + 30 * 1000;
+    update.dispatchAt = Timestamp.fromMillis(dispatchAtMs);
+    update["dispatch.leadMinutes"] = lead;
+    update.editedAt = FieldValue.serverTimestamp();
+    update.editedBy = {uid: me.uid,
+      name: me.manager.name || me.manager.email || ""};
+
+    let resend = false;
+    if (later) {
+      update.status = "scheduled";
+      update["dispatch.offeredAt"] = null;
+    } else if (ride.status === "scheduled" || moved) {
+      // Due now, or the job now goes somewhere else: offer it afresh.
+      resend = true;
+      update.status = "dispatching";
+      update.declinedBy = [];
+      update["dispatch.missed"] = [];
+      update["dispatch.queueDone"] = false;
+      update["dispatch.reRings"] = 0;
+      update["dispatch.offeredAt"] = FieldValue.serverTimestamp();
+      update["dispatch.rounds"] = FieldValue.increment(1);
+      if ((ride.dispatch || {}).mode === "queue") {
+        update["dispatch.driverId"] = null;
+      }
+    }
+
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(rideRef);
+      const nowRide = snap.exists ? snap.data() : null;
+      if (!nowRide || !["scheduled", "dispatching"].includes(nowRide.status) ||
+          nowRide.driverId) {
+        throw new HttpsError("failed-precondition",
+            "A driver accepted this job while you were editing it.");
+      }
+      tx.update(rideRef, update);
+    });
+    return {rideId: rideRef.id, status: update.status || ride.status,
+      fare: update.fare ? update.fare.total : (ride.fare || {}).total,
+      resent: resend};
   });
 
   /* The office sends one of its drivers a short message. It arrives as a
@@ -2016,16 +2191,31 @@ module.exports = (deps) => {
         const rideId = context.params.rideId;
 
         // A driver gave the job back (the app sets status dispatching and
-        // driverId null). Do not ring the fleet by itself: the operator
-        // decides, so mark it for their attention.
+        // driverId null). Send it on by itself: the same queue carries on,
+        // a job sent to one named driver goes to the nearest free driver,
+        // and a whole-fleet job rings the fleet again. The driver who gave
+        // it back is not asked again. The office still sees who returned it
+        // and can resend or cancel.
         if (before && ["accepted", "arrived"].includes(before.status) &&
             after.status === "dispatching" && !after.driverId &&
             before.driverId) {
+          const old = after.dispatch || {};
+          const toQueue = old.mode === "queue" || old.mode === "driver";
           await change.after.ref.update({
+            "declinedBy": FieldValue.arrayUnion(before.driverId),
+            "dispatch.mode": toQueue ? "queue" : "all",
+            "dispatch.nearest": old.mode === "driver" ? true :
+              old.nearest === true,
             "dispatch.driverId": null,
+            "dispatch.queueDone": false,
             "dispatch.returnedBy": before.driverId,
             "dispatch.returnedAt": FieldValue.serverTimestamp(),
-            "dispatch.offeredAt": null,
+            "dispatch.autoResent": true,
+            "dispatch.reRings": 0,
+            // A queue picks the next driver itself; the whole fleet is rung
+            // when offeredAt changes.
+            "dispatch.offeredAt": toQueue ? null :
+              FieldValue.serverTimestamp(),
           });
           return null;
         }
@@ -2036,7 +2226,7 @@ module.exports = (deps) => {
         // them as not answering). offerNextInQueue writes the choice, which
         // brings us back here to ring them.
         const dispatch = after.dispatch || {};
-        if (dispatch.mode === "queue" && !dispatch.returnedBy) {
+        if (dispatch.mode === "queue") {
           const current = dispatch.driverId || null;
           const turnedDown = current &&
             (after.declinedBy || []).includes(current);
@@ -2135,6 +2325,41 @@ module.exports = (deps) => {
           });
         }
         if (moved) console.log(`Queue: ${moved} unanswered offer(s) moved on`);
+
+        // Whole-fleet offers nobody answered ring again, a few times, so a
+        // job does not sit waiting for the office to notice it. New drivers
+        // who came online in the meantime are included.
+        const open = await db.collection("rides")
+            .where("status", "==", "dispatching")
+            .where("source", "==", "phone")
+            .limit(300).get();
+        let rung = 0;
+        for (const doc of open.docs) {
+          const ride = doc.data();
+          const d = ride.dispatch || {};
+          const toFleet = d.mode === "all" ||
+            (d.mode === "queue" && d.queueDone === true && !d.driverId);
+          const offered = toMillis(d.offeredAt);
+          if (!toFleet || !offered || (d.reRings || 0) >= MAX_RE_RINGS ||
+              Date.now() - offered < RE_RING_MS) {
+            continue;
+          }
+          await db.runTransaction(async (tx) => {
+            const snap = await tx.get(doc.ref);
+            const now = snap.exists ? snap.data() : null;
+            if (!now || now.status !== "dispatching" ||
+                toMillis((now.dispatch || {}).offeredAt) !== offered) {
+              return;
+            }
+            tx.update(doc.ref, {
+              "dispatch.offeredAt": FieldValue.serverTimestamp(),
+              "dispatch.reRings": FieldValue.increment(1),
+            });
+          }).then(() => rung++).catch((error) => {
+            console.error("Re-ring failed:", doc.id, error.message);
+          });
+        }
+        if (rung) console.log(`Re-rang ${rung} unanswered fleet job(s)`);
         return null;
       });
 
@@ -2168,7 +2393,7 @@ module.exports = (deps) => {
      fleet on its billing date (self-employed drivers pay their own), taken
      from the fleet's wallet. The wallet may go below zero; the admin
      settles that with the fleet. */
-  out.billFleets = functions.pubsub
+  out.billFleets = functions.runWith({secrets: STRIPE_SECRETS}).pubsub
       .schedule("every day 06:30").timeZone("Europe/London")
       .onRun(async () => {
         const cfg = await loadAppConfig();
@@ -2177,16 +2402,15 @@ module.exports = (deps) => {
         for (const doc of due.docs) {
           const fleet = doc.data();
           if (fleet.status === "suspended") continue;
-          const price = fleet.perDriverMonthly !== null &&
-            fleet.perDriverMonthly !== undefined &&
-            Number(fleet.perDriverMonthly) >= 0 ?
-            Number(fleet.perDriverMonthly) : cfg.subscription.monthlyPrice;
           const members = await db.collection("drivers")
               .where("fleetId", "==", doc.id).get();
           const drivers = {docs: members.docs.filter((d) =>
             fleetTypeOf(d.data()) === "company")};
           const count = drivers.docs.length;
-          const amount = Math.round(count * price * 100) / 100;
+          // Per driver, or the fleet's flat monthly price (fleetBilling.js).
+          const bill = fleetBilling.billFor(fleet, count, cfg);
+          const amount = bill.amount;
+          const price = bill.price;
           const walletRef = db.collection("fleetWallets").doc(doc.id);
           await db.runTransaction(async (tx) => {
             const fresh = await tx.get(doc.ref);
@@ -2202,13 +2426,19 @@ module.exports = (deps) => {
             }, {merge: true});
             tx.set(walletRef.collection("transactions").doc(), {
               type: "membership", amount: -amount, drivers: count,
-              pricePerDriver: price,
+              plan: fleet.billingPlan === "monthly" ? "monthly" : "per_driver",
+              pricePerDriver: fleet.billingPlan === "monthly" ? null : price,
               driverIds: drivers.docs.map((d) => d.id),
-              description: `Membership: ${count} driver(s) x ${price}`,
+              description: bill.description,
               createdAt: FieldValue.serverTimestamp(),
             });
           });
           console.log(`Fleet ${doc.id} billed ${amount} for ${count}`);
+          // Anything the wallet could not cover goes on the saved card; no
+          // card or a declined card starts the grace period.
+          const paid = await fleetBilling.chargeShortfall(doc.id)
+              .catch((error) => `error: ${error.message}`);
+          console.log(`Fleet ${doc.id} billing: ${paid}`);
         }
         return null;
       });

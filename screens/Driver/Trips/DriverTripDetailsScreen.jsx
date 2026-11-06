@@ -7,6 +7,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 import { currencySymbol } from '../../../utils/appConfig';
 import { STATUS_LABEL, STATUS_PILL } from '../../../components/trips/TripsList';
+import EmailReceiptButton from '../../../components/EmailReceiptButton';
 import {
   COLORS, TYPE, SPACE, RADIUS,
   Screen, ScreenHeader, Card, Section, Avatar, Button, RouteLine, StatRow, StatusPill, Skeleton,
@@ -210,11 +211,23 @@ export default function DriverTripDetailsScreen() {
         </Card>
       </Section>
 
+      {/* Receipt for the driver's records, or to pass to the passenger. */}
+      {status === 'completed' && trip.id ? (
+        <EmailReceiptButton
+          rideId={trip.id}
+          callable="emailDriverReceipt"
+          style={{ marginTop: SPACE[7] }}
+          intro={trip.fleetName
+            ? `A receipt from ${trip.fleetName}. Send it to your own email, or to the passenger.`
+            : 'Send it to your own email, or to the passenger.'}
+        />
+      ) : null}
+
       <Button
         title="Report an Issue"
         icon="warning-outline"
         variant="danger"
-        style={{ marginTop: SPACE[7] }}
+        style={{ marginTop: status === 'completed' && trip.id ? SPACE[3] : SPACE[7] }}
         onPress={() => navigation.navigate('ReportIssueScreen', {
           trip: trip,
           reporterType: 'driver'

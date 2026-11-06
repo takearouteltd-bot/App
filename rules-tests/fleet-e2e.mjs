@@ -99,10 +99,12 @@ r1 = (await getDoc(doc(D.db, 'rides', b1.rideId))).data();
 assert.equal(r1.dispatch.driverId, null); assert.deepEqual(r1.declinedBy, []); assert.equal(r1.dispatch.rounds, 2);
 await updateDoc(doc(D2.db, 'rides', b1.rideId), claim(d2.user.uid));
 
-step('driver 2 gives it back: office is told, not re-broadcast');
+step('driver 2 gives it back: sent on to the fleet by itself, without driver 2; office still sees who returned it');
 await updateDoc(doc(D2.db, 'rides', b1.rideId), { status: 'dispatching', driverId: null, acceptedAt: null, declinedBy: arrayUnion(d2.user.uid) });
 r1 = await until(async () => { const r = (await getDoc(doc(D.db, 'rides', b1.rideId))).data(); return r.dispatch.returnedBy ? r : null; }, 'returnedBy');
 assert.equal(r1.dispatch.returnedBy, d2.user.uid);
+assert.equal(r1.dispatch.autoResent, true); assert.equal(r1.dispatch.mode, 'all');
+assert.ok(r1.dispatch.offeredAt, 'rung again'); assert.ok(r1.declinedBy.includes(d2.user.uid));
 
 step('driver 1 takes it from the fleet broadcast, does the trip, completes in cash');
 await O.call('redispatchFleetBooking', { rideId: b1.rideId, driverId: d1.user.uid });
@@ -123,6 +125,63 @@ await O.call('redispatchFleetBooking', { rideId: b2.rideId });
 assert.equal((await getDoc(doc(O.db, 'rides', b2.rideId))).data().status, 'dispatching');
 await O.call('cancelFleetBooking', { rideId: b2.rideId });
 assert.equal((await getDoc(doc(O.db, 'rides', b2.rideId))).data().cancelledBy, 'operator');
+
+step('release time: a booking 3 h ahead released 45 min before pickup');
+const pick3h = Date.now() + 3 * 3600 * 1000;
+const be = await O.call('createFleetBooking', { customer: { phone: '07700900555', name: 'Eve' }, pickup: T5, dropoff: PAD, pickupAt: new Date(pick3h).toISOString(), leadMinutes: 45 });
+let re = (await getDoc(doc(O.db, 'rides', be.rideId))).data();
+assert.equal(be.status, 'scheduled'); assert.equal(re.dispatch.leadMinutes, 45);
+assert.ok(Math.abs(re.dispatchAt.toMillis() - (pick3h - 45 * 60000)) < 2000, 'dispatchAt = pickup - 45 min');
+
+step('office changes the booking before acceptance: new drop-off, time, release time, price, payment and notes');
+const fareBefore = re.fare.total;
+const pick4h = Date.now() + 4 * 3600 * 1000;
+const ed = await O.call('editFleetBooking', { rideId: be.rideId, customer: { phone: '07700900555', name: 'Eve Adams' }, dropoff: { latitude: 51.5033, longitude: -0.1195, address: 'London Eye' }, pickupAt: new Date(pick4h).toISOString(), leadMinutes: 30, collectBy: 'card', notes: 'Two bags' });
+re = (await getDoc(doc(O.db, 'rides', be.rideId))).data();
+assert.equal(ed.status, 'scheduled'); assert.equal(re.dropoffLocation.address, 'London Eye');
+assert.notEqual(re.fare.total, fareBefore, 'priced again'); assert.equal(re.customer.name, 'Eve Adams');
+assert.equal(re.dispatch.leadMinutes, 30);
+assert.ok(Math.abs(re.dispatchAt.toMillis() - (pick4h - 30 * 60000)) < 2000);
+assert.equal(re.collectBy, 'card'); assert.equal(re.notes, 'CARD PAYMENT: take it on your terminal. Two bags');
+assert.ok(re.editedBy && re.editedBy.uid);
+await O.call('editFleetBooking', { rideId: be.rideId, agreedPrice: 70, notes: 'Two bags, one child seat' });
+re = (await getDoc(doc(O.db, 'rides', be.rideId))).data();
+assert.equal(re.fare.total, 70); assert.equal(re.fare.agreedPrice, true);
+assert.equal(re.notes, 'CARD PAYMENT: take it on your terminal. Two bags, one child seat', 'prefix not doubled');
+await O.call('editFleetBooking', { rideId: be.rideId, collectBy: 'cash' });
+re = (await getDoc(doc(O.db, 'rides', be.rideId))).data();
+assert.equal(re.fare.total, 70, 'agreed price kept'); assert.equal(re.notes, 'Two bags, one child seat');
+await assert.rejects(D.call('editFleetBooking', { rideId: be.rideId, notes: 'x' }), /Fleet staff only/);
+
+step('due now after a change: offered afresh; once a driver accepts it can no longer be changed');
+await O.call('editFleetBooking', { rideId: be.rideId, pickupAt: null });
+re = (await getDoc(doc(O.db, 'rides', be.rideId))).data();
+assert.equal(re.status, 'dispatching'); assert.ok(re.dispatch.offeredAt);
+await updateDoc(doc(D.db, 'rides', be.rideId), claim(d1.user.uid));
+await assert.rejects(O.call('editFleetBooking', { rideId: be.rideId, notes: 'late change' }), /already accepted/);
+await O.call('cancelFleetBooking', { rideId: be.rideId });
+
+step('a job for one named driver who gives it back goes to the nearest other free driver');
+const bnd = await O.call('createFleetBooking', { customer: { phone: '07700900444', name: 'Nia' }, pickup: T5, dropoff: PAD, driverId: d1.user.uid });
+await updateDoc(doc(D.db, 'rides', bnd.rideId), claim(d1.user.uid));
+await updateDoc(doc(D.db, 'rides', bnd.rideId), { status: 'dispatching', driverId: null, acceptedAt: null });
+let rnd = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', bnd.rideId))).data(); return r.dispatch.mode === 'queue' && r.dispatch.driverId ? r : null; }, 'next driver');
+assert.equal(rnd.dispatch.mode, 'queue'); assert.equal(rnd.dispatch.nearest, true);
+assert.equal(rnd.dispatch.driverId, d2.user.uid, 'nearest other driver'); assert.ok(rnd.declinedBy.includes(d1.user.uid));
+await O.call('cancelFleetBooking', { rideId: bnd.rideId });
+
+step('company driver cannot withdraw (fleet pays them); driver receipt: own trips only');
+await assert.rejects(D.call('requestDriverPayout', { amount: 20 }), /paid to Star Cars/);
+await assert.rejects(D2.call('emailDriverReceipt', { rideId: b1.rideId, email: 'me@test.dev' }), /not your trip/);
+// Resend is not set up in the emulator: getting this far means the checks passed.
+await assert.rejects(D.call('emailDriverReceipt', { rideId: b1.rideId, email: 'me@test.dev' }), /not switched on/);
+
+step('admin creates a fleet on a flat monthly plan; a monthly plan needs its price');
+await assert.rejects(A.call('createFleet', { name: 'Flat Cars', ownerName: 'F', email: 'flat@test.dev', billingPlan: 'monthly' }), /monthly price/);
+const flat = await A.call('createFleet', { name: 'Flat Cars', ownerName: 'F', email: 'flat@test.dev', billingPlan: 'monthly', monthlyFee: 499 });
+const flatDoc = (await getDoc(doc(A.db, 'fleets', flat.fleetId))).data();
+assert.equal(flatDoc.billingPlan, 'monthly'); assert.equal(flatDoc.monthlyFee, 499); assert.equal(flatDoc.billing.status, 'ok');
+assert.equal((await getDoc(doc(A.db, 'fleets', created.fleetId))).data().billingPlan, 'per_driver');
 
 step('pre-booking due in 1 min goes out on its own (scheduler)');
 const b3 = await O.call('createFleetBooking', { customer: { phone: '07700900888', name: 'Bob' }, pickup: T5, dropoff: PAD, pickupAt: new Date(Date.now() + 60 * 1000 + 20 * 60 * 1000).toISOString(), leadMinutes: 20 });

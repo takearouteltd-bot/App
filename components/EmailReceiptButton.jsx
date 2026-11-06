@@ -7,7 +7,12 @@ import { httpsCallable } from 'firebase/functions';
 import { functions } from '../config/firebase';
 import { COLORS, TYPE, SPACE, Button, Field, Sheet } from './ui/kit';
 
-export default function EmailReceiptButton({ rideId, style, variant = 'secondary', title = 'Email receipt' }) {
+// callable: resendRideReceipt (passenger) or emailDriverReceipt (driver).
+export default function EmailReceiptButton({
+  rideId, style, variant = 'secondary', title = 'Email receipt',
+  callable = 'resendRideReceipt',
+  intro = 'We will send it to the email on your account, or to another address if you prefer.',
+}) {
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState('');
   const [sending, setSending] = useState(false);
@@ -16,11 +21,11 @@ export default function EmailReceiptButton({ rideId, style, variant = 'secondary
     if (sending || !rideId) return;
     setSending(true);
     try {
-      const call = httpsCallable(functions, 'resendRideReceipt');
+      const call = httpsCallable(functions, callable);
       const result = await call(to ? { rideId, email: to } : { rideId });
       setOpen(false);
       setEmail('');
-      Alert.alert('Receipt sent', `We have emailed your receipt to ${result?.data?.to || 'your email address'}.`);
+      Alert.alert('Receipt sent', `We have emailed the receipt to ${result?.data?.to || 'your email address'}.`);
     } catch (error) {
       Alert.alert('Not sent', error?.message || 'Please try again in a moment.');
     } finally {
@@ -37,7 +42,7 @@ export default function EmailReceiptButton({ rideId, style, variant = 'secondary
         <Sheet>
           <Text style={TYPE.title}>Email receipt</Text>
           <Text style={[TYPE.small, { marginTop: SPACE[1], marginBottom: SPACE[5] }]}>
-            We will send it to the email on your account, or to another address if you prefer.
+            {intro}
           </Text>
 
           <Button title="Send to my email" icon="mail-outline" loading={sending} onPress={() => send(null)} />

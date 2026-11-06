@@ -240,14 +240,17 @@ export default function EarningsScreen() {
           ]}
         />
 
-        <Button
-          title="Withdraw to bank"
-          variant="accent"
-          icon="wallet-outline"
-          style={styles.withdrawBtn}
-          disabled={totalBalance <= 0 || totalBalance < minimumPayout}
-          onPress={() => navigation.navigate('WithdrawScreen')}
-        />
+        {/* Company drivers are paid by their fleet, so no withdrawals. */}
+        {fleetName ? null : (
+          <Button
+            title="Withdraw to bank"
+            variant="accent"
+            icon="wallet-outline"
+            style={styles.withdrawBtn}
+            disabled={totalBalance <= 0 || totalBalance < minimumPayout}
+            onPress={() => navigation.navigate('WithdrawScreen')}
+          />
+        )}
       </Card>
 
       {fleetName ? (
@@ -256,7 +259,7 @@ export default function EarningsScreen() {
             tone="info"
             icon="people-outline"
             title={`You drive for ${fleetName}`}
-            body={`Card fares from now on go to ${fleetName}, who pay you, and they pay your membership. See what they owe you under Account > Fleet > My statement. Anything already in your balance above is still yours to withdraw.`}
+            body={`Your fares go to ${fleetName}, who pay you, and they pay your membership. Withdrawals are not available while you drive for a fleet. See what they owe you under Account > Fleet > My statement.`}
           />
         </View>
       ) : null}

@@ -13,6 +13,7 @@ import EmergencyContactScreen from "../../screens/Safety/EmergencyContactScreen"
 import DriverDocumentsScreen from "../../screens/Driver/Documents/DriverDocumentsScreen";
 import DriverFleetScreen from "../../screens/Driver/Fleet/DriverFleetScreen";
 import DriverStatementScreen from "../../screens/Driver/Fleet/DriverStatementScreen";
+import DriverTripDetailsScreen from "../../screens/Driver/Trips/DriverTripDetailsScreen";
 
 const Stack = createNativeStackNavigator();
 
@@ -27,6 +28,7 @@ export default function DriverProfileStack() {
       <Stack.Screen name="DriverDocuments" component={DriverDocumentsScreen} />
       <Stack.Screen name="DriverFleet" component={DriverFleetScreen} />
       <Stack.Screen name="DriverStatement" component={DriverStatementScreen} />
+      <Stack.Screen name="DriverTripDetails" component={DriverTripDetailsScreen} />
       <Stack.Screen name="MyReports" component={MyReportsScreen} initialParams={{ role: "driver" }} />
       <Stack.Screen name="ReportDetail" component={ReportDetailScreen} />
       <Stack.Screen name="ReportIssueScreen" component={ReportIssueScreen} initialParams={{ reporterType: "driver" }} />

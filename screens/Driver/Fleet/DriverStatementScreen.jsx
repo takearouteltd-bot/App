@@ -3,7 +3,9 @@
 // fleet, their jobs and the payments the fleet recorded. Read only. The same
 // figures the fleet sees on its dashboard (functions/fleet.js settleFleetJob).
 import React, { useEffect, useState } from 'react';
-import { Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
 import { getAuth } from 'firebase/auth';
 import { collection, doc, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
@@ -43,6 +45,7 @@ function balanceBanner(owed, fleetName) {
 }
 
 export default function DriverStatementScreen() {
+  const navigation = useNavigation();
   const uid = getAuth().currentUser?.uid;
   const [driver, setDriver] = useState(undefined);
   const [account, setAccount] = useState({});
@@ -106,7 +109,13 @@ export default function DriverStatementScreen() {
             {shown.map((r, i) => {
               const s = r.settlement;
               return (
-                <View key={r.id}>
+                <Pressable
+                  key={r.id}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open trip details and receipt"
+                  onPress={() => navigation.navigate('DriverTripDetails', { trip: r })}
+                  style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+                >
                   {i > 0 ? <Divider style={{ marginVertical: SPACE[3] }} /> : null}
                   <Text style={TYPE.small}>{formatWhen(r.completedAt || r.timestamps?.completedAt || r.timestamps?.createdAt)}</Text>
                   <Text style={[TYPE.body, { marginTop: SPACE[1] }]} numberOfLines={2}>{place(r.pickupLocation)} to {place(r.dropoffLocation)}</Text>
@@ -117,7 +126,11 @@ export default function DriverStatementScreen() {
                     <Text style={TYPE.small}>{pounds(s.farePence)}, commission {pounds(s.commissionPence)}</Text>
                     <Text style={[TYPE.body, { color: s.balancePence < 0 ? COLORS.red : COLORS.midnight }]}>{s.balancePence > 0 ? '+' : ''}{pounds(s.balancePence)}</Text>
                   </View>
-                </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: SPACE[1] }}>
+                    <Text style={[TYPE.small, { color: COLORS.inkSoft }]}>Details and receipt</Text>
+                    <Ionicons name="chevron-forward" size={14} color={COLORS.inkSoft} />
+                  </View>
+                </Pressable>
               );
             })}
           </Card>

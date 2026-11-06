@@ -48,6 +48,14 @@ const stripe = new Proxy({}, {
   get: (target, prop) => getStripe()[prop],
 });
 
+// Fleet subscriptions: plans, card payments, grace period and pause.
+// loadAppConfig and toMillis are function declarations further down.
+const fleetBilling = require("./fleetBilling")({
+  functions, db, stripe, STRIPE_SECRETS,
+  loadAppConfig: (...a) => loadAppConfig(...a),
+  toMillis: (...a) => toMillis(...a),
+});
+
 /* ======================================
    ADMIN SETTINGS (config/app)
    Edited on the dashboard Settings page. Every value falls back to the
@@ -1033,6 +1041,8 @@ exports.stripeWebhook = functions
           // PAYMENT SUCCESS
           // ===========================
           case "payment_intent.succeeded": {
+            // A fleet paying its subscription (fleetBilling.js).
+            if (await fleetBilling.handleWebhookPayment(object)) break;
             if (!rideId) break;
 
             // Deliberately does NOT touch walletProcessed. That field is the
@@ -1614,6 +1624,17 @@ exports.requestDriverPayout = functions
 
       const walletRef = db.collection("driverWallets").doc(driverId);
       const driverRef = db.collection("drivers").doc(driverId);
+
+      // Company drivers in a fleet are paid by their fleet: their earnings
+      // go to the fleet's wallet, so they cannot withdraw here.
+      // Self-employed drivers (fleetDriverType "self") withdraw as normal.
+      const who = await driverRef.get();
+      if (who.exists && who.data().fleetId &&
+          who.data().fleetDriverType !== "self") {
+        throw new functions.https.HttpsError("failed-precondition",
+            `Your earnings are paid to ${who.data().fleetName ||
+              "your fleet"}. Please speak to your fleet about payment.`);
+      }
 
       try {
         const result = await db.runTransaction(async (transaction) => {
@@ -3403,6 +3424,21 @@ function escapeHtml(value) {
 }
 
 /**
+ * How the fare was paid, in words, for the receipt.
+ * @param {Object} ride Ride document.
+ * @return {string} One sentence.
+ */
+function paidLine(ride) {
+  if (ride.collectBy === "account") {
+    return `Charged to the ${(ride.account && ride.account.company) ||
+      "company"} account.`;
+  }
+  if (ride.collectBy === "card") return "Paid by card to the driver.";
+  if (ride.paymentMethod === "cash") return "Paid in cash to the driver.";
+  return `Paid by card ending ${ride.cardLast4 || "on file"}.`;
+}
+
+/**
  * Builds the receipt email.
  * @param {Object} ride Ride document.
  * @param {string} rideId Ride id.
@@ -3461,7 +3497,9 @@ function buildReceipt(ride, rideId, extra) {
   font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
   <div style="max-width:560px;margin:0 auto;padding:24px 16px;">
     <div style="background:#0B0F1A;border-radius:24px;padding:24px;">
-      <div style="color:#AEB5C4;font-size:14px;">TakeARoute receipt</div>
+      <div style="color:#AEB5C4;font-size:14px;">
+        ${extra.fleetName ? escapeHtml(extra.fleetName) + " &middot; " : ""}
+        TakeARoute receipt</div>
       <div style="color:#B8F03A;font-size:34px;font-weight:800;margin-top:6px;">
         ${escapeHtml(emailMoney(total, currency))}</div>
       <div style="color:#AEB5C4;font-size:13px;margin-top:4px;">
@@ -3492,8 +3530,7 @@ function buildReceipt(ride, rideId, extra) {
         </tr>
       </table>
       <div style="color:#6B7280;font-size:13px;margin-top:12px;">
-        ${ride.paymentMethod === "cash" ? "Paid in cash to your driver." :
-    `Paid by card ending ${escapeHtml(ride.cardLast4 || "on file")}.`}
+        ${escapeHtml(paidLine(ride))}
       </div>
     </div>
 
@@ -3516,7 +3553,9 @@ function buildReceipt(ride, rideId, extra) {
 </body></html>`;
 
   const text = [
-    `TakeARoute receipt, ${date} ${time}`,
+    `${extra.fleetName ? extra.fleetName + " / " : ""}TakeARoute receipt, ` +
+      `${date} ${time}`,
+    paidLine(ride),
     `${pickup} to ${dropoff}`,
     ...lines.map((l) => `${l.label}: ${l.value}`),
     `Total paid: ${emailMoney(total, currency)}`,
@@ -3581,7 +3620,8 @@ async function emailRideReceipt(rideId, ride, to) {
     driverName: driver.fullName ||
       [driver.firstName, driver.lastName].filter(Boolean).join(" "),
     vehicle,
-    riderName: rider.fullName || "",
+    riderName: rider.fullName || (ride.customer && ride.customer.name) || "",
+    fleetName: ride.fleetName || "",
   });
 
   const response = await fetch("https://api.resend.com/emails", {
@@ -3606,10 +3646,12 @@ async function emailRideReceipt(rideId, ride, to) {
     return {sent: false, reason: "send_failed"};
   }
 
-  await db.collection("rides").doc(rideId).update({
-    receiptSentAt: admin.firestore.FieldValue.serverTimestamp(),
-    receiptSentTo: address,
-  }).catch(() => null);
+  if (!ride.receiptForDriver) {
+    await db.collection("rides").doc(rideId).update({
+      receiptSentAt: admin.firestore.FieldValue.serverTimestamp(),
+      receiptSentTo: address,
+    }).catch(() => null);
+  }
   return {sent: true, to: address};
 }
 
@@ -3678,6 +3720,52 @@ exports.resendRideReceipt = functions
       return result;
     });
 
+
+/* A driver emails the receipt for one of their finished trips, to
+   themselves or to the customer (e.g. a phone booking's passenger). It
+   shows the fleet's name when the job came through a fleet. */
+exports.emailDriverReceipt = functions
+    .runWith({secrets: RECEIPT_SECRETS})
+    .https.onCall(async (data, context) => {
+      const {HttpsError} = functions.https;
+      if (!context.auth) throw new HttpsError("unauthenticated", "Sign in.");
+      const rideId = data && typeof data.rideId === "string" ?
+        data.rideId.slice(0, 128) : "";
+      const snap = rideId ? await db.collection("rides").doc(rideId).get() :
+        null;
+      if (!snap || !snap.exists) {
+        throw new HttpsError("not-found", "Trip not found.");
+      }
+      const ride = snap.data();
+      if (ride.driverId !== context.auth.uid) {
+        throw new HttpsError("permission-denied", "This is not your trip.");
+      }
+      if (ride.status !== "completed") {
+        throw new HttpsError("failed-precondition",
+            "A receipt is only available once the trip is finished.");
+      }
+      let to = data && data.email ? String(data.email).trim() : "";
+      if (!to) {
+        const user = await admin.auth().getUser(context.auth.uid)
+            .catch(() => null);
+        to = (user && user.email) || "";
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+        throw new HttpsError("invalid-argument",
+            "Enter the email address to send it to.");
+      }
+      // Receipt bookkeeping fields belong to the passenger's copy; a
+      // driver's copy does not change them.
+      const result = await emailRideReceipt(rideId,
+          Object.assign({}, ride, {receiptForDriver: true}), to);
+      if (!result.sent) {
+        throw new HttpsError("failed-precondition",
+            result.reason === "not_configured" ?
+              "Receipts are not switched on yet." :
+              "The receipt could not be sent. Please try again.");
+      }
+      return {sent: true, to};
+    });
 
 /* ======================================
    MASKED CALLING (Twilio)
@@ -4093,8 +4181,10 @@ exports.detectDocumentExpiry = functions
 /* ======================================
    FLEETS AND PHONE BOOKINGS (fleet.js)
 ====================================== */
+Object.assign(exports, fleetBilling.functions);
 Object.assign(exports, require("./fleet")({
   functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
   hasExpiredDocument, toE164, toMillis, addOneMonth,
   TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor,
+  STRIPE_SECRETS, fleetBilling,
 }));
