@@ -3226,5 +3226,10 @@ module.exports = (deps) => {
     return {status};
   });
 
+  /* The fleet office phone (fleetPhone.js). */
+  Object.assign(out, require("./fleetPhone")({functions, db, toE164,
+    TWILIO_SECRETS, twilioConfig, assertFleetManager, assertAdmin,
+    findRiderByPhone, findDriversByPhone, phoneFor, text, FieldValue}));
+
   return out;
 };
