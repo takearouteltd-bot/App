@@ -221,6 +221,14 @@ step('call log for the office, newest first');
 const log = await OP.call('listFleetPhoneCalls', {});
 assert.equal(log.calls.length, 5, "CA1, CA1b, CA2, CA3 in and CA7 out; refused and test calls are not logged"); assert.ok(log.calls[0].startedAt >= log.calls[log.calls.length - 1].startedAt);
 
+step('monthly phone totals per fleet: minutes rounded up per call, hold included, missed counted, never twice');
+await twilio({ step: 'status' }, { CallSid: 'CA1', To: APP_NUMBER, CallStatus: 'completed', CallDuration: '120' });
+await twilio({ step: 'status' }, { CallSid: 'CA1', To: APP_NUMBER, CallStatus: 'completed', CallDuration: '120' });
+await twilio({ step: 'status' }, { CallSid: 'CA2', To: APP_NUMBER, CallStatus: 'completed', CallDuration: '130' });
+const month = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit' }).format(new Date()).slice(0, 7);
+const usage = (await adminGet(`fleets/${f.fleetId}`)).phoneUsage[month];
+assert.deepEqual({ calls: usage.calls, inMinutes: usage.inMinutes, outMinutes: usage.outMinutes, missed: usage.missed }, { calls: 5, inMinutes: 5, outMinutes: 1, missed: 3 });
+
 step('a second fleet cannot borrow the app number; admin searches and buys it a number; release returns it');
 const f2 = await A.call('createFleet', { name: 'Time Taxis', ownerName: 'T', email: 'owner2@test.dev', phone: '07700900002' });
 await assert.rejects(A.call('adminFleetPhoneUseAppNumber', { fleetId: f2.fleetId }), /already uses/);

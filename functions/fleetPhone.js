@@ -275,6 +275,31 @@ module.exports = (deps) => {
     }).catch((e) => console.error("markOnCall", uid, e.message));
   }
 
+  /**
+   * Adds a finished call to the fleet's monthly phone totals
+   * (fleets/{id}.phoneUsage["2026-11"]), in UK months. Minutes are per
+   * call rounded up, as Twilio bills them; an incoming call counts from
+   * the moment it reached us, so waiting on hold is included.
+   * @param {string} fleetId Fleet.
+   * @param {Object} add {direction, seconds, missed}
+   * @return {Promise<void>}
+   */
+  async function addUsage(fleetId, add) {
+    if (!fleetId) return;
+    const month = new Intl.DateTimeFormat("en-CA", {timeZone: "Europe/London",
+      year: "numeric", month: "2-digit"}).format(new Date()).slice(0, 7);
+    const seconds = Math.max(0, Number(add.seconds) || 0);
+    const minutes = seconds ? Math.ceil(seconds / 60) : 0;
+    const key = `phoneUsage.${month}`;
+    const inbound = add.direction !== "out";
+    await db.collection("fleets").doc(fleetId).update({
+      [`${key}.calls`]: FieldValue.increment(1),
+      [`${key}.${inbound ? "inMinutes" : "outMinutes"}`]:
+        FieldValue.increment(minutes),
+      [`${key}.missed`]: FieldValue.increment(add.missed ? 1 : 0),
+    }).catch((e) => console.error("addUsage", fleetId, e.message));
+  }
+
   const callRef = (fleetId, callSid) => db.collection("fleets").doc(fleetId)
       .collection("phoneCalls").doc(callSid);
 
@@ -310,10 +335,17 @@ module.exports = (deps) => {
           }
           if (step === "outgoing") return send(await outgoing(tw, p));
           if (step === "outDone") {
+            const fleetId = String(req.query.fleet || "");
             await markOnCall(String(req.query.uid || ""), null, p.CallSid);
-            await callRef(String(req.query.fleet || ""), p.CallSid).set({
-              seconds: Number(p.DialCallDuration) || 0,
-              endedAt: new Date().toISOString()}, {merge: true});
+            const outRef = callRef(fleetId, p.CallSid);
+            const before = (await outRef.get()).data() || {};
+            await outRef.set({seconds: Number(p.DialCallDuration) || 0,
+              endedAt: new Date().toISOString(), counted: true},
+            {merge: true});
+            if (!before.counted) {
+              await addUsage(fleetId, {direction: "out",
+                seconds: Number(p.DialCallDuration) || 0});
+            }
             return send("<Hangup/>");
           }
           if (step === "test") return send("<Pause length=\"20\"/>");
@@ -506,6 +538,13 @@ module.exports = (deps) => {
     const snap = await ref.get();
     if (!snap.exists) return;
     const c = snap.data();
+    if (!c.counted) {
+      await ref.update({counted: true, callSeconds: Number(p.CallDuration) ||
+        0});
+      await addUsage(found.id, {direction: "in",
+        seconds: Number(p.CallDuration) || 0,
+        missed: c.status === "ringing" || c.status === "missed"});
+    }
     if (c.status === "ringing") {
       await ref.update({status: "missed", endedAt: new Date().toISOString(),
         hungUpWaiting: true});
