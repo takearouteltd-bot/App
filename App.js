@@ -14,6 +14,7 @@ import DriverNavigator from "./navigation/DriverNavigator";
 import { StripeProvider } from "@stripe/stripe-react-native";
 import SplashScreen from "./Splash/SplashScreen";
 import { AlertHost } from "./components/ui/alert";
+import { confirmDeleteAccount } from "./utils/deleteAccount";
 import * as NativeSplash from "expo-splash-screen";
 import { startAppConfigSync } from "./utils/appConfig";
 import {
@@ -146,7 +147,7 @@ export default function App() {
         (snap) => {
           const data = snap.exists() ? snap.data() : null;
           setIsBlocked(data?.blocked === true);
-          setBlockInfo(data?.blocked === true ? { reason: data.blockedReason || '', byFleet: Boolean(data.blockedByFleet), fleetName: data.fleetName || '' } : null);
+          setBlockInfo(data?.blocked === true ? { reason: data.blockedReason || '', byFleet: Boolean(data.blockedByFleet), fleetName: data.fleetName || '', kind: data.blockedKind || '' } : null);
 
           if (role === "rider") {
             if (!data || !data.fullName) {
@@ -329,15 +330,26 @@ export default function App() {
           Account suspended
         </Text>
         <Text style={[TYPE.body, { color: COLORS.muted, textAlign: "center", marginBottom: SPACE[6] }]}>
-          {blockInfo?.byFleet
-            ? `${blockInfo.fleetName || 'Your fleet'} has suspended your account for breaking the terms and conditions.`
-            : 'Your TakeARoute account has been suspended for breaking the terms and conditions.'}
-          {blockInfo?.reason ? ` Reason: ${blockInfo.reason}.` : ''}
-          {blockInfo?.byFleet
-            ? ' Please speak to your fleet.'
-            : ' Please contact support if you think this is a mistake.'}
+          {blockInfo?.kind === 'fleet_removed'
+            ? `${blockInfo.reason || 'You were removed from your fleet'}, so your driver account is suspended. To drive independently or join another fleet, please contact TakeARoute.`
+            : <>
+              {blockInfo?.byFleet
+                ? `${blockInfo.fleetName || 'Your fleet'} has suspended your account for breaking the terms and conditions.`
+                : 'Your TakeARoute account has been suspended for breaking the terms and conditions.'}
+              {blockInfo?.reason ? ` Reason: ${blockInfo.reason}.` : ''}
+              {blockInfo?.byFleet
+                ? ' Please speak to your fleet.'
+                : ' Please contact support if you think this is a mistake.'}
+            </>}
         </Text>
         <Button title="Sign out" variant="dark" onPress={() => signOutEverywhere().catch(() => {})} />
+        <Text
+          accessibilityRole="button"
+          onPress={() => confirmDeleteAccount()}
+          style={[TYPE.body, { color: COLORS.red, marginTop: SPACE[5], textAlign: "center" }]}
+        >
+          Delete my account
+        </Text>
         <AlertHost />
       </View>
     );

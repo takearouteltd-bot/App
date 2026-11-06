@@ -14,3 +14,5 @@ delete it after (it is gitignored). Leave Resend and Twilio out: the tests expec
 
 Fleet billing (plans, card charge, grace period, pause, pay to resume), with a fake Stripe:
 `firebase emulators:exec --only firestore --project demo-tar "node rules-tests/fleet-billing.mjs"`
+
+Deleting an account (deleteMyAccount): same set-up, `node rules-tests/account-delete.mjs`, on a fresh emulator (it creates the same test logins as fleet-e2e).

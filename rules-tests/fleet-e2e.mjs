@@ -200,7 +200,7 @@ step('admin records a payment to the fleet');
 await A.call('recordFleetPayout', { fleetId: created.fleetId, amount: 15, reference: 'TX1' });
 assert.equal((await getDoc(doc(O.db, 'fleetWallets', created.fleetId))).data().availableBalance, 5);
 
-step('fleet cannot remove driver 2 mid-job; afterwards driver 2 is independent with their own membership back, waiting offers return to the office');
+step('fleet cannot remove driver 2 mid-job; afterwards driver 2 is suspended (company car), membership back, waiting offers return to the office; admin lifts it');
 const bOn = await O.call('createFleetBooking', { customer: { phone: '07700900888', name: 'Bob' }, pickup: T5, dropoff: PAD, driverId: d2.user.uid });
 await updateDoc(doc(D2.db, 'rides', bOn.rideId), claim(d2.user.uid));
 await assert.rejects(O.call('removeFleetDriver', { driverId: d2.user.uid }), /on one of the fleet's jobs/);
@@ -210,6 +210,12 @@ const removed = await O.call('removeFleetDriver', { driverId: d2.user.uid });
 const d2doc = (await getDoc(doc(D2.db, 'drivers', d2.user.uid))).data();
 assert.equal(d2doc.fleetId, null);
 assert.equal(removed.membershipRestored, true);
+assert.equal(removed.suspended, true); assert.equal(d2doc.blocked, true, 'company driver removed -> suspended');
+assert.equal(d2doc.blockedKind, 'fleet_removed'); assert.equal(d2doc.blockedByFleet, null); assert.equal(d2doc.status, 'offline');
+assert.match(d2doc.blockedReason, /Removed from Star Cars/);
+await A.call('setAccountSuspension', { uid: d2.user.uid, suspend: false });
+assert.equal((await getDoc(doc(D2.db, 'drivers', d2.user.uid))).data().blocked, false, 'admin lifts it');
+assert.equal((await getDoc(doc(D2.db, 'drivers', d2.user.uid))).data().blockedKind, undefined);
 assert.equal(d2doc.subscription.status, 'active'); assert.equal(d2doc.subscription.paymentMethod, 'wallet_deduction');
 assert.equal(d2doc.subscriptionBeforeFleet, undefined);
 const rWait = (await getDoc(doc(O.db, 'rides', bWait.rideId))).data();
@@ -362,6 +368,8 @@ step('a driver who had no membership before joining has none after leaving (the 
 await adminSet(`drivers/${d3.user.uid}`, { subscriptionBeforeFleet: null }, true);
 assert.equal((await O.call('removeFleetDriver', { driverId: d3.user.uid })).membershipRestored, false);
 assert.equal((await getDoc(doc(D3.db, 'drivers', d3.user.uid))).data().subscription, undefined);
+assert.equal((await getDoc(doc(D3.db, 'drivers', d3.user.uid))).data().blocked, true);
+await A.call('setAccountSuspension', { uid: d3.user.uid, suspend: false });
 
 step('suspension: fleet cannot suspend mid-job; suspends with a reason; driver offline, no jobs, offers back to office; fleet lifts its own only; admin suspends and lifts; removal ends the fleet\'s own');
 await assert.rejects(O.call('suspendFleetDriver', { driverId: d4.user.uid, reason: 'x' }), /on one of your jobs/);
@@ -389,9 +397,11 @@ await O.call('cancelFleetBooking', { rideId: bS.rideId });
 await O.call('suspendFleetDriver', { driverId: d4.user.uid, reason: 'Leaving' });
 await O.call('removeFleetDriver', { driverId: d4.user.uid });
 d4doc = (await getDoc(doc(D4.db, 'drivers', d4.user.uid))).data();
-assert.equal(d4doc.fleetId, null); assert.equal(d4doc.blocked, false, 'fleet suspension ends when they leave');
+assert.equal(d4doc.fleetId, null); assert.equal(d4doc.blocked, true, 'company driver: the fleet suspension becomes a TakeARoute one');
+assert.equal(d4doc.blockedByFleet, null); assert.equal(d4doc.blockedKind, 'fleet_removed');
+await A.call('setAccountSuspension', { uid: d4.user.uid, suspend: false });
 
-step('self-employed driver: joins keeping own membership; fleet cannot remove; app trips stay theirs; not billed to the fleet; admin switches type; driver leaves; admin removes a company driver');
+step('self-employed driver: joins keeping own membership; fleet cannot remove; app trips stay theirs; not billed to the fleet; admin switches type; driver leaves (not suspended); admin removes a company driver (suspended)');
 await adminSet(`drivers/${d3.user.uid}`, { subscription: { status: 'active', paymentMethod: 'wallet_deduction', nextBillingDate: '2026-12-01' }, status: 'online', isOnRide: false }, true);
 await assert.rejects(O.call('inviteFleetDriver', { phone: '07700 900333' }), /company car or self-employed/);
 await O.call('inviteFleetDriver', { phone: '07700 900333', driverType: 'self' });
@@ -437,6 +447,8 @@ assert.equal(d3doc.fleetId, null); assert.equal(d3doc.fleetDriverType, undefined
 await assert.rejects(D.call('adminRemoveFleetDriver', { driverId: d1.user.uid }), 'driver using admin removal');
 assert.equal((await A.call('adminRemoveFleetDriver', { driverId: d1.user.uid })).membershipRestored, true);
 assert.equal((await getDoc(doc(D.db, 'drivers', d1.user.uid))).data().fleetId, null);
+assert.equal((await getDoc(doc(D.db, 'drivers', d1.user.uid))).data().blockedKind, 'fleet_removed', 'admin removal of a company driver suspends too');
+assert.equal(d3doc.blocked, false, 'self-employed driver who leaves is not suspended');
 
 step('paused fleet cannot book');
 await adminSet(`fleets/${created.fleetId}`, { status: 'suspended' }, true);

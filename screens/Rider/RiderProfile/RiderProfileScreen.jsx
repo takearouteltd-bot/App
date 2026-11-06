@@ -22,6 +22,7 @@ import {
 import ModeSwitchRow from '../../../components/ModeSwitchRow';
 import { openTerms, openPrivacy } from '../../../utils/legal';
 import { signOutEverywhere } from '../../../utils/notifications';
+import { confirmDeleteAccount } from '../../../utils/deleteAccount';
 
 export default function RiderProfileScreen() {
   const navigation = useNavigation();
@@ -235,7 +236,10 @@ const fetchRiderData = useCallback(async () => {
       </Section>
 
       <Section>
-        <RowGroup items={[{ icon: "log-out-outline", title: "Sign out", danger: true, onPress: handleLogout }]} />
+        <RowGroup items={[
+          { icon: "log-out-outline", title: "Sign out", danger: true, onPress: handleLogout },
+          { icon: "trash-outline", title: "Delete my account", detail: "Removes your account and details", danger: true, onPress: () => confirmDeleteAccount() },
+        ]} />
       </Section>
 
       <View style={styles.footer}>

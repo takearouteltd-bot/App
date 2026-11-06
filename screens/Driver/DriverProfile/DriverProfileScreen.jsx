@@ -36,6 +36,7 @@ import { useCities } from '../../../utils/cities';
 import { openTerms, openPrivacy } from '../../../utils/legal';
 import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocuments';
 import { signOutEverywhere } from '../../../utils/notifications';
+import { confirmDeleteAccount } from '../../../utils/deleteAccount';
 
 export default function DriverProfileScreen() {
   const navigation = useNavigation();
@@ -307,6 +308,13 @@ export default function DriverProfileScreen() {
             danger: true,
             onPress: loggingOut ? undefined : handleLogout,
             right: loggingOut ? <ActivityIndicator color={COLORS.red} /> : undefined,
+          },
+          {
+            icon: "trash-outline",
+            title: "Delete my account",
+            detail: driver?.fleetId ? `Removes your account and takes you out of ${driver.fleetName || "your fleet"}` : "Removes your account and details",
+            danger: true,
+            onPress: loggingOut ? undefined : () => confirmDeleteAccount({ onBusy: setLoggingOut }),
           },
         ]}
       />

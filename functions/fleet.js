@@ -1192,11 +1192,27 @@ module.exports = (deps) => {
       // by TakeARoute stays.
       const liftOwn = driver.blocked === true &&
         driver.blockedByFleet === fleetId;
-      tx.update(driverRef, Object.assign(liftOwn ? {
+      // A company driver drove the fleet's car, so leaving it does not make
+      // them an independent driver: their driver account is suspended until
+      // TakeARoute lifts it (setAccountSuspension). Only self-employed
+      // drivers go on independently. Their passenger account is untouched.
+      const suspendNow = type === "company";
+      const fleetName = driver.fleetName || "the fleet";
+      const blockFields = suspendNow ? {
+        blocked: true,
+        blockedReason: `Removed from ${fleetName}`,
+        blockedKind: "fleet_removed",
+        blockedAt: new Date().toISOString(),
+        blockedBy: by,
+        blockedByFleet: null,
+        status: "offline",
+      } : liftOwn ? {
         blocked: false, blockedReason: "", blockedByFleet: null,
+        blockedKind: FieldValue.delete(),
         unblockedAt: new Date().toISOString(),
         unblockedBy: `${driver.fleetName || "Fleet"} (left the fleet)`,
-      } : {}, own.fields, {
+      } : {};
+      tx.update(driverRef, Object.assign(blockFields, own.fields, {
         fleetId: null,
         fleetName: null,
         fleetDriverType: FieldValue.delete(),
@@ -1205,13 +1221,18 @@ module.exports = (deps) => {
         lastFleetId: fleetId,
       }));
       return {fleetId, fleetName: driver.fleetName || "your fleet", type,
-        restored: own.restored};
+        restored: own.restored, suspended: suspendNow};
     });
 
     // Offers that were waiting for this driver go back to the office.
     await returnOffers(fleetId, driverId, docs);
 
-    await sendPush([driverId], {
+    await sendPush([driverId], result.suspended ? {
+      title: `You were removed from ${result.fleetName}`,
+      body: "Your driver account is suspended. Contact TakeARoute to drive " +
+        "independently or to join another fleet.",
+      channelId: "general",
+    } : {
       title: `You left ${result.fleetName}`,
       body: result.type === "self" ?
         "You now drive independently. Nothing changes with your " +
@@ -1243,7 +1264,8 @@ module.exports = (deps) => {
             "can suspend them, or ask TakeARoute to remove them.");
       }
     }, by);
-    return {ok: true, membershipRestored: result.restored};
+    return {ok: true, membershipRestored: result.restored,
+      suspended: result.suspended};
   });
 
   /* A self-employed driver leaves their fleet. Company drivers ask their
@@ -1266,7 +1288,103 @@ module.exports = (deps) => {
     const driverId = text(data && data.driverId, 128);
     const result = await takeOutOfFleet(driverId, () => null,
         `${context.auth.token.email || "an admin"} (TakeARoute)`);
-    return {ok: true, membershipRestored: result.restored};
+    return {ok: true, membershipRestored: result.restored,
+      suspended: result.suspended};
+  });
+
+  /* ------------------------- deleting an account ----------------------
+     The person deletes their own TakeARoute account in the app (Account >
+     Delete my account; Google Play requires it). One account can be both
+     a passenger and a driver, so both go. Removed: the sign-in, the
+     passenger and driver records and what is under them (cards, saved
+     places, documents), push tokens, location, wallet (only when empty),
+     photos and uploaded documents, bank details on past payout records.
+     Kept, as the business's books need them: rides, payments, payout
+     amounts, and a fleet's own records (statements, contact cards). A
+     fleet's invite to the number stays, so the person can sign up again
+     with the same number and accept it.
+     Refused while they are on a trip or have a trip booked, while money
+     is in their wallet or a withdrawal is pending, and for fleet staff
+     and admins, whose logins are managed elsewhere. */
+  out.deleteMyAccount = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new HttpsError("unauthenticated", "Sign in.");
+    const uid = context.auth.uid;
+    const refs = {
+      driver: db.collection("drivers").doc(uid),
+      rider: db.collection("riders").doc(uid),
+      wallet: db.collection("driverWallets").doc(uid),
+    };
+    const [driverSnap, walletSnap, managerSnap, adminSnap, asRider,
+      asDriver, payouts] = await Promise.all([
+      refs.driver.get(), refs.wallet.get(),
+      db.collection("fleetManagers").doc(uid).get(),
+      db.collection("admins").doc(uid).get(),
+      db.collection("rides").where("riderId", "==", uid).get(),
+      db.collection("rides").where("driverId", "==", uid).get(),
+      db.collection("driverPayouts").where("driverId", "==", uid).get(),
+    ]);
+    if (managerSnap.exists || adminSnap.exists) {
+      throw new HttpsError("failed-precondition",
+          "This number is also a fleet or TakeARoute staff login, so it " +
+          "can't be deleted from the app. Please contact TakeARoute.");
+    }
+    const openTrip = (snap, statuses) => snap.docs.some((d) =>
+      statuses.includes(d.data().status));
+    if (openTrip(asRider, ["searching", "scheduled", "dispatching",
+      "accepted", "arrived", "ongoing"]) ||
+        openTrip(asDriver, ["accepted", "arrived", "ongoing"])) {
+      throw new HttpsError("failed-precondition",
+          "You have a trip booked or in progress. Finish or cancel it, " +
+          "then delete your account.");
+    }
+    const balance = walletSnap.exists ?
+      Number(walletSnap.data().availableBalance) || 0 : 0;
+    if (balance > 0) {
+      throw new HttpsError("failed-precondition",
+          `You still have ${balance.toFixed(2)} in your wallet. Withdraw ` +
+          "it first, or contact TakeARoute.");
+    }
+    const done = ["completed", "rejected", "failed", "cancelled",
+      "canceled", "paid"];
+    if (payouts.docs.some((d) => !done.includes(d.data().status))) {
+      throw new HttpsError("failed-precondition",
+          "A withdrawal is still being paid. Delete your account once it " +
+          "has arrived.");
+    }
+
+    // A fleet driver's waiting offers go back to the office first.
+    const driver = driverSnap.exists ? driverSnap.data() : null;
+    if (driver && driver.fleetId) {
+      const {docs} = await openFleetRides(driver.fleetId, uid);
+      await returnOffers(driver.fleetId, uid, docs);
+    }
+
+    for (const d of payouts.docs) {
+      if (d.data().bankDetails) {
+        await d.ref.update({bankDetails: FieldValue.delete(),
+          driverDeleted: true});
+      }
+    }
+    for (const ref of [refs.driver, refs.rider,
+      db.collection("users").doc(uid),
+      db.collection("pushTokens").doc(uid),
+      db.collection("driverLocations").doc(uid)]) {
+      await db.recursiveDelete(ref);
+    }
+    if (walletSnap.exists) await db.recursiveDelete(refs.wallet);
+    try {
+      const bucket = admin.storage().bucket();
+      await Promise.all(["drivers", "riders"].map((p) =>
+        bucket.deleteFiles({prefix: `${p}/${uid}/`})));
+    } catch (e) {
+      console.error("deleteMyAccount storage", uid, e.message);
+    }
+    await admin.auth().deleteUser(uid).catch((e) => {
+      if (e.code !== "auth/user-not-found") throw e;
+    });
+    console.log("deleteMyAccount", uid, driver ? "driver" : "",
+        driver && driver.fleetId ? `fleet ${driver.fleetId}` : "");
+    return {ok: true};
   });
 
   /* A TakeARoute admin changes a fleet driver between company car and
@@ -1383,9 +1501,10 @@ module.exports = (deps) => {
       await ref.update(suspend ? Object.assign({
         blocked: true, blockedReason: reason,
         blockedAt: new Date().toISOString(), blockedBy: who,
-        blockedByFleet: null,
+        blockedByFleet: null, blockedKind: FieldValue.delete(),
       }, coll === "drivers" ? {status: "offline"} : {}) : {
         blocked: false, blockedReason: "", blockedByFleet: null,
+        blockedKind: FieldValue.delete(),
         unblockedAt: new Date().toISOString(), unblockedBy: who,
       });
     }
