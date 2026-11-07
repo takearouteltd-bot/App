@@ -52,7 +52,7 @@ const fake = http.createServer((req, res) => {
     if (m) {
       stripeCalls.push({ p, form });
       const amount = Number(form.amount_to_capture || 0);
-      return json({ id: m[1], object: 'payment_intent', status: m[2] === 'capture' ? 'succeeded' : 'canceled', amount_received: amount });
+      return json({ id: m[1], object: 'payment_intent', status: m[2] === 'capture' ? 'succeeded' : 'canceled', amount_received: amount, ...(m[2] === 'capture' && form['expand[0]'] === 'latest_charge.balance_transaction' ? { latest_charge: { id: 'ch_1', balance_transaction: { id: 'txn_1', fee: 37 } } } : {}) });
     }
     json({ error: { message: 'unexpected ' + p } }, 404);
   });
@@ -207,6 +207,9 @@ const capture = stripeCalls.find((c) => c.p.endsWith(`pi_${csId}/capture`));
 assert.equal(capture.form.amount_to_capture, '1161');
 const wallet = await adminGet(`fleetWallets/${f.fleetId}`);
 assert.equal(wallet.totalWebCardFares, 11.61);
+assert.equal(wallet.totalCardFees, 0.37); assert.equal(Math.round(wallet.availableBalance * 100) / 100, 11.24, 'the firm pays the Stripe fee');
+const ftx = await adminGet(`fleetWallets/${f.fleetId}/transactions/webfee_${b2.rideId}`);
+assert.equal(ftx.type, 'card_fee'); assert.equal(ftx.amount, -0.37); assert.equal(ftx.estimated, false);
 const wtx = await adminGet(`fleetWallets/${f.fleetId}/transactions/web_${b2.rideId}`);
 assert.equal(wtx.type, 'web_card_fare'); assert.equal(wtx.amount, 11.61); assert.equal(wtx.driverId, 'webdrv');
 assert.equal(stripeCalls.filter((c) => c.p.endsWith('/capture')).length, 1);

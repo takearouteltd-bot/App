@@ -759,7 +759,9 @@ module.exports = (deps) => {
     let pi;
     try {
       pi = await stripe.paymentIntents.capture(wp.intentId,
-          {amount_to_capture: pence}, {idempotencyKey: `web_${rideId}`});
+          {amount_to_capture: pence,
+            expand: ["latest_charge.balance_transaction"]},
+          {idempotencyKey: `web_${rideId}`});
     } catch (error) {
       console.error("Web booking capture", rideId, error.message);
       await db.collection("rides").doc(rideId).update({
@@ -768,20 +770,36 @@ module.exports = (deps) => {
       return;
     }
     const amount = (pi.amount_received || pence) / 100;
+    // The firm pays Stripe's fee: Stripe's own figure for this charge, or
+    // the standard UK card rate (1.5% + 20p) if Stripe didn't send it.
+    const bt = pi.latest_charge && pi.latest_charge.balance_transaction;
+    const feePence = bt && Number.isFinite(Number(bt.fee)) ? Number(bt.fee) :
+      Math.round(amount * 100 * 0.015 + 20);
+    const fee = Math.round(feePence) / 100;
+    const feeRef = db.collection("fleetWallets").doc(ride.fleetId)
+        .collection("transactions").doc(`webfee_${rideId}`);
     const walletRef = db.collection("fleetWallets").doc(ride.fleetId);
     const txRef = walletRef.collection("transactions").doc(`web_${rideId}`);
     await db.runTransaction(async (tx) => {
       if ((await tx.get(txRef)).exists) return;
-      tx.set(walletRef, {availableBalance: FieldValue.increment(amount),
+      tx.set(walletRef, {
+        availableBalance: FieldValue.increment(Math.round((amount - fee) *
+          100) / 100),
         totalWebCardFares: FieldValue.increment(amount),
+        totalCardFees: FieldValue.increment(fee),
         updatedAt: FieldValue.serverTimestamp()}, {merge: true});
       tx.set(txRef, {type: "web_card_fare", amount, rideId,
         driverId: ride.driverId || null, paymentIntentId: wp.intentId,
         description: "Online booking paid by card",
         createdAt: FieldValue.serverTimestamp()});
+      tx.set(feeRef, {type: "card_fee", amount: -fee, rideId,
+        paymentIntentId: wp.intentId, estimated: !bt,
+        description: "Card payment fee (Stripe) for that online booking",
+        createdAt: FieldValue.serverTimestamp()});
       tx.update(db.collection("rides").doc(rideId), {
         "webPayment.status": "captured",
         "webPayment.capturedAmount": amount,
+        "webPayment.cardFee": fee,
         "webPayment.capturedAt": Timestamp.now(),
         "payment.status": "captured"});
     });
