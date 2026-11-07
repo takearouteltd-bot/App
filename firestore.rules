@@ -299,6 +299,7 @@ service cloud.firestore {
       return rideChanged().hasOnly(["status", "driverId", "acceptedAt", "walletProcessed",
           "offeredFare", "fareEstimate", "fare", "acceptedOfferId"]) &&
         resource.data.status == "searching" &&
+        resource.data.get("pricing", "") == "checked" &&
         request.resource.data.status == "accepted" &&
         request.resource.data.walletProcessed == false &&
         request.resource.data.driverId is string &&
@@ -322,6 +323,7 @@ service cloud.firestore {
     function driverClaimsRide() {
       return rideChanged().hasOnly(["status", "driverId", "acceptedAt", "walletProcessed"]) &&
         resource.data.status == "searching" &&
+        resource.data.get("pricing", "") == "checked" &&
         request.resource.data.status == "accepted" &&
         request.resource.data.driverId == request.auth.uid &&
         request.resource.data.walletProcessed == false &&
@@ -433,9 +435,15 @@ service cloud.firestore {
     match /rides/{rideId} {
       allow read: if isAdmin() || signedIn();
 
+      /* The server checks the price of every new app booking and marks it
+         pricing: "checked" (checkNewRide in functions/index.js); the
+         passenger's app may not mark it itself, and no driver can take it
+         before then. */
       allow create: if isAdmin() || (
         signedIn() &&
-        request.resource.data.riderId == request.auth.uid
+        request.resource.data.riderId == request.auth.uid &&
+        request.resource.data.get("pricing", "") != "checked" &&
+        !("priceCheck" in request.resource.data)
       );
 
       /* Updates are limited to what each side legitimately does, field by

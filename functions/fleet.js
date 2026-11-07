@@ -331,6 +331,42 @@ module.exports = (deps) => {
   }
 
   /**
+   * The fare a passenger app booking should cost, worked out here from
+   * Google's route and the current settings (checkNewRide in index.js
+   * compares it with what the app wrote). When Google cannot be reached the
+   * straight-line distance is used, which can only under-price, so it never
+   * refuses an honest booking.
+   * @param {Object} ride Ride data.
+   * @return {Promise<Object>} {fare, raw, distanceKm, durationMinutes,
+   *     source}
+   */
+  async function priceAppRide(ride) {
+    const stops = Array.isArray(ride.stops) ? ride.stops : [];
+    const raw = await rawConfig();
+    let route;
+    let source = "routes";
+    try {
+      route = await routeFor(ride.pickupLocation, ride.dropoffLocation, stops);
+    } catch (error) {
+      const points = [ride.pickupLocation].concat(stops, ride.dropoffLocation);
+      let km = 0;
+      for (let i = 1; i < points.length; i++) {
+        const leg = distanceKm(points[i - 1], points[i]);
+        km += Number.isFinite(leg) ? leg : 0;
+      }
+      route = {distanceKm: km, durationMinutes: 0};
+      source = "straight_line";
+    }
+    return {fare: fareFor(raw, route, ride.rideType), raw,
+      distanceKm: route.distanceKm, durationMinutes: route.durationMinutes,
+      source};
+  }
+  if (deps.shared) {
+    deps.shared.priceAppRide = priceAppRide;
+    deps.shared.CLASS_MULTIPLIERS = CLASS_MULTIPLIERS;
+  }
+
+  /**
    * Whether a driver can be sent a fleet job right now.
    * @param {Object} d Driver data.
    * @param {Object} ride Ride data.

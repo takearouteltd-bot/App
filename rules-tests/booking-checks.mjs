@@ -1,6 +1,8 @@
 // New app bookings are checked by the server (checkNewRide in
-// functions/index.js): working cities and promo codes (checkPromoCode, uses
-// left, once per passenger). Also: a driver cannot change their own car type
+// functions/index.js): working cities, the price against Google's route
+// (a fake on :8999: put ROUTES_API_BASE=http://127.0.0.1:8999 in
+// functions/.env.local for the run), payment method and bidding, and promo
+// codes (checkPromoCode, uses left, once per passenger). Also: a driver cannot change their own car type
 // after approval, and rejecting a payout still works with the new push.
 // Against the emulators (auth 9099, firestore 8080, functions 5001), project
 // demo-tar. Run like fleet-e2e.mjs (see README).
@@ -9,6 +11,19 @@ import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword } from 'fi
 import { getFirestore, connectFirestoreEmulator, addDoc, collection, doc, updateDoc } from 'firebase/firestore';
 import { getFunctions, connectFunctionsEmulator, httpsCallable } from 'firebase/functions';
 import assert from 'node:assert/strict';
+import http from 'node:http';
+
+// Fake Google Routes: 1 mile, 5 minutes, unless switched off.
+let routesDown = false;
+const fake = http.createServer((req, res) => {
+  req.resume();
+  req.on('end', () => {
+    if (routesDown) { res.writeHead(500); return res.end('{}'); }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ routes: [{ distanceMeters: 1609, duration: '300s' }] }));
+  });
+});
+await new Promise((r) => fake.listen(8999, '127.0.0.1', r));
 
 const PROJECT = 'demo-tar';
 const mk = (name) => {
@@ -33,17 +48,18 @@ const val = (f) => f && (f.stringValue ?? f.integerValue ?? f.booleanValue ?? f.
 const step = (s) => console.log('•', s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Waits for the onCreate check to settle: cancelled, or still searching with
-// the city stamped (checked) after a few seconds.
-async function settled(id, wantCancelled) {
-  for (let i = 0; i < 40; i++) {
+// Waits for the onCreate check to settle: cancelled, or price-checked.
+async function settled(id) {
+  for (let i = 0; i < 60; i++) {
     const r = await adminGet(`rides/${id}`);
-    if (val(r.status) === 'cancelled') return r;
-    if (!wantCancelled && i > 20) return r;
+    if (val(r.status) === 'cancelled' || val(r.pricing) === 'checked') return r;
     await sleep(250);
   }
   return adminGet(`rides/${id}`);
 }
+// 1 mile, 5 min: (3 + 2.20 + 1.25) = 6.45 before VAT, 7.74 with it;
+// with 10% off, 6.97.
+const FULL = 7.74;
 
 const A = mk('admin'), R = mk('rider'), R2 = mk('rider2'), D = mk('driver');
 const adm = await createUserWithEmailAndPassword(A.auth, 'admin-bc@test.dev', 'secret123');
@@ -56,12 +72,13 @@ const LONDON = { latitude: 51.5072, longitude: -0.1276, address: 'London' };
 const book = (who, uid, pickup, fare = {}) => addDoc(collection(who.db, 'rides'), {
   riderId: uid, driverId: null, status: 'searching', rideType: 'RouteMini',
   pickupLocation: pickup, dropoffLocation: { latitude: 52.31, longitude: -1.94, address: 'Town' },
-  fare: { total: 10, discount: 0, promoCode: null, ...fare }, cityId: null, paymentMethod: 'cash',
+  fare: { total: FULL, discount: 0, promoCode: null, vatPercent: 20, ...fare }, cityId: null, paymentMethod: 'card',
+  waitingPolicy: { freeMinutes: 60, ratePerMinute: 0, maxCharge: 0 },
 }).then((r) => r.id);
 
 step('no cities switched on: a booking anywhere goes ahead');
 let id = await book(R, rider, LONDON);
-let r = await settled(id, false);
+let r = await settled(id);
 assert.equal(val(r.status), 'searching');
 await adminSet(`rides/${id}`, { status: 'completed' }, true);
 
@@ -69,11 +86,11 @@ step('with Redditch switched on: a London pickup is refused with a reason; a Red
 await adminSet('cities/redditch', { name: 'Redditch', latitude: 52.3069, longitude: -1.9492, radiusKm: 15, active: true });
 await adminSet('cities/off', { name: 'Leeds', latitude: 51.5, longitude: -0.12, radiusKm: 50, active: false });
 id = await book(R, rider, LONDON);
-r = await settled(id, true);
+r = await settled(id);
 assert.equal(val(r.status), 'cancelled'); assert.equal(val(r.cancelledBy), 'system');
 assert.equal(val(r.cancelReason), 'outside_service_area'); assert.match(val(r.cancelMessage), /We currently cover Redditch\./);
 id = await book(R, rider, REDDITCH);
-r = await settled(id, false);
+r = await settled(id);
 assert.equal(val(r.status), 'searching'); assert.equal(val(r.cityId), 'redditch');
 await adminSet(`rides/${id}`, { status: 'completed' }, true);
 
@@ -87,43 +104,85 @@ assert.equal((await R.call('checkPromoCode', { code: 'old5' })).message, 'This c
 assert.deepEqual(await R.call('checkPromoCode', { code: 'welcome10' }), { ok: true, code: 'WELCOME10', percent: 10 });
 
 step('booking with the code uses it once; the same passenger cannot use it again');
-const promoFare = { promoCode: 'WELCOME10', discount: 0.1 };
+const promoFare = { promoCode: 'WELCOME10', discount: 0.1, total: 6.97 };
 id = await book(R, rider, REDDITCH, promoFare);
-r = await settled(id, false);
+r = await settled(id);
 assert.equal(val(r.status), 'searching');
 assert.equal(val((await adminGet('promoCodes/WELCOME10')).used), '1');
 assert.equal(val((await adminGet(`promoCodes/WELCOME10/uses/${rider}`)).rideId), id);
 await adminSet(`rides/${id}`, { status: 'completed' }, true);
 assert.equal((await R.call('checkPromoCode', { code: 'WELCOME10' })).message, 'You have already used this code.');
 id = await book(R, rider, REDDITCH, promoFare);
-r = await settled(id, true);
+r = await settled(id);
 assert.equal(val(r.cancelReason), 'promo_invalid'); assert.match(val(r.cancelMessage), /already used this code/);
 
 step('a cancelled booking gives the use back to that passenger (not counted twice)');
 const one = await book(R2, rider2, REDDITCH, promoFare);
-await settled(one, false);
+await settled(one);
 assert.equal(val((await adminGet('promoCodes/WELCOME10')).used), '2');
 await adminSet(`rides/${one}`, { status: 'cancelled' }, true);
 assert.equal((await R2.call('checkPromoCode', { code: 'WELCOME10' })).ok, false, 'limit of 2 reached');
 await adminSet('promoCodes/WELCOME10', { maxUses: 3 }, true);
 assert.equal((await R2.call('checkPromoCode', { code: 'WELCOME10' })).ok, true);
 id = await book(R2, rider2, REDDITCH, promoFare);
-r = await settled(id, false);
+r = await settled(id);
 assert.equal(val(r.status), 'searching');
 assert.equal(val((await adminGet('promoCodes/WELCOME10')).used), '2');
 await adminSet(`rides/${id}`, { status: 'completed' }, true);
 
 step('a tampered discount is refused');
 await adminSet('promoCodes/BIG', { code: 'BIG', percent: 5, active: true });
-id = await book(R2, rider2, REDDITCH, { promoCode: 'BIG', discount: 0.9 });
-r = await settled(id, true);
-assert.match(val(r.cancelMessage), /discount on this code has changed/);
+id = await book(R2, rider2, REDDITCH, { promoCode: 'BIG', discount: 0.9, total: 0.78 });
+r = await settled(id);
+assert.equal(val(r.status), 'cancelled'); // a 90% discount the code does not give: refused
 
 step('limit reached: refused at booking too');
 await adminSet('promoCodes/ONE', { code: 'ONE', percent: 5, active: true, maxUses: 1, used: 1 });
-id = await book(R, rider, REDDITCH, { promoCode: 'ONE', discount: 0.05 });
-r = await settled(id, true);
+id = await book(R, rider, REDDITCH, { promoCode: 'ONE', discount: 0.05, total: 7.36 });
+r = await settled(id);
 assert.match(val(r.cancelMessage), /fully used/);
+
+step('price: an honest booking is checked, the hold matches, the waiting terms are the real ones');
+id = await book(R, rider, REDDITCH);
+r = await settled(id);
+assert.equal(val(r.pricing), 'checked'); assert.equal(Number(val(r.fareEstimate)), FULL);
+assert.equal(Number(val(r.priceCheck.mapValue.fields.expectedTotal)), FULL);
+assert.equal(Number(val(r.waitingPolicy.mapValue.fields.ratePerMinute)), 0.25);
+await adminSet(`rides/${id}`, { status: 'completed' }, true);
+
+step('price: a booking written at £1 is refused');
+id = await book(R, rider, REDDITCH, { total: 1 });
+r = await settled(id);
+assert.equal(val(r.status), 'cancelled'); assert.equal(val(r.cancelReason), 'price_changed');
+assert.match(val(r.cancelMessage), /price for this trip has changed/);
+
+step('price: cash while cash is off, and bidding while bidding is off, are refused');
+id = await addDoc(collection(R.db, 'rides'), { riderId: rider, status: 'searching', rideType: 'RouteMini', pickupLocation: REDDITCH, dropoffLocation: REDDITCH, fare: { total: FULL }, paymentMethod: 'cash' }).then((x) => x.id);
+assert.equal(val((await settled(id)).cancelReason), 'bad_payment');
+id = await addDoc(collection(R.db, 'rides'), { riderId: rider, status: 'searching', rideType: 'RouteMini', pickupLocation: REDDITCH, dropoffLocation: REDDITCH, fare: { total: 2 }, bidding: true, offeredFare: 2, paymentMethod: 'card' }).then((x) => x.id);
+assert.equal(val((await settled(id)).cancelReason), 'bidding_off');
+
+step('price: with bidding on, an offer at the lowest allowed (80%) goes through; below it does not');
+await adminSet('config/app', { bidding: { enabled: 1, minOfferPercent: 80 } }, true);
+id = await addDoc(collection(R.db, 'rides'), { riderId: rider, status: 'searching', rideType: 'RouteMini', pickupLocation: REDDITCH, dropoffLocation: REDDITCH, fare: { total: 6.2 }, bidding: true, offeredFare: 6.2, paymentMethod: 'card' }).then((x) => x.id);
+r = await settled(id);
+assert.equal(val(r.pricing), 'checked'); assert.equal(Number(val(r.fareEstimate)), 6.2);
+await adminSet(`rides/${id}`, { status: 'completed' }, true);
+id = await addDoc(collection(R.db, 'rides'), { riderId: rider, status: 'searching', rideType: 'RouteMini', pickupLocation: REDDITCH, dropoffLocation: REDDITCH, fare: { total: 4 }, bidding: true, offeredFare: 4, paymentMethod: 'card' }).then((x) => x.id);
+assert.equal(val((await settled(id)).cancelReason), 'price_changed');
+await adminSet('config/app', { bidding: { enabled: 0 } }, true);
+
+step('price: an unknown car type is refused; Google down falls back to straight-line and lets an honest booking through');
+id = await book(R, rider, REDDITCH, {});
+await settled(id); await adminSet(`rides/${id}`, { status: 'completed' }, true);
+id = await addDoc(collection(R.db, 'rides'), { riderId: rider, status: 'searching', rideType: 'RouteSpaceship', pickupLocation: REDDITCH, dropoffLocation: REDDITCH, fare: { total: FULL }, paymentMethod: 'card' }).then((x) => x.id);
+assert.equal(val((await settled(id)).cancelReason), 'bad_ride_type');
+routesDown = true;
+id = await book(R, rider, REDDITCH);
+r = await settled(id);
+assert.equal(val(r.pricing), 'checked'); assert.equal(val(r.priceCheck.mapValue.fields.source), 'straight_line');
+await adminSet(`rides/${id}`, { status: 'completed' }, true);
+routesDown = false;
 
 step('a driver cannot change their own car type after approval; an admin can');
 const drv = (await createUserWithEmailAndPassword(D.auth, 'driver-bc@test.dev', 'secret123')).user.uid;
@@ -141,5 +200,6 @@ assert.equal(val((await adminGet(`driverWallets/${drv}`)).availableBalance), '25
 assert.equal(val((await adminGet('driverPayouts/bc1')).status), 'rejected');
 
 await del('cities/redditch');
+fake.close();
 console.log('ALL BOOKING CHECKS PASSED');
 process.exit(0);

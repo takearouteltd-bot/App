@@ -188,7 +188,7 @@ const b3 = await O.call('createFleetBooking', { customer: { phone: '07700900888'
 assert.equal(b3.status, 'scheduled');
 
 step('an app job taken by a fleet driver is tagged with the fleet (cash here: Stripe is not set up in the emulator)');
-await adminSet('rides/appjob', { riderId: 'r1', driverId: null, status: 'searching', rideType: 'RouteMini', paymentMethod: 'cash', fare: { total: 20 }, pickupLocation: T5, dropoffLocation: PAD });
+await adminSet('rides/appjob', { riderId: 'r1', driverId: null, status: 'searching', rideType: 'RouteMini', paymentMethod: 'cash', pricing: 'checked', fare: { total: 20 }, pickupLocation: T5, dropoffLocation: PAD });
 await updateDoc(doc(D.db, 'rides', 'appjob'), claim(d1.user.uid));
 await until(async () => (await getDoc(doc(D.db, 'rides', 'appjob'))).data().fleetId === created.fleetId, 'tagFleetRides');
 // The wallet credit itself (index.js creditDriverWalletOnRideCompletion)
@@ -232,7 +232,7 @@ step('a caller who also has the app: card linked, booking linked, active trip fl
 const RR = mk('rider');
 const ru = await createUserWithEmailAndPassword(RR.auth, 'rider@test.dev', 'secret123');
 await adminSet(`riders/${ru.user.uid}`, { fullName: 'Priya Patel', phoneNumber: '+447700900456' });
-await adminSet('rides/riderlive', { riderId: ru.user.uid, status: 'searching', pickupLocation: { address: 'Kings Cross, London', latitude: 51.53, longitude: -0.12 } });
+await adminSet('rides/riderlive', { riderId: ru.user.uid, status: 'searching', pricing: 'checked', pickupLocation: { address: 'Kings Cross, London', latitude: 51.53, longitude: -0.12 } });
 await adminSet(`riders/${ru.user.uid}`, { currentRideId: 'riderlive' }, true);
 const look = await O.call('fleetLookupCaller', { phone: '07700 900456' });
 assert.equal(look.appUser, true); assert.equal(look.name, 'Priya Patel'); assert.equal(look.activeRide.status, 'searching');
@@ -411,10 +411,10 @@ assert.equal(d3doc.fleetId, fid); assert.equal(d3doc.fleetDriverType, 'self');
 assert.equal(d3doc.subscription.paymentMethod, 'wallet_deduction'); assert.equal(d3doc.subscriptionBeforeFleet, undefined);
 await assert.rejects(updateDoc(doc(D3.db, 'drivers', d3.user.uid), { fleetDriverType: 'company' }), 'driver changing their own type');
 await assert.rejects(O.call('removeFleetDriver', { driverId: d3.user.uid }), /only be removed by TakeARoute/);
-await adminSet('rides/appjob2', { riderId: 'r1', driverId: null, status: 'searching', rideType: 'RouteMini', paymentMethod: 'cash', fare: { total: 20 }, pickupLocation: T5, dropoffLocation: PAD });
+await adminSet('rides/appjob2', { riderId: 'r1', driverId: null, status: 'searching', rideType: 'RouteMini', paymentMethod: 'cash', pricing: 'checked', fare: { total: 20 }, pickupLocation: T5, dropoffLocation: PAD });
 await updateDoc(doc(D3.db, 'rides', 'appjob2'), claim(d3.user.uid));
 await adminSet(`drivers/${d1.user.uid}`, { status: 'online', isOnRide: false }, true);
-await adminSet('rides/appjob3', { riderId: 'r1', driverId: null, status: 'searching', rideType: 'RouteMini', paymentMethod: 'cash', fare: { total: 20 }, pickupLocation: T5, dropoffLocation: PAD });
+await adminSet('rides/appjob3', { riderId: 'r1', driverId: null, status: 'searching', rideType: 'RouteMini', paymentMethod: 'cash', pricing: 'checked', fare: { total: 20 }, pickupLocation: T5, dropoffLocation: PAD });
 await updateDoc(doc(D.db, 'rides', 'appjob3'), claim(d1.user.uid));
 // Once the company driver's trip is tagged, the self-employed one (claimed
 // first) has had its turn too.

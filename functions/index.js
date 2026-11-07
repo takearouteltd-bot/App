@@ -3,6 +3,8 @@ const admin = require("firebase-admin");
 // FieldValue imported directly too: admin.firestore.FieldValue is not
 // filled in under the functions emulator, which the tests run against.
 const {FieldValue: FV} = require("firebase-admin/firestore");
+// Helpers fleet.js hands back for use here (priceAppRide).
+const fleetShared = {};
 const express = require("express");
 const app = express();
 
@@ -3060,6 +3062,79 @@ async function refuseNewRide(rideId, ride, reason, message) {
 }
 
 /**
+ * Checks the price, payment method and terms the passenger app wrote on a
+ * new booking against the server's own sums, and stamps pricing: "checked"
+ * (drivers cannot take the job before that: firestore.rules). The waiting
+ * and cancellation terms are replaced with the current settings.
+ * @param {string} rideId Ride id.
+ * @param {Object} ride Ride data.
+ * @return {Promise<boolean>} Go ahead.
+ */
+async function checkAppFare(rideId, ride) {
+  const refuse = (reason, message) =>
+    refuseNewRide(rideId, ride, reason, message).then(() => false);
+  const again = "Please check the price and book again.";
+  if (!fleetShared.CLASS_MULTIPLIERS[ride.rideType]) {
+    return refuse("bad_ride_type", "That car type is not available. " + again);
+  }
+  if (!ride.pickupLocation || !ride.dropoffLocation ||
+      (Array.isArray(ride.stops) && ride.stops.length > 20)) {
+    return refuse("bad_route", "We could not read this route. " + again);
+  }
+  const [priced, cfg] = await Promise.all([
+    fleetShared.priceAppRide(ride), loadAppConfig()]);
+  const raw = priced.raw || {};
+  const method = ride.paymentMethod;
+  const cashOn = Number(raw.payments && raw.payments.cashEnabled) === 1;
+  if (method !== "card" && !(method === "cash" && cashOn)) {
+    return refuse("bad_payment", "That way of paying is not available. " +
+      again);
+  }
+  const biddingOn = Number(raw.bidding && raw.bidding.enabled) === 1;
+  if (ride.bidding === true && !biddingOn) {
+    return refuse("bidding_off", "Offering your own price is not " +
+      "available right now. " + again);
+  }
+
+  // The app's sums: the fare before VAT, less any promo, plus VAT. The promo
+  // itself is checked next (checkNewRide).
+  const fare = priced.fare;
+  const discount = Math.min(1, Math.max(0,
+      Number(ride.fare && ride.fare.discount) || 0));
+  const expected = fare.subtotal * (1 - discount) * (1 + fare.vatPercent / 100);
+  const minPercent = numSetting(raw.bidding, "minOfferPercent", 100) / 100;
+  const lowest = ride.bidding === true ? expected * minPercent : expected;
+  const price = Number(ride.bidding === true ? ride.offeredFare :
+    ride.fare && ride.fare.total);
+  // Room for an app that loaded the settings a little earlier, or a route
+  // Google worked out slightly differently a moment ago.
+  const floor = Math.round((lowest * 0.9 - 0.5) * 100) / 100;
+  const check = {
+    expectedTotal: Math.round(expected * 100) / 100,
+    distanceKm: Math.round(priced.distanceKm * 100) / 100,
+    durationMinutes: Math.round(priced.durationMinutes),
+    source: priced.source,
+    at: FV.serverTimestamp(),
+  };
+  if (!Number.isFinite(price) || price < floor) {
+    console.warn("App booking under-priced", rideId, price, check);
+    await db.collection("rides").doc(rideId).update({priceCheck: check})
+        .catch(() => null);
+    return refuse("price_changed", "The price for this trip has changed. " +
+      again);
+  }
+  await db.collection("rides").doc(rideId).update({
+    pricing: "checked",
+    priceCheck: check,
+    fareEstimate: price,
+    currency: cfg.currency,
+    waitingPolicy: cfg.waiting,
+    cancellationPolicy: cfg.cancellation,
+  });
+  return true;
+}
+
+/**
  * Checks a new app booking. Returns false when it was refused.
  * @param {string} rideId Ride id.
  * @param {Object} ride Ride data (cityId may be corrected in place).
@@ -3094,6 +3169,11 @@ async function checkNewRide(rideId, ride) {
       ride.cityName = best.name || null;
       await rideRef.update({cityId: best.id, cityName: best.name || null});
     }
+  }
+
+  if (ride.pricing !== "checked" &&
+      !(await checkAppFare(rideId, ride))) {
+    return false;
   }
 
   const code = ride.fare && ride.fare.promoCode;
@@ -4388,5 +4468,5 @@ Object.assign(exports, require("./fleet")({
   functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
   hasExpiredDocument, toE164, toMillis, addOneMonth,
   TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor,
-  STRIPE_SECRETS, fleetBilling,
+  STRIPE_SECRETS, fleetBilling, shared: fleetShared,
 }));

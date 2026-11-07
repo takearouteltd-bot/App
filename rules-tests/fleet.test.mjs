@@ -140,7 +140,16 @@ test('owner cannot write zones directly (saveFleetZones checks them)', () =>
   assertFails(updateDoc(doc(as('own1'), 'fleets/f1'), { zones: [], zoneCount: 0 })));
 
 /* Gaps found in the live test (2026-11-01): the app filtered these, the rules did not. */
-const searching = (extra = {}) => ({ riderId: 'r1', driverId: null, status: 'searching', rideType: 'RouteMini', walletProcessed: false, ...extra });
+const searching = (extra = {}) => ({ riderId: 'r1', driverId: null, status: 'searching', rideType: 'RouteMini', walletProcessed: false, pricing: 'checked', ...extra });
+test('a job the server has not price-checked cannot be taken; a passenger cannot mark their own booking checked', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'rides/unchecked'), searching({ pricing: null }));
+  });
+  await assertFails(updateDoc(doc(as('d1'), 'rides/unchecked'), claim('d1')));
+  await assertFails(setDoc(doc(as('r1'), 'rides/mine'), { riderId: 'r1', status: 'searching', pricing: 'checked' }));
+  await assertFails(setDoc(doc(as('r1'), 'rides/mine2'), { riderId: 'r1', status: 'searching', priceCheck: { expectedTotal: 1 } }));
+  await assertSucceeds(setDoc(doc(as('r1'), 'rides/mine3'), { riderId: 'r1', status: 'searching' }));
+});
 test('female-only job needs a verified female driver', async () => {
   await env.withSecurityRulesDisabled(async (ctx) => {
     const db = ctx.firestore();

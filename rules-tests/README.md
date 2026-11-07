@@ -18,3 +18,7 @@ Fleet billing (plans, card charge, grace period, pause, pay to resume), with a f
 Deleting an account (deleteMyAccount): same set-up, `node rules-tests/account-delete.mjs`, on a fresh emulator (it creates the same test logins as fleet-e2e).
 
 Fleet office phone (fleetPhone.js): `node rules-tests/fleet-phone.mjs`, same set-up plus a fake Twilio it starts on :8999. For this run only, add TWILIO_SID=AC + 32 zeros, TWILIO_TOKEN=testtoken, TWILIO_NUMBER=+441000000000 to functions/.secret.local and put TWILIO_API_BASE and TWILIO_NUMBERS_BASE=http://127.0.0.1:8999 in functions/.env.local; delete both after.
+
+New app bookings checked by the server (cities, price against the route, payment method, bidding, promo codes): `node rules-tests/booking-checks.mjs`, same set-up as fleet-phone with ROUTES_API_BASE=http://127.0.0.1:8999 in functions/.env.local (it starts its own fake Routes on :8999, so run it before fleet-phone, not alongside).
+
+Rules unit tests can also be run from App/ with `firebase emulators:exec --only firestore --project demo-tar 'node --test rules-tests/*.test.mjs'`.

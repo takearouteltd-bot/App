@@ -518,6 +518,9 @@ export default function DriverHomeScreen() {
     });
     searchingRides.forEach((data) => {
       if (!data.pickupLocation) return;
+      // Shown once the server has checked the price (a second or two after
+      // booking); before that the job cannot be taken (firestore.rules).
+      if (data.pricing !== 'checked') return;
       // Jobs this driver already cancelled are not offered again.
       if (Array.isArray(data.declinedBy) && data.declinedBy.includes(driverId)) return;
       // Declined here, or its timer just ran out: don't put it straight back,
