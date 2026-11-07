@@ -423,6 +423,7 @@ module.exports = (deps) => {
             }
             return send("<Hangup/>");
           }
+          if (step === "pickup") return send(await pickup(p, req));
           if (step === "test") return send("<Pause length=\"20\"/>");
           return res.status(404).send("Unknown step");
         } catch (error) {
@@ -541,6 +542,34 @@ module.exports = (deps) => {
       `<Dial timeout="${RING_SECONDS}" answerOnBridge="true" ` +
       `action="${xml(voiceUrl({step: "after", fleet: fleetId,
         round}))}" method="POST">${clients}</Dial>`;
+  }
+
+  /**
+   * An operator picked this caller from the call queue: ring only them.
+   * If they don't pick up, the call carries on as before (afterDial).
+   * @param {Object} p Twilio params.
+   * @param {Object} req Request (query: fleet, uid).
+   * @return {Promise<string>} TwiML.
+   */
+  async function pickup(p, req) {
+    const fleetId = String(req.query.fleet || "");
+    const uid = String(req.query.uid || "");
+    const c = (await callRef(fleetId, p.CallSid).get()).data() || {};
+    const round = Math.max(1, Number(c.rounds) || 1);
+    return say("Putting you through.") +
+      `<Dial timeout="${RING_SECONDS}" answerOnBridge="true" ` +
+      `action="${xml(voiceUrl({step: "after", fleet: fleetId, round,
+        nobot: "1"}))}" method="POST">` +
+      `<Client statusCallbackEvent="answered" statusCallbackMethod="POST" ` +
+      `statusCallback="${xml(voiceUrl({step: "answered", fleet: fleetId,
+        call: p.CallSid}))}">` +
+      `<Identity>${xml(operatorId(uid))}</Identity>` +
+      `<Parameter name="callSid" value="${xml(p.CallSid)}"/>` +
+      `<Parameter name="from" value="${xml(c.from || "")}"/>` +
+      `<Parameter name="name" value="${xml(c.name || "")}"/>` +
+      `<Parameter name="fleetId" value="${xml(fleetId)}"/>` +
+      "<Parameter name=\"pickup\" value=\"1\"/>" +
+      "</Client></Dial>";
   }
 
   /**
@@ -724,6 +753,44 @@ module.exports = (deps) => {
         const keys = await voiceKeys(tw);
         return {token: accessToken(tw, keys, operatorId(me.uid), 3600),
           identity: operatorId(me.uid), ttl: 3600};
+      });
+
+  /* The call queue: an operator takes a particular waiting caller. The
+     caller's call is moved (Twilio REST) to ring only this operator, whose
+     dashboard answers it at once. */
+  out.takeFleetCall = functions.runWith({secrets: TWILIO_SECRETS})
+      .https.onCall(async (data, context) => {
+        const me = await assertFleetManager(context, false);
+        const callSid = text(data && data.callSid, 64);
+        const snap = callSid ? await callRef(me.fleetId, callSid).get() : null;
+        const c = snap && snap.exists ? snap.data() : null;
+        if (!c || c.direction !== "in") {
+          throw new HttpsError("not-found", "That call has gone.");
+        }
+        if (c.status !== "ringing") {
+          throw new HttpsError("failed-precondition", c.status === "answered" ?
+            `${c.answeredByName || "Someone"} has already answered it.` :
+            "That caller is no longer waiting.");
+        }
+        const mine = (await db.collection("fleetManagers").doc(me.uid).get())
+            .data() || {};
+        if (mine.phoneOnCall && !freeToRing(mine)) {
+          throw new HttpsError("failed-precondition",
+              "Finish your current call first.");
+        }
+        const tw = twilioConfig();
+        try {
+          await twilioApi(tw, "POST", `/Calls/${callSid}.json`, {
+            Url: voiceUrl({step: "pickup", fleet: me.fleetId, uid: me.uid}),
+            Method: "POST",
+          });
+        } catch (error) {
+          throw new HttpsError("failed-precondition",
+              "That caller has just hung up.");
+        }
+        await snap.ref.set({pickedBy: me.uid,
+          pickedAt: new Date().toISOString()}, {merge: true});
+        return {ok: true};
       });
 
   /* An operator says whether calls should ring for them. */

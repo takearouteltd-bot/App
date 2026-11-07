@@ -2,7 +2,7 @@
 // (auth 9099, firestore 8080, functions 5001), project demo-tar.
 import { initializeApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import { getFirestore, connectFirestoreEmulator, doc, getDoc, getDocs, collection, updateDoc, setDoc, arrayUnion } from 'firebase/firestore';
+import { getFirestore, connectFirestoreEmulator, doc, getDoc, getDocs, collection, updateDoc, setDoc, arrayUnion, query, where, addDoc } from 'firebase/firestore';
 import { getFunctions, connectFunctionsEmulator, httpsCallable } from 'firebase/functions';
 import assert from 'node:assert/strict';
 
@@ -495,7 +495,7 @@ assert.equal((await getDoc(doc(D7.db, 'drivers', d7.user.uid))).data().approved,
 step('flat monthly plan: fleet pays self-employed drivers\' memberships too; plan changes move them over and back');
 const D8 = mk('driver8');
 const d8 = await createUserWithEmailAndPassword(D8.auth, 'd8@test.dev', 'secret123');
-await adminSet(`drivers/${d8.user.uid}`, { approved: true, onboardingComplete: true, onboardingStatus: 'approved', vehicleType: 'RouteMini', status: 'offline', phoneNumber: '+447700900888', firstName: 'Eight', subscription: { status: 'active', paymentMethod: 'wallet_deduction', nextBillingDate: '2026-12-01' } });
+await adminSet(`drivers/${d8.user.uid}`, { approved: true, onboardingComplete: true, onboardingStatus: 'approved', vehicleType: 'RouteMini', status: 'offline', phoneNumber: '+447700900468', firstName: 'Eight', subscription: { status: 'active', paymentMethod: 'wallet_deduction', nextBillingDate: '2026-12-01' } });
 await D8.call('requestFleetJoin', { code: other.joinCode });
 await adminSet(`fleets/${other.fleetId}`, { billingPlan: 'monthly', monthlyFee: 500 }, true);
 const OO = mk('otherOwner');
@@ -518,6 +518,72 @@ assert.equal((await getDoc(doc(D8.db, 'drivers', d8.user.uid))).data().subscript
 await D8.call('leaveFleet', {});
 d8doc = (await getDoc(doc(D8.db, 'drivers', d8.user.uid))).data();
 assert.equal(d8doc.subscription.paymentMethod, 'wallet_deduction', 'leaving gives the own membership back'); assert.equal(d8doc.blocked, undefined);
+
+step('general notification: the office messages its drivers; each gets it in the app Inbox');
+await assert.rejects(O.call('sendFleetNotice', { title: '', body: 'x' }), /title and a message/);
+await assert.rejects(O.call('sendFleetNotice', { title: 'Hi', body: 'x', vehicleType: 'RouteExecutive' }), /None of your drivers match/);
+await adminSet(`drivers/${d1.user.uid}`, { fleetId: created.fleetId, approved: true, blocked: false, vehicleType: 'RouteMini' }, true);
+const notice = await O.call('sendFleetNotice', { title: 'Roadworks', body: 'A441 closed tonight', to: 'all', vehicleType: 'RouteMini' });
+assert.ok(notice.count >= 1);
+const inbox = await getDocs(query(collection(D.db, 'announcements'), where('audience', '==', 'user'), where('userId', '==', d1.user.uid)));
+const got = inbox.docs.map((x) => x.data()).find((x) => x.body === 'A441 closed tonight');
+assert.ok(got, 'in the driver Inbox'); assert.equal(got.title, 'Star Cars: Roadworks');
+const logged = await getDocs(collection(O.db, 'fleets', created.fleetId, 'notices'));
+assert.equal(logged.size, 1); assert.equal(logged.docs[0].data().count, notice.count);
+await assert.rejects(setDoc(doc(O.db, 'fleets', created.fleetId, 'notices', 'x'), { title: 'x' }), 'only the server writes notices');
+
+step('driver contact: the email from their sign-in shows; staff fix the phone; only admins change the email');
+await adminSet(`drivers/${d1.user.uid}`, { phoneNumber: null, email: null }, true);
+let contact = await O.call('driverContact', { driverId: d1.user.uid });
+assert.equal(contact.email, 'd1@test.dev'); assert.equal(contact.phone, ''); assert.equal(contact.signsInWith, 'email'); assert.equal(contact.canEditEmail, false);
+assert.equal((await getDoc(doc(D.db, 'drivers', d1.user.uid))).data().email, 'd1@test.dev', 'copied to the driver record');
+await O.call('saveDriverContact', { driverId: d1.user.uid, phone: '07123 456789' });
+contact = await O.call('driverContact', { driverId: d1.user.uid });
+assert.equal(contact.phone, '+447123456789');
+const d1rec = (await getDoc(doc(D.db, 'drivers', d1.user.uid))).data();
+assert.equal(d1rec.phoneNumber, '+447123456789'); assert.match(d1rec.contactUpdatedBy, /Star Cars/);
+await assert.rejects(O.call('saveDriverContact', { driverId: d1.user.uid, email: 'new@test.dev' }), /Only TakeARoute/);
+await assert.rejects(O.call('saveDriverContact', { driverId: d1.user.uid, phone: '12' }), /phone number/);
+await A.call('saveDriverContact', { driverId: d1.user.uid, email: 'D1new@test.dev' });
+assert.equal((await A.call('driverContact', { driverId: d1.user.uid })).email, 'd1new@test.dev');
+await signInWithEmailAndPassword(D.auth, 'd1new@test.dev', 'secret123');
+await assert.rejects(OO.call('driverContact', { driverId: d1.user.uid }), /Not one of your drivers/);
+
+step('tickets: a driver\'s report goes to their fleet; the office replies and resolves; lost property logged and returned');
+const rep = await addDoc(collection(D.db, 'reports'), { reporterId: d1.user.uid, reporterType: 'driver', reporterEmail: '', rideId: null, category: 'payment', subCategory: 'x', categoryLabel: 'Payment', subCategoryLabel: 'Fare wrong', description: 'Fare was wrong', status: 'open', priority: 'normal' });
+const routed = await until(async () => { const x = (await getDoc(doc(D.db, 'reports', rep.id))).data(); return x.fleetId && x; }, 'report routed to the fleet');
+assert.equal(routed.fleetId, created.fleetId); assert.equal(routed.fleetName, 'Star Cars');
+const fleetReports = await getDocs(query(collection(O.db, 'reports'), where('fleetId', '==', created.fleetId)));
+assert.ok(fleetReports.docs.some((x) => x.id === rep.id), 'the office sees it');
+await assert.rejects(getDocs(query(collection(OO.db, 'reports'), where('fleetId', '==', created.fleetId))), 'another fleet cannot');
+await O.call('replyFleetReport', { reportId: rep.id, text: 'We will check the fare.' });
+const msgs = await getDocs(collection(D.db, 'reports', rep.id, 'messages'));
+assert.equal(msgs.size, 1); assert.equal(msgs.docs[0].data().senderRole, 'admin'); assert.equal(msgs.docs[0].data().fromFleet, true);
+assert.equal((await getDoc(doc(D.db, 'reports', rep.id))).data().status, 'in_review');
+await O.call('updateFleetReport', { reportId: rep.id, status: 'resolved', outcome: 'Refunded £2' });
+assert.equal((await getDoc(doc(D.db, 'reports', rep.id))).data().status, 'resolved');
+await assert.rejects(OO.call('replyFleetReport', { reportId: rep.id, text: 'x' }), /Not one of your tickets/);
+const lostRep = await O.call('createFleetReport', { kind: 'lost_found', description: 'Customer left phone', item: 'Black iPhone', customerPhone: '07700 900111', customerName: 'Zed' });
+let lr = (await getDoc(doc(O.db, 'reports', lostRep.reportId))).data();
+assert.equal(lr.category, 'lost_found'); assert.equal(lr.lostItem.status, 'reported'); assert.equal(lr.customer.phone, '+447700900111');
+await O.call('updateFleetReport', { reportId: lostRep.reportId, lostItem: { where: 'At the office', status: 'found' } });
+await O.call('updateFleetReport', { reportId: lostRep.reportId, lostItem: { status: 'returned' } });
+lr = (await getDoc(doc(O.db, 'reports', lostRep.reportId))).data();
+assert.equal(lr.lostItem.status, 'returned'); assert.equal(lr.lostItem.where, 'At the office'); assert.equal(lr.status, 'resolved', 'returned closes it');
+
+step('messages: the office writes to a driver; the driver replies in the app; unread counts both ways');
+await O.call('messageFleetDriver', { driverId: d1.user.uid, text: 'Please call the office' });
+await D.call('messageFleetOffice', { text: 'On my way back' });
+const thread = await getDocs(query(collection(D.db, 'fleets', created.fleetId, 'driverChats', d1.user.uid, 'messages')));
+assert.deepEqual(thread.docs.map((x) => x.data().from).sort(), ['driver', 'office']);
+let chat = (await getDoc(doc(O.db, 'fleets', created.fleetId, 'driverChats', d1.user.uid))).data();
+assert.equal(chat.unreadOffice, 1); assert.equal(chat.unreadDriver, 1); assert.equal(chat.lastFrom, 'driver');
+await O.call('markFleetChatRead', { driverId: d1.user.uid });
+await D.call('markFleetChatRead', {});
+chat = (await getDoc(doc(O.db, 'fleets', created.fleetId, 'driverChats', d1.user.uid))).data();
+assert.equal(chat.unreadOffice, 0); assert.equal(chat.unreadDriver, 0);
+await assert.rejects(getDocs(collection(OO.db, 'fleets', created.fleetId, 'driverChats', d1.user.uid, 'messages')), 'another fleet cannot read it');
+await assert.rejects(setDoc(doc(D.db, 'fleets', created.fleetId, 'driverChats', d1.user.uid, 'messages', 'x'), { text: 'x' }), 'only the server writes');
 
 step('paused fleet cannot book');
 await adminSet(`fleets/${created.fleetId}`, { status: 'suspended' }, true);

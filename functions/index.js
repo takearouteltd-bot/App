@@ -3605,8 +3605,12 @@ exports.notifySupportReply = functions.firestore
       const reportSnap = await db.collection("reports")
           .doc(context.params.reportId).get();
       if (!reportSnap.exists) return null;
+      // Office-logged tickets have no app user to tell.
+      if (reportSnap.data().reporterType === "office") return null;
       return sendPush([reportSnap.data().reporterId], {
-        title: "Reply from TakeARoute support",
+        title: snap.data().fromFleet ?
+          `Reply from ${snap.data().senderName || "your taxi firm"}` :
+          "Reply from TakeARoute support",
         body: "Open My reports to read it.",
         channelId: "messages",
         data: {type: "report", reportId: context.params.reportId},

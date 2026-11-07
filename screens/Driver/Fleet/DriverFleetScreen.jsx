@@ -86,6 +86,7 @@ export default function DriverFleetScreen({ navigation }) {
                 </Text>
               </>
             )}
+            <Button title="Messages with the office" onPress={() => navigation.navigate('OfficeChat')} style={{ marginTop: SPACE[4] }} />
             <Button title="My statement" variant="secondary" onPress={() => navigation.navigate('DriverStatement')} style={{ marginTop: SPACE[4] }} />
             {selfEmployed ? (
               <Button title="Leave fleet" variant="secondary" loading={working} onPress={leave} style={{ marginTop: SPACE[4] }} />

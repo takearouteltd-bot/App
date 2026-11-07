@@ -54,6 +54,7 @@ function routeForNotification(data, role) {
       return tab("Account", { screen: "ReportDetail", params: { reportId: data.reportId, role: "driver" } });
     }
     if (type === "announcement") return tab("Account", { screen: "Inbox", params: { role: "driver" } });
+    if (type === "fleet_chat" || type === "fleet_message") return tab("Account", { screen: "OfficeChat" });
     if (type === "change_request") return tab("Account", { screen: "DriverPersonalInformation" });
     if (type === "membership") return tab("Membership");
     // job_offer, trip, chat and anything else: the driver home resumes the

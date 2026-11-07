@@ -164,7 +164,7 @@ export default function ReportDetailScreen({ navigation, route }) {
                     <Text style={[TYPE.body, mine && { color: COLORS.white }]}>{m.text}</Text>
                   </View>
                   <Text style={styles.bubbleMeta}>
-                    {mine ? 'You' : 'TakeARoute support'}, {formatWhen(m.createdAt)}
+                    {mine ? 'You' : m.fromFleet ? (m.senderName || 'Your taxi firm') : 'TakeARoute support'}, {formatWhen(m.createdAt)}
                   </Text>
                 </View>
               );

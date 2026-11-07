@@ -578,9 +578,14 @@ service cloud.firestore {
     /* ================= REPORTS ================= */
 
     match /reports/{reportId} {
+      // The fleet a report was routed to (functions/fleetSupport.js) sees
+      // it too; it changes it only through the fleet functions.
       allow read: if isAdmin() || (
         signedIn() &&
         resource.data.reporterId == request.auth.uid
+      ) || (
+        resource.data.get("fleetId", null) is string &&
+        fleetStaffOf(resource.data.fleetId)
       );
       allow create: if isAdmin() || signedIn();
 
@@ -601,6 +606,9 @@ service cloud.firestore {
         allow read: if isAdmin() || (
           signedIn() &&
           get(/databases/$(database)/documents/reports/$(reportId)).data.reporterId == request.auth.uid
+        ) || (
+          get(/databases/$(database)/documents/reports/$(reportId)).data.get("fleetId", null) is string &&
+          fleetStaffOf(get(/databases/$(database)/documents/reports/$(reportId)).data.fleetId)
         );
         allow create: if isAdmin() || (
           signedIn() &&
@@ -658,6 +666,34 @@ service cloud.firestore {
           request.resource.data.get("notes", "").size() <= 500
         );
         allow delete: if isAdmin();
+      }
+
+      /* Messages between the office and each driver (functions/fleet.js
+         messageFleetDriver, messageFleetOffice). Staff and that driver read
+         them; only the server writes. */
+      match /driverChats/{driverId} {
+        allow read: if isAdmin() || fleetStaffOf(fleetId) ||
+          (signedIn() && request.auth.uid == driverId);
+        allow write: if false;
+        match /messages/{messageId} {
+          allow read: if isAdmin() || fleetStaffOf(fleetId) ||
+            (signedIn() && request.auth.uid == driverId);
+          allow write: if false;
+        }
+      }
+
+      /* General notifications the office sent its drivers (sendFleetNotice
+         in functions/fleet.js). Staff see them; only the server writes. */
+      match /notices/{noticeId} {
+        allow read: if isAdmin() || fleetStaffOf(fleetId);
+        allow write: if false;
+      }
+
+      /* The office's calls (functions/fleetPhone.js): staff watch callers
+         waiting in the call queue live. Only the server writes. */
+      match /phoneCalls/{callSid} {
+        allow read: if isAdmin() || fleetStaffOf(fleetId);
+        allow write: if false;
       }
 
       /* Numbers the fleet won't take bookings from (blockFleetNumber in

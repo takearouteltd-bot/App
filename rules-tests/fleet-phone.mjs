@@ -17,7 +17,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { initializeApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
+import { getFirestore, connectFirestoreEmulator, getDocs, query, collection, where } from 'firebase/firestore';
 import { getFunctions, connectFunctionsEmulator, httpsCallable } from 'firebase/functions';
 import assert from 'node:assert/strict';
 
@@ -67,6 +67,7 @@ const fake = http.createServer((req, res) => {
     if (p.endsWith('/RegulatoryCompliance/Bundles')) return json({ results: [{ sid: 'BU1' }] });
     if (p.endsWith('/Addresses.json')) return json({ addresses: [{ sid: 'AD1' }] });
     if (p.endsWith('/Calls.json')) return json({ sid: 'CAtest' });
+    if (/\/Calls\/CQ\w+\.json$/.test(p)) return json({ sid: p.match(/CQ\w+/)[0] });
     json({ message: 'unexpected ' + p }, 404);
   });
 });
@@ -482,6 +483,21 @@ step('unblocked: the caller gets through again');
 await OP.call('unblockFleetNumber', { phone: '+447700900999' });
 r = await twilio({ step: 'incoming' }, { From: '+447700900999', To: APP_NUMBER, CallSid: 'CB6' });
 assert.doesNotMatch(r.body, /can&apos;t take bookings/); assert.match(r.body, /Thank you for calling/);
+
+step('call queue: staff see waiting callers and take one; it rings only them, flagged to answer at once');
+await O.call('setFleetPhoneAvailable', { available: true }); await OP.call('setFleetPhoneAvailable', { available: true });
+r = await twilio({ step: 'incoming' }, { From: '+441527900654', To: APP_NUMBER, CallSid: 'CQ1' });
+const waitingNow = await getDocs(query(collection(OP.db, 'fleets', f.fleetId, 'phoneCalls'), where('status', '==', 'ringing')));
+assert.ok(waitingNow.docs.some((d) => d.id === 'CQ1'), `staff read the waiting call live: ${JSON.stringify(await adminGet(`fleets/${f.fleetId}/phoneCalls/CQ1`))} ${r.body.slice(0, 300)}`);
+await OP.call('takeFleetCall', { callSid: 'CQ1' });
+const moved = seen.filter((x) => x.path.endsWith('/Calls/CQ1.json')).pop();
+assert.match(moved.form.Url, /step=pickup/); assert.match(moved.form.Url, new RegExp(`uid=${opUid}`));
+r = await twilio({ step: 'pickup', fleet: f.fleetId, uid: opUid }, { CallSid: 'CQ1' });
+assert.match(r.body, new RegExp(`<Identity>fm_${opUid}</Identity>`)); assert.doesNotMatch(r.body, new RegExp(`fm_${ownerUid}`));
+assert.match(r.body, /name="pickup" value="1"/); assert.match(r.body, /nobot=1/);
+await twilio({ step: 'answered', fleet: f.fleetId, call: 'CQ1' }, { CallSid: 'CQchild', To: `client:fm_${opUid}`, CallStatus: 'in-progress' });
+await assert.rejects(O.call('takeFleetCall', { callSid: 'CQ1' }), /already answered/);
+await twilio({ step: 'status' }, { CallSid: 'CQ1', To: APP_NUMBER, CallStatus: 'completed', CallDuration: '30' });
 
 console.log('ALL PHONE CHECKS PASSED');
 fake.close();

@@ -2475,7 +2475,7 @@ module.exports = (deps) => {
   out.messageFleetDriver = functions.https.onCall(async (data, context) => {
     const me = await assertFleetManager(context, false);
     const driverId = text(data && data.driverId, 128);
-    const body = text(data && data.text, 300);
+    const body = text(data && data.text, 1000);
     if (!driverId || !body) {
       throw new HttpsError("invalid-argument", "Write a message first.");
     }
@@ -2486,15 +2486,267 @@ module.exports = (deps) => {
     const notified = await sendPush([driverId], {
       title: `Message from ${me.fleet.name}`,
       body,
-      channelId: "general",
-      data: {type: "fleet_message"},
+      channelId: "messages",
+      data: {type: "fleet_chat"},
     });
-    await db.collection("fleets").doc(me.fleetId)
-        .collection("driverMessages").add({
-          driverId, text: body, sentBy: me.uid, notified,
+    await addChatMessage(me.fleetId, driverId, {from: "office", text: body,
+      byUid: me.uid, byName: me.manager.name || me.manager.email || "Office",
+      notified}, snap.data());
+    return {notified};
+  });
+
+  /* ------------------- office and driver messages ---------------------- */
+
+  /* One thread per driver: fleets/{fleetId}/driverChats/{driverId}
+     {driverName, lastText, lastAt, lastFrom, unreadOffice, unreadDriver},
+     messages in .../messages. The office writes through messageFleetDriver,
+     the driver (app, Fleet > Messages) through messageFleetOffice. Staff
+     and that driver read it (rules); only these functions write. */
+  const chatRef = (fleetId, driverId) => db.collection("fleets").doc(fleetId)
+      .collection("driverChats").doc(driverId);
+
+  /**
+   * Adds a message to a driver's thread with the office.
+   * @param {string} fleetId Fleet.
+   * @param {string} driverId Driver.
+   * @param {Object} m {from: "office"|"driver", text, byUid, byName}
+   * @param {Object} driver Driver data (for the name).
+   * @return {Promise<void>}
+   */
+  async function addChatMessage(fleetId, driverId, m, driver) {
+    const ref = chatRef(fleetId, driverId);
+    const now = new Date().toISOString();
+    await ref.collection("messages").add(Object.assign({}, m, {
+      createdAt: FieldValue.serverTimestamp(), at: now}));
+    await ref.set({
+      driverId,
+      driverName: [driver.firstName, driver.lastName].filter(Boolean)
+          .join(" ") || driver.fullName || driver.name || "Driver",
+      lastText: m.text.slice(0, 140), lastAt: now, lastFrom: m.from,
+      [m.from === "office" ? "unreadDriver" : "unreadOffice"]:
+        FieldValue.increment(1),
+    }, {merge: true});
+  }
+
+  /* The driver writes to their fleet's office. */
+  out.messageFleetOffice = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new HttpsError("unauthenticated", "Sign in.");
+    const uid = context.auth.uid;
+    const body = text(data && data.text, 1000);
+    if (!body) throw new HttpsError("invalid-argument", "Write a message.");
+    const snap = await db.collection("drivers").doc(uid).get();
+    const driver = snap.exists ? snap.data() : null;
+    if (!driver || !driver.fleetId) {
+      throw new HttpsError("failed-precondition",
+          "You're not driving for a taxi firm.");
+    }
+    await addChatMessage(driver.fleetId, uid, {from: "driver", text: body,
+      byUid: uid}, driver);
+    return {ok: true};
+  });
+
+  /* Marks a thread read: by the office (driverId given) or the driver. */
+  out.markFleetChatRead = functions.https.onCall(async (data, context) => {
+    if (!context.auth) throw new HttpsError("unauthenticated", "Sign in.");
+    if (data && data.driverId) {
+      const me = await assertFleetManager(context, false);
+      await chatRef(me.fleetId, text(data.driverId, 128))
+          .set({unreadOffice: 0}, {merge: true});
+      return {ok: true};
+    }
+    const d = (await db.collection("drivers").doc(context.auth.uid).get())
+        .data() || {};
+    if (d.fleetId) {
+      await chatRef(d.fleetId, context.auth.uid)
+          .set({unreadDriver: 0}, {merge: true});
+    }
+    return {ok: true};
+  });
+
+  /* ---------------------- a driver's contact details ------------------ */
+
+  /**
+   * Who may see and change a driver's contact details: TakeARoute admins,
+   * and staff of the fleet the driver works for.
+   * @param {Object} context Callable context.
+   * @param {string} driverId Driver.
+   * @return {Promise<Object>} {isAdmin, by, driver}
+   */
+  async function contactAccess(context, driverId) {
+    if (!context.auth) throw new HttpsError("unauthenticated", "Sign in.");
+    const snap = driverId ?
+      await db.collection("drivers").doc(driverId).get() : null;
+    if (!snap || !snap.exists) {
+      throw new HttpsError("not-found", "No such driver.");
+    }
+    const adminSnap = await db.collection("admins").doc(context.auth.uid)
+        .get();
+    if (adminSnap.exists && adminSnap.data().isActive === true) {
+      return {isAdmin: true, by: adminSnap.data().name ||
+        adminSnap.data().email || "TakeARoute", driver: snap.data()};
+    }
+    const me = await assertFleetManager(context, false);
+    if (snap.data().fleetId !== me.fleetId) {
+      throw new HttpsError("permission-denied", "Not one of your drivers.");
+    }
+    return {isAdmin: false, by: `${me.manager.name || me.manager.email ||
+      "Staff"}, ${me.fleet.name || "fleet"}`, driver: snap.data()};
+  }
+
+  /**
+   * The sign-in account behind a driver, or null.
+   * @param {string} uid Driver.
+   * @return {Promise<?Object>} Auth user record.
+   */
+  const authUser = (uid) => admin.auth().getUser(uid).catch(() => null);
+
+  /* A driver's email and phone, wherever they were saved: the driver
+     record, their app account (an email sign-up keeps the email there) or
+     their sign-in. */
+  out.driverContact = functions.https.onCall(async (data, context) => {
+    const driverId = text(data && data.driverId, 128);
+    const {isAdmin, driver} = await contactAccess(context, driverId);
+    const user = (await db.collection("users").doc(driverId).get()).data() ||
+      {};
+    const auth = await authUser(driverId);
+    const providers = ((auth && auth.providerData) || [])
+        .map((x) => x.providerId);
+    const email = driver.email || user.email || (auth && auth.email) || "";
+    // Email sign-ups keep it on the app account: copy it to the driver
+    // record so lists and searches show it too.
+    if (email && !driver.email) {
+      await db.collection("drivers").doc(driverId).update({email})
+          .catch(() => null);
+    }
+    return {
+      email,
+      phone: driver.phoneNumber || driver.phone || user.phoneNumber ||
+        (auth && auth.phoneNumber) || "",
+      signsInWith: providers.includes("password") ? "email" :
+        providers.includes("phone") ? "phone" : (providers[0] || ""),
+      canEditEmail: isAdmin,
+    };
+  });
+
+  /* Staff correct a driver's phone number (and admins their email). The
+     phone is the one the office and passengers ring; it doesn't change how
+     the driver signs in. An email change by an admin also changes the
+     email they sign in with, if they sign in by email. */
+  out.saveDriverContact = functions.https.onCall(async (data, context) => {
+    const d = data || {};
+    const driverId = text(d.driverId, 128);
+    const {isAdmin, by} = await contactAccess(context, driverId);
+    const update = {};
+    const userUpdate = {};
+    if (d.phone !== undefined) {
+      const phone = toE164(d.phone);
+      if (!phone || !/^\+\d{8,15}$/.test(phone)) {
+        throw new HttpsError("invalid-argument",
+            "Enter a phone number, for example 07700 900123.");
+      }
+      const others = await db.collection("drivers")
+          .where("phoneNumber", "==", phone).limit(2).get();
+      if (others.docs.some((x) => x.id !== driverId)) {
+        throw new HttpsError("already-exists",
+            "Another driver already has that number.");
+      }
+      update.phoneNumber = phone;
+      userUpdate.phoneNumber = phone;
+    }
+    if (d.email !== undefined) {
+      if (!isAdmin) {
+        throw new HttpsError("permission-denied",
+            "Only TakeARoute can change a driver's email.");
+      }
+      const email = text(d.email, 200).toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        throw new HttpsError("invalid-argument", "Enter a valid email.");
+      }
+      const auth = await authUser(driverId);
+      if (auth && auth.email !== email) {
+        try {
+          await admin.auth().updateUser(driverId, {email});
+        } catch (error) {
+          throw new HttpsError("already-exists",
+              error.code === "auth/email-already-exists" ?
+                "Another account already uses that email." :
+                "Could not change the email.");
+        }
+      }
+      update.email = email;
+      userUpdate.email = email;
+    }
+    if (!Object.keys(update).length) {
+      throw new HttpsError("invalid-argument", "Nothing to save.");
+    }
+    update.contactUpdatedAt = new Date().toISOString();
+    update.contactUpdatedBy = by;
+    await db.collection("drivers").doc(driverId).update(update);
+    await db.collection("users").doc(driverId).set(userUpdate, {merge: true});
+    return Object.assign({ok: true}, update);
+  });
+
+  /* General notification: the office sends one message to many of its
+     drivers. Each driver gets it as a push and in the app's Inbox (one
+     announcements doc each, audience "user": notifyAnnouncement pushes it,
+     and the Inbox already shows messages "For you"). Logged in
+     fleets/{id}/notices. */
+  const NOTICE_TO = ["all", "online", "offline"];
+  const NOTICES_PER_DAY = 30;
+  out.sendFleetNotice = functions.https.onCall(async (data, context) => {
+    const me = await assertFleetManager(context, false);
+    const d = data || {};
+    const title = text(d.title, 80);
+    const body = text(d.body, 1000);
+    const to = NOTICE_TO.includes(d.to) ? d.to : "all";
+    const vehicleType = d.vehicleType ? text(d.vehicleType, 40) : "";
+    if (!title || !body) {
+      throw new HttpsError("invalid-argument",
+          "Write a title and a message.");
+    }
+    const fleetRef = db.collection("fleets").doc(me.fleetId);
+    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const recent = await fleetRef.collection("notices")
+        .where("sentAt", ">", since).get();
+    if (recent.size >= NOTICES_PER_DAY) {
+      throw new HttpsError("resource-exhausted",
+          "That's a lot of notices today. Try again tomorrow.");
+    }
+    const drivers = (await db.collection("drivers")
+        .where("fleetId", "==", me.fleetId).get()).docs.filter((s) => {
+      const x = s.data();
+      if (x.approved !== true || x.blocked === true) return false;
+      const online = x.status === "online" || x.isOnRide === true;
+      if (to === "online" && !online) return false;
+      if (to === "offline" && online) return false;
+      if (vehicleType && (x.vehicleType || "RouteMini") !== vehicleType) {
+        return false;
+      }
+      return true;
+    });
+    if (!drivers.length) {
+      throw new HttpsError("failed-precondition",
+          "None of your drivers match who you chose to send it to.");
+    }
+    const fleetName = me.fleet.name || "Your taxi firm";
+    const noticeRef = fleetRef.collection("notices").doc();
+    const sentAt = new Date().toISOString();
+    for (let i = 0; i < drivers.length; i += 400) {
+      const batch = db.batch();
+      drivers.slice(i, i + 400).forEach((s) => {
+        batch.set(db.collection("announcements").doc(), {
+          audience: "user", userId: s.id,
+          title: `${fleetName}: ${title}`, body,
+          fromFleetId: me.fleetId, noticeId: noticeRef.id,
           createdAt: FieldValue.serverTimestamp(),
         });
-    return {notified};
+      });
+      await batch.commit();
+    }
+    await noticeRef.set({title, body, to, vehicleType: vehicleType || null,
+      count: drivers.length, sentAt, sentBy: me.uid,
+      sentByName: me.manager.name || me.manager.email || ""});
+    return {ok: true, count: drivers.length};
   });
 
   out.cancelFleetBooking = functions.https.onCall(async (data, context) => {
@@ -3400,6 +3652,10 @@ module.exports = (deps) => {
     stripe: deps.stripe, STRIPE_SECRETS,
     booking: {bookPhoneJob, quoteOne, quoteTypes, placeSearch, placeDetails,
       placeFromText, point, CLASS_MULTIPLIERS}}));
+
+  /* Tickets and Lost & Found (fleetSupport.js). */
+  Object.assign(out, require("./fleetSupport")({functions, db, FieldValue,
+    text, toE164, assertFleetManager, sendPush}));
 
   return out;
 };
