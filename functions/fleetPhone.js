@@ -292,21 +292,51 @@ module.exports = (deps) => {
     const minutes = seconds ? Math.ceil(seconds / 60) : 0;
     const key = `phoneUsage.${month}`;
     const inbound = add.direction !== "out";
+    const botSeconds = Math.max(0, Number(add.botSeconds) || 0);
     await db.collection("fleets").doc(fleetId).update({
       [`${key}.calls`]: FieldValue.increment(1),
       [`${key}.${inbound ? "inMinutes" : "outMinutes"}`]:
         FieldValue.increment(minutes),
       [`${key}.missed`]: FieldValue.increment(add.missed ? 1 : 0),
+      // The booking bot's share of incoming calls (it costs more a minute).
+      [`${key}.botCalls`]: FieldValue.increment(add.bot ? 1 : 0),
+      [`${key}.botMinutes`]: FieldValue.increment(botSeconds ?
+        Math.ceil(botSeconds / 60) : 0),
     }).catch((e) => console.error("addUsage", fleetId, e.message));
   }
 
   const callRef = (fleetId, callSid) => db.collection("fleets").doc(fleetId)
       .collection("phoneCalls").doc(callSid);
 
+  /**
+   * The fleet's operators who can be rung now: available, active and not
+   * on a call. Longest-waiting first, up to 10.
+   * @param {string} fleetId Fleet.
+   * @return {Promise<Array>} fleetManagers snapshots.
+   */
+  async function freeOperators(fleetId) {
+    const ops = await db.collection("fleetManagers")
+        .where("fleetId", "==", fleetId)
+        .where("phoneAvailable", "==", true).get();
+    return ops.docs.filter((d) => d.data().isActive === true &&
+      freeToRing(d.data()))
+        .sort((a, b) => String(a.data().phoneLastCallAt || "")
+            .localeCompare(String(b.data().phoneLastCallAt || "")))
+        .slice(0, MAX_OPERATORS);
+  }
+
+  // The booking bot, for calls nobody in the office can take (fleetBot.js).
+  const bot = require("./fleetBot")({functions, db, FieldValue, text,
+    booking: deps.booking, twilioApi, twilioConfig, TWILIO_SECRETS, voiceUrl,
+    xml, callRef, addUsage, assertFleetManager,
+    freeOperatorCount: async (fleetId) => (await freeOperators(fleetId))
+        .length});
+  Object.assign(out, bot.out);
+
   /* ------------------------------ webhooks --------------------------- */
 
   /* Every Twilio callback for the office phone, by ?step=. Answers TwiML. */
-  out.fleetVoice = functions.runWith({secrets: TWILIO_SECRETS})
+  out.fleetVoice = functions.runWith({secrets: bot.allSecrets})
       .https.onRequest(async (req, res) => {
         let tw;
         try {
@@ -325,6 +355,7 @@ module.exports = (deps) => {
         try {
           if (step === "incoming") return send(await incoming(tw, p, req));
           if (step === "after") return send(await afterDial(p, req));
+          if (step === "bot") return send(await bot.turn(p, req));
           if (step === "answered") {
             await answered(p, req);
             return res.status(204).send("");
@@ -421,19 +452,17 @@ module.exports = (deps) => {
     const snap = await ref.get();
     const call = snap.data() || {};
 
-    const ops = await db.collection("fleetManagers")
-        .where("fleetId", "==", fleetId)
-        .where("phoneAvailable", "==", true).get();
     // Only free operators ring: anyone already on a call is skipped, so the
-    // next call goes to whoever is free. Longest-waiting first, up to 10.
-    const operators = ops.docs.filter((d) => d.data().isActive === true &&
-      freeToRing(d.data()))
-        .sort((a, b) => String(a.data().phoneLastCallAt || "")
-            .localeCompare(String(b.data().phoneLastCallAt || "")))
-        .slice(0, MAX_OPERATORS);
+    // next call goes to whoever is free.
+    const operators = await freeOperators(fleetId);
     const greeting = round === 1 ? say(`Thank you for calling ${fleetName}.`) :
       "";
     if (!operators.length) {
+      // Nobody can take it: the booking bot answers, if the fleet has it.
+      if (botCanTake(found.data, call, req, from)) {
+        return bot.start({fleetId, fleet: found.data, ref, from,
+          reason: "busy"});
+      }
       if (round >= MAX_ROUNDS) return missed(ref, fleetName);
       return greeting + say("All our operators are busy. Please hold.") +
         `<Play>${HOLD_MUSIC}</Play>` +
@@ -454,6 +483,21 @@ module.exports = (deps) => {
       `<Dial timeout="${RING_SECONDS}" answerOnBridge="true" ` +
       `action="${xml(voiceUrl({step: "after", fleet: fleetId,
         round}))}" method="POST">${clients}</Dial>`;
+  }
+
+  /**
+   * Whether the booking bot should take this call: switched on, not had a
+   * go already, not sent back to the office by the bot, and the caller's
+   * number known (bookings need it).
+   * @param {Object} fleet Fleet data.
+   * @param {Object} call phoneCalls data.
+   * @param {Object} req Request (query.nobot).
+   * @param {string} from Caller.
+   * @return {boolean} Take it.
+   */
+  function botCanTake(fleet, call, req, from) {
+    return bot.enabled(fleet) && !req.query.nobot && !call.bot &&
+      /^\+\d{8,15}$/.test(String(from || ""));
   }
 
   /**
@@ -488,6 +532,12 @@ module.exports = (deps) => {
     }
     const fleet = (await db.collection("fleets").doc(fleetId).get()).data() ||
       {};
+    // Rung and nobody picked up: the booking bot takes it, if switched on.
+    const call = (await ref.get()).data() || {};
+    if (botCanTake(fleet, call, req, call.from)) {
+      return bot.start({fleetId, fleet, ref, from: call.from,
+        reason: "no_answer"});
+    }
     if (round >= MAX_ROUNDS) return missed(ref, fleet.name || "the office");
     return say("Sorry to keep you waiting. Please hold.") +
       `<Play>${HOLD_MUSIC}</Play>` +
@@ -538,12 +588,16 @@ module.exports = (deps) => {
     const snap = await ref.get();
     if (!snap.exists) return;
     const c = snap.data();
+    const botEnd = bot.onCallEnded(c);
+    if (botEnd.patch && c.status === "bot") await ref.update(botEnd.patch);
     if (!c.counted) {
       await ref.update({counted: true, callSeconds: Number(p.CallDuration) ||
         0});
       await addUsage(found.id, {direction: "in",
         seconds: Number(p.CallDuration) || 0,
-        missed: c.status === "ringing" || c.status === "missed"});
+        missed: c.status === "ringing" || c.status === "missed" ||
+          (c.status === "bot" && botEnd.missed),
+        bot: Boolean(c.bot), botSeconds: botEnd.seconds});
     }
     if (c.status === "ringing") {
       await ref.update({status: "missed", endedAt: new Date().toISOString(),

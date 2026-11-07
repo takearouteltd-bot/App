@@ -78,6 +78,11 @@
    so it is not a secret; Google restricts it to the Routes, Places and
    Geocoding services. */
 const MAPS_KEY = "AIzaSyD2FkUIMuw3hkXi827QxnI8W1w2XX_KGd8";
+// Tests point these at a fake.
+const PLACES_API = process.env.PLACES_API_BASE ||
+  "https://places.googleapis.com";
+const ROUTES_API = process.env.ROUTES_API_BASE ||
+  "https://routes.googleapis.com";
 
 /* Fare multipliers per vehicle class, as FareEstimationScreen's
    RIDE_OPTIONS. Change both together. */
@@ -225,7 +230,7 @@ module.exports = (deps) => {
     const wp = (p) => ({location: {latLng: {
       latitude: p.latitude, longitude: p.longitude}}});
     const res = await fetch(
-        "https://routes.googleapis.com/directions/v2:computeRoutes", {
+        `${ROUTES_API}/directions/v2:computeRoutes`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -1852,8 +1857,23 @@ module.exports = (deps) => {
      the dashboard needs no Maps key of its own. UK addresses first. */
   out.fleetPlaceSearch = functions.https.onCall(async (data, context) => {
     await assertFleetManager(context, false);
+    return {results: await placeSearch(data)};
+  });
+
+  out.fleetPlaceDetails = functions.https.onCall(async (data, context) => {
+    await assertFleetManager(context, false);
+    return placeDetails(data);
+  });
+
+  /**
+   * Address suggestions from Google Places (New), UK first. Shared by the
+   * booking form and the customer booking link.
+   * @param {Object} data {input, near, sessionToken}
+   * @return {Promise<Array>} [{placeId, main, secondary}]
+   */
+  async function placeSearch(data) {
     const input = text(data && data.input, 120);
-    if (input.length < 2) return {results: []};
+    if (input.length < 2) return [];
     const body = {input, includedRegionCodes: ["gb"]};
     const near = point(data && data.near);
     if (near) {
@@ -1863,11 +1883,11 @@ module.exports = (deps) => {
     if (data && typeof data.sessionToken === "string") {
       body.sessionToken = data.sessionToken.slice(0, 64);
     }
-    const res = await fetch("https://places.googleapis.com/v1/places:autocomplete",
+    const res = await fetch(`${PLACES_API}/v1/places:autocomplete`,
         {method: "POST", headers: {"Content-Type": "application/json",
           "X-Goog-Api-Key": MAPS_KEY}, body: JSON.stringify(body)});
     const json = await res.json().catch(() => ({}));
-    const results = (json.suggestions || [])
+    return (json.suggestions || [])
         .map((s) => s.placePrediction)
         .filter(Boolean)
         .slice(0, 6)
@@ -1878,11 +1898,26 @@ module.exports = (deps) => {
           secondary: p.structuredFormat && p.structuredFormat.secondaryText ?
             p.structuredFormat.secondaryText.text : "",
         }));
-    return {results};
-  });
+  }
 
-  out.fleetPlaceDetails = functions.https.onCall(async (data, context) => {
-    await assertFleetManager(context, false);
+  /**
+   * A Places result's name and address as one line: "Heathrow Terminal 5,
+   * Longford, Hounslow ..." reads better than the street address alone.
+   * @param {Object} p Place (displayName, formattedAddress).
+   * @return {string} Address.
+   */
+  function placeLine(p) {
+    const name = p.displayName && p.displayName.text;
+    const addr = p.formattedAddress || "";
+    return name && !addr.startsWith(name) ? `${name}, ${addr}` : addr;
+  }
+
+  /**
+   * The point for a chosen suggestion.
+   * @param {Object} data {placeId, sessionToken}
+   * @return {Promise<Object>} {latitude, longitude, address}
+   */
+  async function placeDetails(data) {
     const placeId = text(data && data.placeId, 300);
     if (!/^[A-Za-z0-9_-]+$/.test(placeId)) {
       throw new HttpsError("invalid-argument", "Unknown place.");
@@ -1890,22 +1925,42 @@ module.exports = (deps) => {
     const token = data && typeof data.sessionToken === "string" ?
       `?sessionToken=${encodeURIComponent(data.sessionToken.slice(0, 64))}` :
       "";
-    const res = await fetch(
-        `https://places.googleapis.com/v1/places/${placeId}${token}`,
+    const res = await fetch(`${PLACES_API}/v1/places/${placeId}${token}`,
         {headers: {"X-Goog-Api-Key": MAPS_KEY,
           "X-Goog-FieldMask": "location,formattedAddress,displayName"}});
     const p = await res.json().catch(() => ({}));
     if (!p.location) throw new HttpsError("not-found", "Place not found.");
-    const name = p.displayName && p.displayName.text;
-    const addr = p.formattedAddress || "";
-    return {
-      latitude: p.location.latitude,
-      longitude: p.location.longitude,
-      // "Heathrow Terminal 5, Longford, Hounslow ..." reads better than the
-      // street address alone for named places.
-      address: name && !addr.startsWith(name) ? `${name}, ${addr}` : addr,
-    };
-  });
+    return {latitude: p.location.latitude, longitude: p.location.longitude,
+      address: placeLine(p)};
+  }
+
+  /**
+   * The best match for an address said on the phone ("12 Station Road,
+   * Redditch", "the train station"), near where the caller usually is.
+   * @param {string} query What was said.
+   * @param {?Object} near A point to search around.
+   * @return {Promise<?Object>} {latitude, longitude, address}, or null.
+   */
+  async function placeFromText(query, near) {
+    const textQuery = text(query, 200);
+    if (textQuery.length < 3) return null;
+    const body = {textQuery, regionCode: "gb", maxResultCount: 1};
+    if (near) {
+      body.locationBias = {circle: {center: {latitude: near.latitude,
+        longitude: near.longitude}, radius: 40000}};
+    }
+    const res = await fetch(`${PLACES_API}/v1/places:searchText`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Goog-Api-Key": MAPS_KEY,
+        "X-Goog-FieldMask":
+          "places.location,places.formattedAddress,places.displayName"},
+      body: JSON.stringify(body)});
+    const json = await res.json().catch(() => ({}));
+    const p = json.places && json.places[0];
+    if (!p || !p.location) return null;
+    return {latitude: p.location.latitude, longitude: p.location.longitude,
+      address: placeLine(p)};
+  }
 
   /* Distance, time and the fare for each vehicle class, for the booking
      form. */
@@ -1937,7 +1992,18 @@ module.exports = (deps) => {
      time. */
   out.createFleetBooking = functions.https.onCall(async (data, context) => {
     const me = await assertFleetManager(context, false);
-    const d = data || {};
+    return bookPhoneJob(me, data || {});
+  });
+
+  /**
+   * Books a phone job for a fleet. The booking form, the phone bot and the
+   * customer booking link all come here.
+   * @param {Object} me {uid, fleetId, fleet, manager}, plus bookedBy when it
+   *   is not an operator ({uid: null, name, via: "bot" | "link"}).
+   * @param {Object} d The booking, as createFleetBooking takes it.
+   * @return {Promise<Object>} {rideId, status, fare}
+   */
+  async function bookPhoneJob(me, d) {
     const phone = toE164(d.customer && d.customer.phone);
     const name = text(d.customer && d.customer.name, 80);
     if (!phone) {
@@ -2041,7 +2107,8 @@ module.exports = (deps) => {
         riderId: appRider ? appRider.uid : null},
       // Older driver apps only know "CASH JOB", so say it in the notes too.
       notes: `${notePrefix} ${notes}`.trim(),
-      bookedBy: {uid: me.uid, name: me.manager.name || me.manager.email || ""},
+      bookedBy: me.bookedBy ||
+        {uid: me.uid, name: me.manager.name || me.manager.email || ""},
       status: later ? "scheduled" : "dispatching",
       rideType,
       pickupLocation: pickup,
@@ -2101,7 +2168,24 @@ module.exports = (deps) => {
     });
     return {rideId: rideRef.id, status: later ? "scheduled" : "dispatching",
       fare: fare.total};
-  });
+  }
+
+  /**
+   * Distance, time and fare for one vehicle class (the phone bot and the
+   * booking link quote before booking, as the booking form does).
+   * @param {Object} pickup Point.
+   * @param {Object} dropoff Point.
+   * @param {string} rideType Vehicle class.
+   * @return {Promise<Object>} {distanceKm, durationMinutes, total, currency}
+   */
+  async function quoteOne(pickup, dropoff, rideType) {
+    const [route, raw] = await Promise.all([
+      routeFor(pickup, dropoff, []), rawConfig()]);
+    const fare = fareFor(raw, route, rideType);
+    return {distanceKm: Number(route.distanceKm.toFixed(2)),
+      durationMinutes: Math.round(route.durationMinutes),
+      total: fare.total, currency: fare.currency};
+  }
 
   /* Sends a phone job again: to another driver, to the whole fleet, or
      straight away instead of at its booked time. */
@@ -3229,7 +3313,9 @@ module.exports = (deps) => {
   /* The fleet office phone (fleetPhone.js). */
   Object.assign(out, require("./fleetPhone")({functions, db, toE164,
     TWILIO_SECRETS, twilioConfig, assertFleetManager, assertAdmin,
-    findRiderByPhone, findDriversByPhone, phoneFor, text, FieldValue}));
+    findRiderByPhone, findDriversByPhone, phoneFor, text, FieldValue,
+    booking: {bookPhoneJob, quoteOne, placeSearch, placeDetails,
+      placeFromText, point, CLASS_MULTIPLIERS}}));
 
   return out;
 };

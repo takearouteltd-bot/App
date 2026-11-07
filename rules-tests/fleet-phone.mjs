@@ -2,8 +2,14 @@
 // a fake Twilio on :8999. Needs, for this run only:
 //   functions/.secret.local  TWILIO_SID=AC + 32 zeros, TWILIO_TOKEN=testtoken,
 //                            TWILIO_NUMBER=+441000000000 (+ Stripe dummies)
+//                            CLOUDFLARE_ACCOUNT_ID=acct1, CLOUDFLARE_AI_TOKEN=aitoken
 //   functions/.env.local     TWILIO_API_BASE=http://127.0.0.1:8999
 //                            TWILIO_NUMBERS_BASE=http://127.0.0.1:8999
+//                            CF_AI_BASE=http://127.0.0.1:8999
+//                            PLACES_API_BASE=http://127.0.0.1:8999
+//                            ROUTES_API_BASE=http://127.0.0.1:8999
+// The same server fakes Workers AI (scripted replies in `ai`) and Google
+// Places and Routes for the booking bot.
 // firebase emulators:exec --config <with auth 9099, pubsub 8085> --only
 //   auth,firestore,functions,pubsub --project demo-tar
 //   "node rules-tests/fleet-phone.mjs"
@@ -20,18 +26,38 @@ const TOKEN = 'testtoken';
 const APP_NUMBER = '+441000000000';
 const VOICE = `http://127.0.0.1:5001/${PROJECT}/us-central1/fleetVoice`;
 
-// ---------- fake Twilio
+// ---------- fake Twilio, Workers AI and Google
 const seen = [];
+const ai = []; // next replies for the booking bot, in order
+const aiAsked = [];
 const fake = http.createServer((req, res) => {
   let body = '';
   req.on('data', (c) => (body += c));
   req.on('end', () => {
     const url = new URL(req.url, 'http://x');
-    const form = Object.fromEntries(new URLSearchParams(body));
+    const form = (req.headers['content-type'] || '').includes('json') ? {} : Object.fromEntries(new URLSearchParams(body));
     seen.push({ method: req.method, path: url.pathname, query: Object.fromEntries(url.searchParams), form });
     const p = url.pathname;
     const json = (o, code = 200) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(o)); };
     if (req.method === 'DELETE') { res.writeHead(204); return res.end(); }
+    if (p.startsWith('/client/v4/accounts/')) {
+      const ask = JSON.parse(body);
+      aiAsked.push({ ...ask, path: p, auth: req.headers.authorization });
+      const next = ai.shift();
+      if (!next || next.fail) return json({ success: false, errors: [{ code: 3040, message: 'down' }], result: null }, 500);
+      // Alternate object and string answers: the bot must take both.
+      const response = next.asText ? JSON.stringify(next.r) : next.r;
+      return json({ success: true, errors: [], result: { response, usage: { prompt_tokens: 10, completion_tokens: 10 } } });
+    }
+    if (p === '/v1/places:searchText') {
+      const q = JSON.parse(body).textQuery;
+      if (/nowhere/i.test(q)) return json({});
+      return json({ places: [{ location: { latitude: 52.3, longitude: -1.94 }, formattedAddress: `${q}, Redditch B97 4AA, UK`, displayName: { text: q } }] });
+    }
+    if (p === '/v1/places:autocomplete') return json({ suggestions: [{ placePrediction: { placeId: 'PL1', structuredFormat: { mainText: { text: 'Redditch Station' }, secondaryText: { text: 'Redditch' } } } }] });
+    if (p === '/v1/places/PL1') return json({ location: { latitude: 52.305, longitude: -1.945 }, formattedAddress: 'Station Approach, Redditch B97 4AA, UK', displayName: { text: 'Redditch Station' } });
+    if (p === '/directions/v2:computeRoutes') return json({ routes: [{ distanceMeters: 16093, duration: '1200s' }] });
+    if (p.endsWith('/Messages.json')) return json({ sid: 'SM1' });
     if (p.endsWith('/Keys.json')) return json({ sid: 'SK1', secret: 'keysecret' });
     if (p.endsWith('/Applications.json') || /Applications\/AP1\.json$/.test(p)) return json({ sid: 'AP1' });
     if (p.endsWith('/IncomingPhoneNumbers.json') && req.method === 'GET') return json({ incoming_phone_numbers: [{ sid: 'PN1', phone_number: APP_NUMBER }] });
@@ -58,7 +84,7 @@ const REST = `http://127.0.0.1:8080/v1/projects/${PROJECT}/databases/(default)/d
 const H = { Authorization: 'Bearer owner', 'Content-Type': 'application/json' };
 const enc = (v) => typeof v === 'boolean' ? { booleanValue: v } : typeof v === 'number' ? (Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v })
   : v === null ? { nullValue: null } : typeof v === 'object' ? { mapValue: { fields: Object.fromEntries(Object.entries(v).map(([k, x]) => [k, enc(x)])) } } : { stringValue: String(v) };
-const dec = (v) => { const [k, x] = Object.entries(v)[0]; return k === 'mapValue' ? Object.fromEntries(Object.entries(x.fields || {}).map(([a, b]) => [a, dec(b)])) : k === 'integerValue' ? Number(x) : k === 'nullValue' ? null : x; };
+const dec = (v) => { const [k, x] = Object.entries(v)[0]; return k === 'mapValue' ? Object.fromEntries(Object.entries(x.fields || {}).map(([a, b]) => [a, dec(b)])) : k === 'arrayValue' ? (x.values || []).map(dec) : k === 'integerValue' ? Number(x) : k === 'nullValue' ? null : x; };
 async function adminSet(path, data, mask = false) {
   const fields = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, enc(v)]));
   const r = await fetch(`${REST}/${path}${mask ? '?' + Object.keys(data).map((k) => 'updateMask.fieldPaths=' + k).join('&') : ''}`, { method: 'PATCH', headers: H, body: JSON.stringify({ fields }) });
@@ -249,6 +275,185 @@ assert.ok(seen.some((x) => x.method === 'DELETE' && x.path.endsWith('/IncomingPh
 assert.equal((await adminGet(`fleets/${f2.fleetId}`)).phoneLine, undefined);
 r = await twilio({ step: 'incoming' }, { From: '+447700900123', To: '+441527000111', CallSid: 'CB2' });
 assert.match(r.body, /not in use/);
+
+/* ---------------------------- booking bot ---------------------------- */
+const AI = (o, asText = false) => ({ r: R(o), asText });
+const R = (o) => ({ intent: 'continue', pickup_query: null, pickup_saved: null, dropoff_query: null, dropoff_saved: null, when_now: null, when_local: null, passengers: null, name: null, notes: null, say: '', ...o });
+const texts = () => seen.filter((x) => x.path.endsWith('/Messages.json'));
+const botTurn = (sid, params) => twilio({ step: 'bot', fleet: f.fleetId }, { CallSid: sid, ...params });
+
+step('bot: off by default (callers hold); only the owner can switch it on');
+r = await twilio({ step: 'incoming' }, { From: '+447700900800', To: APP_NUMBER, CallSid: 'CC0' });
+assert.match(r.body, /All our operators are busy/);
+await twilio({ step: 'status' }, { CallSid: 'CC0', To: APP_NUMBER, CallStatus: 'completed', CallDuration: '20' });
+await assert.rejects(OP.call('saveFleetPhoneBot', { enabled: true }), /owner/);
+assert.deepEqual(await O.call('saveFleetPhoneBot', { enabled: true }), { enabled: true });
+
+step('bot: nobody free, a regular caller is greeted by name and asked for the pickup');
+await adminSet(`fleets/${f.fleetId}/customers/+447700900801`, { phone: '+447700900801', name: 'Sam Jones' });
+await fetch(`${REST}/fleets/${f.fleetId}/customers/+447700900801?updateMask.fieldPaths=addresses`, { method: 'PATCH', headers: H, body: JSON.stringify({ fields: { addresses: { arrayValue: { values: [enc({ latitude: 52.31, longitude: -1.93, address: '12 Station Road, Redditch B97 4AA, UK' })] } } } }) });
+r = await twilio({ step: 'incoming' }, { From: '+447700900801', To: APP_NUMBER, CallSid: 'CC1' });
+assert.match(r.body, /Hello Sam\. Thank you for calling A2B Taxis/); assert.match(r.body, /booking assistant/);
+assert.match(r.body, /<Gather input="speech dtmf"/); assert.match(r.body, /step=bot/); assert.match(r.body, /Polly\.Amy-Neural/);
+assert.doesNotMatch(r.body, /<Play>/);
+let cc = await adminGet(`fleets/${f.fleetId}/phoneCalls/CC1`);
+assert.equal(cc.status, 'bot'); assert.equal(cc.bot.reason, 'busy');
+
+step('bot: "from home" picks the saved address; the AI sees the saved list and the time');
+ai.push(AI({ pickup_saved: 1, say: 'Lovely. And where are you going?' }));
+r = await botTurn('CC1', { SpeechResult: 'From home please' });
+assert.match(r.body, /And where are you going\?/);
+const asked = aiAsked.pop();
+assert.equal(asked.path, '/client/v4/accounts/acct1/ai/run/@cf/meta/llama-3.3-70b-instruct-fp8-fast');
+assert.equal(asked.auth, 'Bearer aitoken');
+assert.equal(asked.response_format.type, 'json_schema'); assert.ok(asked.response_format.json_schema.properties.intent);
+assert.equal(asked.messages[0].role, 'system');
+const said = asked.messages[1].content;
+assert.match(said, /1\. 12 Station Road/); assert.match(said, /Caller: From home please/);
+assert.match(said, /Now in the UK: \w+day \d+ \w+ 20\d\d, \d\d:\d\d/);
+
+step('bot: destination, now, two people in one go -> read back with the fare; no booking yet');
+ai.push(AI({ dropoff_query: 'Birmingham Airport', when_now: true, passengers: '2', say: 'x' }, true)); // as text, a number as a string
+r = await botTurn('CC1', { SpeechResult: 'To Birmingham airport, now, two of us' });
+assert.match(r.body, /So that&apos;s a taxi from 12 Station Road, Redditch B97 4AA to Birmingham Airport, Redditch B97 4AA, as soon as possible, for 2 passengers\. The fare is about £\d+\.\d\d\. Shall I book it\?/);
+cc = await adminGet(`fleets/${f.fleetId}/phoneCalls/CC1`);
+assert.equal(cc.bot.stage, 'confirm'); assert.equal(cc.bot.rideId, undefined);
+
+step('bot: "no, it is three of us" changes it and reads it back again');
+ai.push(AI({ intent: 'confirm_no', passengers: 3 }));
+r = await botTurn('CC1', { SpeechResult: 'No, there are three of us' });
+assert.match(r.body, /for 3 passengers/);
+
+step('bot: pressing 1 books it as the bot, texts the caller, says goodbye');
+r = await botTurn('CC1', { Digits: '1' });
+assert.match(r.body, /That&apos;s booked\. A driver will be on the way shortly\. I&apos;ve sent you a text/); assert.match(r.body, /<Hangup\/>/);
+cc = await adminGet(`fleets/${f.fleetId}/phoneCalls/CC1`);
+assert.equal(cc.status, 'completed'); assert.equal(cc.bot.outcome, 'booked');
+const ride = await adminGet(`rides/${cc.bot.rideId}`);
+assert.equal(ride.source, 'phone'); assert.equal(ride.status, 'dispatching'); assert.equal(ride.bookedBy.via, 'bot'); assert.equal(ride.bookedBy.name, 'Booking bot');
+assert.equal(ride.customer.phone, '+447700900801'); assert.equal(ride.customer.name, 'Sam Jones'); assert.equal(ride.rideType, 'RouteMini');
+assert.equal(ride.pickupLocation.address, '12 Station Road, Redditch B97 4AA, UK'); assert.match(ride.notes, /3 passengers/);
+let sms = texts().pop();
+assert.equal(sms.form.To, '+447700900801'); assert.equal(sms.form.From, 'A2B Taxis'); assert.match(sms.form.Body, /^A2B Taxis: your taxi is booked\. From 12 Station Road/);
+r = await botTurn('CC1', { SpeechResult: 'hello?' });
+assert.match(r.body, /<Hangup\/>/, 'nothing more once booked');
+await twilio({ step: 'status' }, { CallSid: 'CC1', To: APP_NUMBER, CallStatus: 'completed', CallDuration: '75' });
+
+step('bot: a later time in UK time, five people go in a larger car');
+r = await twilio({ step: 'incoming' }, { From: '+447700900802', To: APP_NUMBER, CallSid: 'CC2' });
+assert.match(r.body, /^.*Thank you for calling A2B Taxis/); assert.doesNotMatch(r.body, /Hello/);
+const later = new Date(Date.now() + 26 * 3600 * 1000);
+const lp = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(later).map((x) => [x.type, x.value]));
+const local = `${lp.year}-${lp.month}-${lp.day}T${lp.hour}:00`;
+ai.push(AI({ pickup_query: 'Redditch train station', dropoff_query: 'Bromsgrove', when_local: local, passengers: 5, name: 'Jo', say: 'x' }));
+r = await botTurn('CC2', { SpeechResult: 'Station to Bromsgrove tomorrow, five of us, it is Jo' });
+const h12 = (Number(lp.hour) % 12) || 12;
+assert.match(r.body, new RegExp(`(tomorrow|on \\w+day \\d+ \\w+) at ${h12} (am|pm), for 5 passengers in a larger car`));
+ai.push(AI({ say: 'Sorry, shall I book that for you?' }));
+r = await botTurn('CC2', { SpeechResult: 'erm, what was the price again' });
+assert.match(r.body, /Sorry, shall I book that for you\?/);
+cc = await adminGet(`fleets/${f.fleetId}/phoneCalls/CC2`);
+assert.equal(cc.bot.stage, 'confirm', 'not a clear yes: asked again, not booked'); assert.equal(cc.bot.rideId, undefined);
+ai.push(AI({ intent: 'confirm_yes' }));
+r = await botTurn('CC2', { SpeechResult: 'yes please' });
+assert.match(r.body, /We&apos;ll send your taxi for (tomorrow|on)/);
+const ride2 = await adminGet(`rides/${(await adminGet(`fleets/${f.fleetId}/phoneCalls/CC2`)).bot.rideId}`);
+assert.equal(ride2.status, 'scheduled'); assert.equal(ride2.rideType, 'RouteXL'); assert.equal(ride2.customer.name, 'Jo');
+const wantMs = later.getTime() - (later.getTime() % 3600000);
+assert.ok(Math.abs(new Date(ride2.pickupAt).getTime() - wantMs) < 3600000 + 1, 'pickup at the UK hour asked for');
+
+step('bot: an address it cannot find three times -> texts a booking link instead (the backup)');
+r = await twilio({ step: 'incoming' }, { From: '+447700900803', To: APP_NUMBER, CallSid: 'CC3' });
+for (let i = 1; i <= 3; i++) {
+  ai.push(AI({ pickup_query: 'Nowhere Lane', say: 'x' }));
+  r = await botTurn('CC3', { SpeechResult: 'Nowhere lane' });
+  if (i < 3) assert.match(r.body, /couldn&apos;t find that pickup address\. Could you tell me the street and the town, or the postcode\?/);
+}
+assert.match(r.body, /I&apos;ve sent you a text with a link to book it/); assert.match(r.body, /<Hangup\/>/);
+cc = await adminGet(`fleets/${f.fleetId}/phoneCalls/CC3`);
+assert.equal(cc.bot.outcome, 'link_sent'); assert.equal(cc.bot.gaveUp, 'address');
+sms = texts().pop();
+assert.equal(sms.form.To, '+447700900803');
+const linkToken = /\/book\/([A-Za-z0-9_-]{16}) /.exec(sms.form.Body)[1];
+assert.match(sms.form.Body, /^A2B Taxis: book your taxi here https:\/\/admin\.takearoute\.ltd\/book\//);
+
+step('booking link: the page books one taxi for that caller, then the link is spent');
+const P = mk('public');
+await assert.rejects(P.call('bookingLinkInfo', { token: 'x'.repeat(16) }), /expired/);
+await assert.rejects(P.call('bookingLinkInfo', { token: 'bad' }), /not valid/);
+const info = await P.call('bookingLinkInfo', { token: linkToken });
+assert.equal(info.fleetName, 'A2B Taxis'); assert.equal(info.phoneEnding, '803'); assert.equal(info.booked, null);
+const sug = await P.call('bookingLinkPlaces', { token: linkToken, input: 'redditch stat' });
+assert.equal(sug.results[0].placeId, 'PL1');
+const pick = await P.call('bookingLinkPlace', { token: linkToken, placeId: 'PL1' });
+assert.equal(pick.address, 'Redditch Station, Station Approach, Redditch B97 4AA, UK');
+const drop = { latitude: 52.33, longitude: -2.06, address: 'Bromsgrove' };
+const q = await P.call('bookingLinkQuote', { token: linkToken, pickup: pick, dropoff: drop, passengers: 2 });
+assert.ok(q.fare > 0);
+await assert.rejects(P.call('bookingLinkBook', { token: linkToken, pickup: pick, dropoff: drop, passengers: 9 }), /please call us/);
+const lb = await P.call('bookingLinkBook', { token: linkToken, pickup: pick, dropoff: drop, passengers: 2, name: 'Lee', notes: 'Back door' });
+assert.equal(lb.status, 'dispatching');
+const ride3 = await adminGet(`rides/${lb.rideId}`);
+assert.equal(ride3.bookedBy.via, 'link'); assert.equal(ride3.customer.phone, '+447700900803'); assert.equal(ride3.customer.name, 'Lee'); assert.match(ride3.notes, /2 passengers\. Back door/);
+await assert.rejects(P.call('bookingLinkBook', { token: linkToken, pickup: pick, dropoff: drop, passengers: 2 }), /already been used/);
+assert.equal((await P.call('bookingLinkInfo', { token: linkToken })).booked.status, 'dispatching');
+assert.equal(await adminGet(`bookingLinks/${linkToken}`).then((d) => d.rideId), lb.rideId);
+
+step('bot: "operator" with someone free puts the caller through to the office');
+r = await twilio({ step: 'incoming' }, { From: '+441527222333', To: APP_NUMBER, CallSid: 'CC4' });
+assert.match(r.body, /booking assistant/);
+await OP.call('setFleetPhoneAvailable', { available: true });
+r = await botTurn('CC4', { Digits: '0' });
+assert.match(r.body, /Putting you through/); assert.match(r.body, /step=incoming&amp;fleet=[^&]+&amp;round=2&amp;nobot=1/);
+r = await twilio({ step: 'incoming', fleet: f.fleetId, round: '2', nobot: '1' }, { From: '+441527222333', To: APP_NUMBER, CallSid: 'CC4' });
+assert.match(r.body, new RegExp(`<Identity>fm_${opUid}</Identity>`));
+cc = await adminGet(`fleets/${f.fleetId}/phoneCalls/CC4`);
+assert.equal(cc.status, 'ringing'); assert.equal(cc.bot.outcome, 'to_operator');
+step('bot: and if Olivia does not pick up, it does not go back to the bot');
+r = await twilio({ step: 'after', fleet: f.fleetId, round: '2' }, { CallSid: 'CC4', DialCallStatus: 'no-answer' });
+assert.match(r.body, /Please hold/); assert.doesNotMatch(r.body, /booking assistant/);
+await twilio({ step: 'status' }, { CallSid: 'CC4', To: APP_NUMBER, CallStatus: 'completed', CallDuration: '50' });
+
+step('bot: operators rung but nobody answers -> the bot takes the call instead of hold music');
+r = await twilio({ step: 'incoming' }, { From: '+447700900804', To: APP_NUMBER, CallSid: 'CC5' });
+assert.match(r.body, /<Dial/);
+r = await twilio({ step: 'after', fleet: f.fleetId, round: '1' }, { CallSid: 'CC5', DialCallStatus: 'no-answer' });
+assert.match(r.body, /Sorry to keep you waiting\. I&apos;m the booking assistant/); assert.doesNotMatch(r.body, /<Play>/);
+assert.equal((await adminGet(`fleets/${f.fleetId}/phoneCalls/CC5`)).bot.reason, 'no_answer');
+step('bot: AI down -> booking link straight away to a mobile');
+ai.push({ fail: true });
+r = await botTurn('CC5', { SpeechResult: 'From the hospital' });
+assert.match(r.body, /sent you a text with a link/);
+assert.equal((await adminGet(`fleets/${f.fleetId}/phoneCalls/CC5`)).bot.gaveUp, 'error');
+await OP.call('setFleetPhoneAvailable', { available: false });
+
+step('bot: a landline caller with nobody free, AI down -> holds for the office; silence twice -> backup');
+r = await twilio({ step: 'incoming' }, { From: '+441527222444', To: APP_NUMBER, CallSid: 'CC6' });
+r = await botTurn('CC6', {});
+assert.match(r.body, /Sorry, I didn&apos;t catch that\. .*Where would you like to be picked up from\?/);
+r = await botTurn('CC6', {});
+assert.match(r.body, /Please hold for the next person/); assert.match(r.body, /nobot=1/);
+
+step('bot: "operator" with nobody free offers the link to a mobile; yes texts it');
+r = await twilio({ step: 'incoming' }, { From: '+447700900805', To: APP_NUMBER, CallSid: 'CC7' });
+ai.push(AI({ intent: 'operator' }));
+r = await botTurn('CC7', { SpeechResult: 'Can I speak to a person' });
+assert.match(r.body, /Everyone in the office is busy.*text you a link/);
+r = await botTurn('CC7', { SpeechResult: 'Yes please' });
+assert.match(r.body, /I&apos;ve sent you a text with a link to book your taxi/);
+assert.equal((await adminGet(`fleets/${f.fleetId}/phoneCalls/CC7`)).bot.outcome, 'link_sent');
+
+step('bot: hanging up halfway counts as missed; hidden numbers never reach the bot');
+r = await twilio({ step: 'incoming' }, { From: '+447700900806', To: APP_NUMBER, CallSid: 'CC8' });
+await twilio({ step: 'status' }, { CallSid: 'CC8', To: APP_NUMBER, CallStatus: 'completed', CallDuration: '40' });
+cc = await adminGet(`fleets/${f.fleetId}/phoneCalls/CC8`);
+assert.equal(cc.status, 'missed'); assert.equal(cc.bot.outcome, 'hung_up');
+r = await twilio({ step: 'incoming' }, { From: 'anonymous', To: APP_NUMBER, CallSid: 'CC9' });
+assert.match(r.body, /All our operators are busy/);
+
+step('bot minutes, calls and bookings in the monthly totals');
+const u2 = (await adminGet(`fleets/${f.fleetId}`)).phoneUsage[month];
+assert.equal(u2.botBookings, 2); assert.equal(u2.botCalls, 3, 'CC1, CC4 and CC8 have ended'); assert.ok(u2.botMinutes >= 3);
 
 console.log('ALL PHONE CHECKS PASSED');
 fake.close();
