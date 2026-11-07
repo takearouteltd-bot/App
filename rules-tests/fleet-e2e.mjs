@@ -59,8 +59,9 @@ await assert.rejects(O.call('decideFleetDriver', { driverId: d1.user.uid, approv
 await O.call('decideFleetDriver', { driverId: d1.user.uid, approve: true, driverType: 'company' });
 let d1doc = (await getDoc(doc(D.db, 'drivers', d1.user.uid))).data();
 assert.equal(d1doc.fleetId, created.fleetId);
-assert.equal(d1doc.subscription.paymentMethod, 'fleet');
-assert.equal(d1doc.subscriptionBeforeFleet.paymentMethod, 'wallet_deduction');
+// Per-driver fleet: a company driver keeps paying their own membership.
+assert.equal(d1doc.subscription.paymentMethod, 'wallet_deduction');
+assert.equal(d1doc.subscriptionBeforeFleet, undefined);
 assert.equal(d1doc.fleetDriverType, 'company');
 const inv = await O.call('inviteFleetDriver', { phone: '07700 900222', driverType: 'company' });
 assert.equal(inv.existingAccount, true);
@@ -378,9 +379,9 @@ await assert.rejects(O.call('fleetCall', { to: 'driver', driverId: d3.user.uid }
 await assert.rejects(D.call('fleetCall', { to: 'customer', phone: '07700900999', myPhone: '07700900111' }), /Fleet staff only/);
 
 step('a driver who had no membership before joining has none after leaving (the app asks them to activate one)');
-await adminSet(`drivers/${d3.user.uid}`, { subscriptionBeforeFleet: null }, true);
+await adminSet(`drivers/${d3.user.uid}`, { subscription: null, subscriptionBeforeFleet: null }, true);
 assert.equal((await O.call('removeFleetDriver', { driverId: d3.user.uid })).membershipRestored, false);
-assert.equal((await getDoc(doc(D3.db, 'drivers', d3.user.uid))).data().subscription, undefined);
+assert.ok(!(await getDoc(doc(D3.db, 'drivers', d3.user.uid))).data().subscription);
 assert.equal((await getDoc(doc(D3.db, 'drivers', d3.user.uid))).data().blocked, true);
 await A.call('setAccountSuspension', { uid: d3.user.uid, suspend: false });
 
@@ -438,19 +439,23 @@ await adminSet('rides/appjob2', { status: 'completed' }, true);
 await adminSet('rides/appjob3', { status: 'completed' }, true);
 await adminSet('rides/appjob', { status: 'completed' }, true);
 await adminSet(`fleets/${fid}`, { nextBillingDate: new Date(Date.now() - 60000) }, true);
+await adminSet(`drivers/${d1.user.uid}`, { subscription: { status: 'active', paymentMethod: 'fleet', fleetId: fid }, subscriptionBeforeFleet: { status: 'active', paymentMethod: 'wallet_deduction', nextBillingDate: '2026-12-05' } }, true);
 const before = (await getDoc(doc(O.db, 'fleetWallets', fid))).data().availableBalance;
 const bill = await fetch(`http://127.0.0.1:8085/v1/projects/${PROJECT}/topics/firebase-schedule-billFleets:publish`, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: [{ data: Buffer.from('{}').toString('base64') }] }) });
 assert.ok(bill.ok, 'pubsub publish: ' + bill.status);
-const billed = await until(async () => { const w = (await getDoc(doc(O.db, 'fleetWallets', fid))).data(); return w.availableBalance !== before ? w : null; }, 'billFleets');
-assert.equal(billed.availableBalance, before - 50, 'one company driver billed, not the self-employed one');
+// Per-driver plan: drivers pay their own memberships, the fleet nothing.
+await until(async () => (await getDoc(doc(O.db, 'fleets', fid))).data().nextBillingDate.toMillis() > Date.now(), 'billFleets moved the date');
+assert.equal((await getDoc(doc(O.db, 'fleetWallets', fid))).data().availableBalance, before, 'per-driver fleet billed nothing');
 const memberships = (await getDocs(collection(O.db, 'fleetWallets', fid, 'transactions'))).docs.map((d) => d.data()).filter((t) => t.type === 'membership');
-assert.ok(memberships.some((t) => !t.prorated && t.driverIds.length === 1 && t.driverIds[0] === d1.user.uid), 'monthly bill: the company driver');
-assert.ok(!memberships.some((t) => !t.prorated && t.driverIds.includes(d3.user.uid)), 'self-employed driver not in the monthly bill');
+assert.equal(memberships.length, 0);
+// A company driver still marked fleet-paid (from before) gets their own back.
+await until(async () => (await getDoc(doc(D.db, 'drivers', d1.user.uid))).data().subscription.paymentMethod === 'wallet_deduction', 'old fleet-paid membership moved back');
+assert.equal((await getDoc(doc(D.db, 'drivers', d1.user.uid))).data().subscription.nextBillingDate, '2026-12-05');
 await assert.rejects(O.call('setFleetDriverType', { driverId: d3.user.uid, driverType: 'company' }), 'fleet changing type later');
 await A.call('setFleetDriverType', { driverId: d3.user.uid, driverType: 'company' });
 d3doc = (await getDoc(doc(D3.db, 'drivers', d3.user.uid))).data();
-assert.equal(d3doc.fleetDriverType, 'company'); assert.equal(d3doc.subscription.paymentMethod, 'fleet'); assert.equal(d3doc.subscriptionBeforeFleet.paymentMethod, 'wallet_deduction');
+assert.equal(d3doc.fleetDriverType, 'company'); assert.equal(d3doc.subscription.paymentMethod, 'wallet_deduction', 'company driver on a per-driver fleet pays their own'); assert.equal(d3doc.subscriptionBeforeFleet, undefined);
 await A.call('setFleetDriverType', { driverId: d3.user.uid, driverType: 'self' });
 d3doc = (await getDoc(doc(D3.db, 'drivers', d3.user.uid))).data();
 assert.equal(d3doc.fleetDriverType, 'self'); assert.equal(d3doc.subscription.paymentMethod, 'wallet_deduction'); assert.equal(d3doc.subscription.nextBillingDate, '2026-12-01');

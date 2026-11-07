@@ -2,7 +2,8 @@
 // Driving for a taxi firm (a fleet) on TakeARoute. A driver joins with the
 // fleet's code, which the fleet then accepts, or accepts an invitation the
 // fleet sent to their phone number. The fleet makes them a company driver
-// (its car: card earnings go to the fleet, which pays the membership, and
+// (its car: card earnings go to the fleet; the fleet pays the membership
+// only on a flat monthly plan, otherwise the driver does; and
 // the fleet lets them go) or self-employed (own car: they keep their own
 // fares and membership, and leave here themselves).
 // Server side: functions/fleet.js.
@@ -78,11 +79,11 @@ export default function DriverFleetScreen({ navigation }) {
             ) : (
               <>
                 <Text style={[TYPE.body, { marginTop: SPACE[2] }]}>
-                  Your card fares go to {fleetName}, who pay you. They also pay your TakeARoute membership.
+                  Your card fares go to {fleetName}, who pay you. {fleetPaysMembership ? 'They also pay your TakeARoute membership.' : 'You pay your own TakeARoute membership.'}
                   You get their phone bookings as well as normal app jobs.
                 </Text>
                 <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>
-                  To leave, ask your fleet to let you go. You then drive on your own: card fares go to your wallet again, and the membership you had before joining comes back (or you activate one).
+                  To leave, ask your fleet to let you go. You then drive on your own: card fares go to your wallet again{fleetPaysMembership ? ', and the membership you had before joining comes back (or you activate one)' : ''}.
                 </Text>
               </>
             )}
@@ -103,7 +104,7 @@ export default function DriverFleetScreen({ navigation }) {
             title={`${invite.fleetName || 'A fleet'} invited you`}
             body={invite.driverType === 'self'
               ? 'They invited you as a self-employed driver. You get their phone bookings, and your card fares and membership stay your own.'
-              : 'They invited you as a company car driver. Your card fares go to the fleet and the fleet pays your membership. You also get their phone bookings.'}
+              : 'They invited you as a company car driver. Your card fares go to the fleet, and you get their phone bookings. Your TakeARoute membership is your own unless the fleet is on a plan that covers it.'}
             action={
               <>
                 <Button
@@ -138,7 +139,7 @@ export default function DriverFleetScreen({ navigation }) {
         <Section title="Join a fleet">
           <Card>
             <Text style={[TYPE.body, { marginBottom: SPACE[4] }]}>
-              Ask the fleet for their join code and enter it here. When they accept you, they choose: company car driver (the fleet gets your card fares and pays your membership) or self-employed (you keep both).
+              Ask the fleet for their join code and enter it here. When they accept you, they choose: company car driver (the fleet gets your card fares) or self-employed (you keep them). Some fleets also pay your TakeARoute membership; otherwise you pay your own.
             </Text>
             <Field
               label="Fleet code"

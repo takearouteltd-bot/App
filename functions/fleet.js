@@ -1001,18 +1001,17 @@ module.exports = (deps) => {
   }
 
   /**
-   * Whether the fleet pays this driver's membership. It always does for a
-   * company driver. A fleet on a flat monthly plan pays one price for all
-   * its drivers, so it covers self-employed drivers' memberships too (their
-   * card fares still go to their own wallet). On a per-driver plan a
-   * self-employed driver pays their own.
-   * @param {string} type "company" or "self".
+   * Whether the fleet pays this driver's membership. A fleet on a flat
+   * monthly plan pays one price for all its drivers, company and
+   * self-employed. On a per-driver plan every driver pays their own
+   * TakeARoute membership (wallet, then saved card) and the fleet pays
+   * nothing (Sarfaraz, 2026-11-08).
+   * @param {string} type "company" or "self" (no longer decides it).
    * @param {?Object} fleet Fleet data.
    * @return {boolean} True when the fleet pays.
    */
   function fleetCovers(type, fleet) {
-    return type === "company" || Boolean(fleet &&
-      fleet.billingPlan === "monthly");
+    return Boolean(fleet && fleet.billingPlan === "monthly");
   }
 
   /**
@@ -1602,17 +1601,13 @@ module.exports = (deps) => {
               .catch(() => null);
         }
         const snap = await db.collection("drivers")
-            .where("fleetId", "==", fleetId)
-            .where("fleetDriverType", "==", "self").get();
+            .where("fleetId", "==", fleetId).get();
         const told = [];
         for (const d of snap.docs) {
           const changed = await db.runTransaction(async (tx) => {
             const fresh = await tx.get(d.ref);
             const driver = fresh.data();
-            if (!driver || driver.fleetId !== fleetId ||
-                fleetTypeOf(driver) !== "self") {
-              return false;
-            }
+            if (!driver || driver.fleetId !== fleetId) return false;
             const paidByFleet = Boolean(driver.subscription &&
               driver.subscription.paymentMethod === "fleet");
             if (isMonthly === paidByFleet) return false;
@@ -1626,7 +1621,7 @@ module.exports = (deps) => {
         if (told.length) {
           await sendPush(told, isMonthly ? {
             title: `${after.name || "Your fleet"} now pays your membership`,
-            body: "Your card fares still go to your wallet.",
+            body: "You no longer pay it yourself.",
             channelId: "general",
           } : {
             title: "Your membership is your own again",
@@ -1672,7 +1667,8 @@ module.exports = (deps) => {
           "You are now self-employed in your fleet",
         body: type === "company" ?
           `${result.fleetName || "Your fleet"} now receives your card ` +
-            "earnings and pays your membership." :
+            (result.covered ? "earnings and pays your membership." :
+              "earnings. You still pay your own membership.") :
           (result.covered ?
             "Card fares now go to your wallet. Your fleet still pays " +
               "your membership." :
@@ -3161,7 +3157,9 @@ module.exports = (deps) => {
     const count = drivers.docs.length;
     // Per driver, or the fleet's flat monthly price (fleetBilling.js).
     const bill = fleetBilling.billFor(fleet, count, cfg);
-    const amount = bill.amount;
+    // Per-driver plan: each driver pays their own membership, so the fleet
+    // is billed nothing (the date still moves on).
+    const amount = fleet.billingPlan === "monthly" ? bill.amount : 0;
     const price = bill.price;
     const walletRef = db.collection("fleetWallets").doc(doc.id);
     await db.runTransaction(async (tx) => {
@@ -3187,6 +3185,7 @@ module.exports = (deps) => {
       });
     });
     console.log(`Fleet ${doc.id} billed ${amount} for ${count}`);
+    if (!(amount > 0)) return "nothing to bill";
     // Anything the wallet could not cover goes on the saved card; no
     // card or a declined card starts the grace period.
     const paid = await fleetBilling.chargeShortfall(doc.id)
@@ -3209,6 +3208,48 @@ module.exports = (deps) => {
   }
   fleetBilling.billIfDue = billIfDue;
 
+  /**
+   * Drivers whose membership a per-driver fleet still pays (from before
+   * per-driver fleets stopped paying) go back to paying their own.
+   * @return {Promise<number>} How many moved.
+   */
+  async function ownMembershipsOnPerDriverFleets() {
+    const snap = await db.collection("drivers")
+        .where("subscription.paymentMethod", "==", "fleet").get();
+    const fleets = {};
+    const moved = [];
+    for (const d of snap.docs) {
+      const fleetId = d.data().fleetId;
+      if (fleetId && !(fleetId in fleets)) {
+        fleets[fleetId] = (await db.collection("fleets").doc(fleetId).get())
+            .data() || null;
+      }
+      if (fleetId && fleetCovers(fleetTypeOf(d.data()), fleets[fleetId])) {
+        continue;
+      }
+      const ok = await db.runTransaction(async (tx) => {
+        const fresh = (await tx.get(d.ref)).data();
+        if (!fresh || !fresh.subscription ||
+            fresh.subscription.paymentMethod !== "fleet" ||
+            fresh.fleetId !== fleetId) {
+          return false;
+        }
+        tx.update(d.ref, ownMembershipFields(fresh).fields);
+        return true;
+      });
+      if (ok) moved.push(d.id);
+    }
+    if (moved.length) {
+      await sendPush(moved, {
+        title: "Your TakeARoute membership is your own",
+        body: "Your fleet no longer pays it. Check Membership in the app.",
+        channelId: "general",
+      }).catch(() => null);
+    }
+    console.log("ownMembershipsOnPerDriverFleets", moved.length);
+    return moved.length;
+  }
+
   out.billFleets = functions.runWith({secrets: STRIPE_SECRETS}).pubsub
       .schedule("every day 06:30").timeZone("Europe/London")
       .onRun(async () => {
@@ -3216,6 +3257,7 @@ module.exports = (deps) => {
         const due = await db.collection("fleets")
             .where("nextBillingDate", "<=", Timestamp.now()).get();
         for (const doc of due.docs) await billOne(doc, cfg);
+        await ownMembershipsOnPerDriverFleets();
         return null;
       });
 
