@@ -832,7 +832,10 @@ module.exports = (deps) => {
       billing: {status: "ok"},
       currency: cfg.currency,
       dispatchLeadMinutes: DEFAULT_LEAD_MINUTES,
-      nextBillingDate: Timestamp.fromDate(addOneMonth(new Date())),
+      // A flat monthly plan is paid at the start of each month (first bill
+      // now, taken when the owner adds a card or at the next daily run).
+      nextBillingDate: billingPlan === "monthly" ? Timestamp.now() :
+        Timestamp.fromDate(addOneMonth(new Date())),
       createdAt: now, createdBy: context.auth.uid,
     });
     batch.set(db.collection("fleetManagers").doc(user.uid), {
@@ -1592,6 +1595,12 @@ module.exports = (deps) => {
         const isMonthly = after.billingPlan === "monthly";
         if (wasMonthly === isMonthly) return null;
         const fleetId = context.params.fleetId;
+        // Onto the monthly plan: paid at the start, so due now (the daily
+        // billing run takes it).
+        if (isMonthly) {
+          await change.after.ref.update({nextBillingDate: Timestamp.now()})
+              .catch(() => null);
+        }
         const snap = await db.collection("drivers")
             .where("fleetId", "==", fleetId)
             .where("fleetDriverType", "==", "self").get();
@@ -3135,54 +3144,101 @@ module.exports = (deps) => {
      fleet on its billing date (self-employed drivers pay their own), taken
      from the fleet's wallet. The wallet may go below zero; the admin
      settles that with the fleet. */
+  /**
+   * Bills one fleet if its bill is due: the plan's price from its wallet,
+   * and any shortfall from its saved card.
+   * @param {Object} doc Fleet snapshot.
+   * @param {Object} cfg loadAppConfig().
+   * @return {Promise<string>} What happened.
+   */
+  async function billOne(doc, cfg) {
+    const fleet = doc.data();
+    if (fleet.status === "suspended") return "suspended";
+    const members = await db.collection("drivers")
+        .where("fleetId", "==", doc.id).get();
+    const drivers = {docs: members.docs.filter((d) =>
+      fleetTypeOf(d.data()) === "company")};
+    const count = drivers.docs.length;
+    // Per driver, or the fleet's flat monthly price (fleetBilling.js).
+    const bill = fleetBilling.billFor(fleet, count, cfg);
+    const amount = bill.amount;
+    const price = bill.price;
+    const walletRef = db.collection("fleetWallets").doc(doc.id);
+    await db.runTransaction(async (tx) => {
+      const fresh = await tx.get(doc.ref);
+      const next = toMillis(fresh.data().nextBillingDate);
+      if (!next || next > Date.now()) return;
+      tx.update(doc.ref, {nextBillingDate: Timestamp.fromDate(
+          addOneMonth(new Date(next))),
+      billingPeriodStart: Timestamp.fromMillis(next)});
+      if (!(amount > 0)) return;
+      tx.set(walletRef, {
+        availableBalance: FieldValue.increment(-amount),
+        totalCharged: FieldValue.increment(amount),
+        updatedAt: FieldValue.serverTimestamp(),
+      }, {merge: true});
+      tx.set(walletRef.collection("transactions").doc(), {
+        type: "membership", amount: -amount, drivers: count,
+        plan: fleet.billingPlan === "monthly" ? "monthly" : "per_driver",
+        pricePerDriver: fleet.billingPlan === "monthly" ? null : price,
+        driverIds: drivers.docs.map((d) => d.id),
+        description: bill.description,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    });
+    console.log(`Fleet ${doc.id} billed ${amount} for ${count}`);
+    // Anything the wallet could not cover goes on the saved card; no
+    // card or a declined card starts the grace period.
+    const paid = await fleetBilling.chargeShortfall(doc.id)
+        .catch((error) => `error: ${error.message}`);
+    console.log(`Fleet ${doc.id} billing: ${paid}`);
+    return paid;
+  }
+
+  /**
+   * Bills a fleet now if it is due (a monthly fleet is billed at the start of
+   * each month, so it is due the day it starts).
+   * @param {string} fleetId Fleet.
+   * @return {Promise<string>} What happened.
+   */
+  async function billIfDue(fleetId) {
+    const doc = await db.collection("fleets").doc(fleetId).get();
+    const next = doc.exists ? toMillis(doc.data().nextBillingDate) : 0;
+    if (!next || next > Date.now()) return "not due";
+    return billOne(doc, await loadAppConfig());
+  }
+  fleetBilling.billIfDue = billIfDue;
+
   out.billFleets = functions.runWith({secrets: STRIPE_SECRETS}).pubsub
       .schedule("every day 06:30").timeZone("Europe/London")
       .onRun(async () => {
         const cfg = await loadAppConfig();
         const due = await db.collection("fleets")
             .where("nextBillingDate", "<=", Timestamp.now()).get();
-        for (const doc of due.docs) {
-          const fleet = doc.data();
-          if (fleet.status === "suspended") continue;
-          const members = await db.collection("drivers")
-              .where("fleetId", "==", doc.id).get();
-          const drivers = {docs: members.docs.filter((d) =>
-            fleetTypeOf(d.data()) === "company")};
-          const count = drivers.docs.length;
-          // Per driver, or the fleet's flat monthly price (fleetBilling.js).
-          const bill = fleetBilling.billFor(fleet, count, cfg);
-          const amount = bill.amount;
-          const price = bill.price;
-          const walletRef = db.collection("fleetWallets").doc(doc.id);
-          await db.runTransaction(async (tx) => {
-            const fresh = await tx.get(doc.ref);
-            const next = toMillis(fresh.data().nextBillingDate);
-            if (!next || next > Date.now()) return;
-            tx.update(doc.ref, {nextBillingDate: Timestamp.fromDate(
-                addOneMonth(new Date(next)))});
-            if (!(amount > 0)) return;
-            tx.set(walletRef, {
-              availableBalance: FieldValue.increment(-amount),
-              totalCharged: FieldValue.increment(amount),
-              updatedAt: FieldValue.serverTimestamp(),
-            }, {merge: true});
-            tx.set(walletRef.collection("transactions").doc(), {
-              type: "membership", amount: -amount, drivers: count,
-              plan: fleet.billingPlan === "monthly" ? "monthly" : "per_driver",
-              pricePerDriver: fleet.billingPlan === "monthly" ? null : price,
-              driverIds: drivers.docs.map((d) => d.id),
-              description: bill.description,
-              createdAt: FieldValue.serverTimestamp(),
-            });
-          });
-          console.log(`Fleet ${doc.id} billed ${amount} for ${count}`);
-          // Anything the wallet could not cover goes on the saved card; no
-          // card or a declined card starts the grace period.
-          const paid = await fleetBilling.chargeShortfall(doc.id)
-              .catch((error) => `error: ${error.message}`);
-          console.log(`Fleet ${doc.id} billing: ${paid}`);
-        }
+        for (const doc of due.docs) await billOne(doc, cfg);
         return null;
+      });
+
+  /* A TakeARoute admin starts a fleet's billing now: this month is charged
+     straight away (wallet, then card) and the next bill is a month on. */
+  out.adminBillFleetNow = functions.runWith({secrets: STRIPE_SECRETS})
+      .https.onCall(async (data, context) => {
+        await assertAdmin(context);
+        const fleetId = text(data && data.fleetId, 60);
+        const ref = db.collection("fleets").doc(fleetId || "x");
+        const snap = await ref.get();
+        if (!fleetId || !snap.exists) {
+          throw new HttpsError("not-found", "No such fleet.");
+        }
+        if (snap.data().status === "suspended") {
+          throw new HttpsError("failed-precondition",
+              "The fleet is paused. Lift the pause first.");
+        }
+        await ref.update({nextBillingDate: Timestamp.now()});
+        const result = await billIfDue(fleetId);
+        const fresh = (await ref.get()).data() || {};
+        return {result, billingStatus: (fresh.billing || {}).status || "ok",
+          owed: await fleetBilling.owedBy(fleetId)};
       });
 
   /* ---------------- driver balances, account clients, invoices ------- */

@@ -368,6 +368,11 @@ module.exports = (deps) => {
             session.setup_intent.status === "succeeded") {
           await saveCard(me.fleetId, customer,
               session.setup_intent.payment_method);
+          // A monthly fleet's first bill waits for its card: take it now.
+          if (api.billIfDue) {
+            await api.billIfDue(me.fleetId).catch((e) =>
+              console.error("billIfDue", me.fleetId, e.message));
+          }
           // A new card while money is owed: use it straight away.
           if (await owedBy(me.fleetId) > 0) {
             paid = (await chargeShortfall(me.fleetId)) === "paid";
@@ -388,7 +393,7 @@ module.exports = (deps) => {
         return null;
       });
 
-  return {
+  const api = {
     functions: out,
     billFor,
     chargeShortfall,
@@ -409,4 +414,5 @@ module.exports = (deps) => {
       return true;
     },
   };
+  return api;
 };
