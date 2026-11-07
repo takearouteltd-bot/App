@@ -3745,9 +3745,10 @@ function buildReceipt(ride, rideId, extra) {
   const when = ride.completedAt && ride.completedAt.toDate ?
     ride.completedAt.toDate() : new Date();
   const date = when.toLocaleDateString("en-GB",
-      {weekday: "long", day: "numeric", month: "long", year: "numeric"});
+      {weekday: "long", day: "numeric", month: "long", year: "numeric",
+        timeZone: "Europe/London"});
   const time = when.toLocaleTimeString("en-GB",
-      {hour: "2-digit", minute: "2-digit"});
+      {hour: "2-digit", minute: "2-digit", timeZone: "Europe/London"});
 
   const lines = [];
   const add = (label, value, opts) => {
