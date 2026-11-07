@@ -308,6 +308,42 @@ module.exports = (deps) => {
   const callRef = (fleetId, callSid) => db.collection("fleets").doc(fleetId)
       .collection("phoneCalls").doc(callSid);
 
+  /* ---------------------------- blocked numbers ---------------------- */
+
+  /* fleets/{id}/blockedNumbers/{+44...}: callers the fleet won't take
+     bookings from. Staff read them (rules); only these functions write. */
+  const blockedRef = (fleetId, phone) => db.collection("fleets").doc(fleetId)
+      .collection("blockedNumbers").doc(phone);
+  // Twilio shows a hidden caller as one of these (or nothing at all).
+  const WITHHELD = ["+266696687", "+86282452253", "+7378742833",
+    "+2562533", "+8656696"];
+
+  /**
+   * Whether the caller hid their number.
+   * @param {string} from Caller, as Twilio sent it.
+   * @return {boolean} Withheld.
+   */
+  function isWithheld(from) {
+    const f = String(from || "").trim();
+    return !f || !/^\+\d{8,15}$/.test(f) || WITHHELD.includes(f) ||
+      /anonymous|restricted|unknown|private|unavailable/i.test(f);
+  }
+
+  /**
+   * Whether the fleet has blocked this number (or withheld numbers).
+   * @param {string} fleetId Fleet.
+   * @param {Object} fleet Fleet data.
+   * @param {string} phone Caller (E.164) or a withheld marker.
+   * @return {Promise<?string>} "number", "withheld" or null.
+   */
+  async function blockedFor(fleetId, fleet, phone) {
+    if (isWithheld(phone)) {
+      return fleet && fleet.blockWithheld === true ? "withheld" : null;
+    }
+    const snap = await blockedRef(fleetId, phone).get().catch(() => null);
+    return snap && snap.exists ? "number" : null;
+  }
+
   /**
    * The fleet's operators who can be rung now: available, active and not
    * on a call. Longest-waiting first, up to 10.
@@ -337,7 +373,9 @@ module.exports = (deps) => {
   Object.assign(out, require("./fleetWeb")({functions, db, FieldValue, text,
     toE164, booking: deps.booking, sendText: bot.sendText,
     customerCard: bot.customerCard, assertFleetManager, TWILIO_SECRETS,
-    stripe: deps.stripe, STRIPE_SECRETS: deps.STRIPE_SECRETS}));
+    stripe: deps.stripe, STRIPE_SECRETS: deps.STRIPE_SECRETS,
+    isBlocked: async (fleetId, fleet, phone) =>
+      (await blockedFor(fleetId, fleet, phone)) === "number"}));
 
   /* ------------------------------ webhooks --------------------------- */
 
@@ -445,6 +483,20 @@ module.exports = (deps) => {
     }
 
     const ref = callRef(fleetId, p.CallSid);
+    // Blocked callers hear a short message and the call ends: no ringing,
+    // no booking bot.
+    const blocked = round === 1 ?
+      await blockedFor(fleetId, found.data, from) : null;
+    if (blocked) {
+      const now = new Date().toISOString();
+      await ref.set({direction: "in", from, name: "", status: "blocked",
+        blocked, startedAt: now, endedAt: now, rounds: 1}, {merge: true});
+      return say(blocked === "withheld" ?
+        `Sorry, ${fleetName} does not take calls from withheld numbers. ` +
+        "Please call again with your number shown." :
+        `Sorry, ${fleetName} can't take bookings from this number.`) +
+        "<Hangup/>";
+    }
     if (round === 1) {
       const card = from.startsWith("+") ? await db.collection("fleets")
           .doc(fleetId).collection("customers").doc(from).get() : null;
@@ -748,6 +800,44 @@ module.exports = (deps) => {
         });
         return {ok: true};
       });
+
+  /* Staff block a caller: calls to the office get a short message and
+     end, and the number can't book on the fleet's booking page. */
+  out.blockFleetNumber = functions.https.onCall(async (data, context) => {
+    const me = await assertFleetManager(context, false);
+    const phone = toE164(data && data.phone);
+    if (!phone || !/^\+\d{8,15}$/.test(phone)) {
+      throw new HttpsError("invalid-argument",
+          "Enter the number to block, for example 07700 900123.");
+    }
+    const line = me.fleet.phoneLine || {};
+    if (phone === line.number || phone === line.ownNumber) {
+      throw new HttpsError("invalid-argument",
+          "That is your own taxi number.");
+    }
+    await blockedRef(me.fleetId, phone).set({phone,
+      reason: text(data && data.reason, 120) || "",
+      by: me.uid, byName: (me.manager && (me.manager.name ||
+        me.manager.email)) || "",
+      at: new Date().toISOString()});
+    return {ok: true, phone};
+  });
+
+  out.unblockFleetNumber = functions.https.onCall(async (data, context) => {
+    const me = await assertFleetManager(context, false);
+    const phone = toE164(data && data.phone);
+    if (!phone) throw new HttpsError("invalid-argument", "Which number?");
+    await blockedRef(me.fleetId, phone).delete();
+    return {ok: true, phone};
+  });
+
+  /* The owner chooses whether calls from withheld numbers are refused. */
+  out.setFleetBlockWithheld = functions.https.onCall(async (data, context) => {
+    const me = await assertFleetManager(context, true);
+    const on = Boolean(data && data.on);
+    await db.collection("fleets").doc(me.fleetId).update({blockWithheld: on});
+    return {ok: true, on};
+  });
 
   /* ------------------------------- admins ---------------------------- */
 

@@ -236,6 +236,13 @@ assert.ok(me.saved.some((a) => /12 Station Road/.test(a.address)));
 const far = new Date(Date.now() + 8 * 86400000).toISOString();
 await assert.rejects(C.call('webBook', { token, pickup: PICK, dropoff: DROP, pickupAt: far, passengers: 1, rideType: 'RouteMini', pay: 'card' }), /next 5 days/);
 
+step('a blocked number cannot get a code or book; unblocked, it can again');
+await O.call('blockFleetNumber', { phone: '07700 900555', reason: 'no-shows' });
+await assert.rejects(C.call('webBook', { token, pickup: PICK, dropoff: DROP, passengers: 1, rideType: 'RouteMini', pay: 'driver' }), /can't take online bookings from this number/);
+await assert.rejects(C.call('webSendCode', { slug: 'time-taxis', phone: '07700900555' }), /can't take online bookings from this number/);
+await O.call('unblockFleetNumber', { phone: '+447700900555' });
+await C.call('webBook', { token, pickup: PICK, dropoff: DROP, passengers: 1, rideType: 'RouteMini', pay: 'driver' }).catch((e) => assert.doesNotMatch(e.message, /this number/));
+
 step('switched off: the page closes');
 await O.call('saveFleetWebBooking', { enabled: false });
 await assert.rejects(C.call('webBookerInfo', { slug: 'time-taxis' }), /not available/);

@@ -27,6 +27,7 @@ beforeEach(async () => {
     await setDoc(doc(db, 'fleets/f1'), { name: 'A Cars', joinCode: 'ABC123', dispatchLeadMinutes: 20, phone: '' });
     await setDoc(doc(db, 'fleets/f2'), { name: 'B Cars', joinCode: 'XYZ789' });
     await setDoc(doc(db, 'fleets/f1/customers/+447700900000'), { name: 'Ann', phone: '+447700900000', bookings: 1 });
+    await setDoc(doc(db, 'fleets/f1/blockedNumbers/+447700900999'), { phone: '+447700900999', reason: 'x' });
     await setDoc(doc(db, 'fleetWallets/f1'), { availableBalance: 10 });
     await setDoc(doc(db, 'fleetWallets/f1/transactions/t1'), { amount: 10 });
     await setDoc(doc(db, 'drivers/d1'), driver('f1', { onboardingComplete: true }));
@@ -218,3 +219,7 @@ test('unpaid driver can still finish a trip in progress', async () => {
   await member(owes, 'on_ride');
   await assertSucceeds(updateDoc(doc(as('d1'), 'drivers/d1'), { status: 'online' }));
 });
+
+test('fleet staff see their blocked numbers', () => assertSucceeds(getDoc(doc(as('op1'), 'fleets/f1/blockedNumbers/+447700900999'))));
+test('another fleet cannot see them', () => assertFails(getDoc(doc(as('own2'), 'fleets/f1/blockedNumbers/+447700900999'))));
+test('staff cannot block or unblock directly (the server does it)', () => assertFails(setDoc(doc(as('own1'), 'fleets/f1/blockedNumbers/+447700900111'), { phone: '+447700900111' })));

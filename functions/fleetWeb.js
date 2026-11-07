@@ -62,6 +62,10 @@ module.exports = (deps) => {
   const {functions, db, FieldValue, text, toE164, booking, sendText,
     customerCard, assertFleetManager, TWILIO_SECRETS, stripe,
     STRIPE_SECRETS} = deps;
+  // Numbers the fleet has blocked can't book online either (fleetPhone.js).
+  const isBlocked = deps.isBlocked || (async () => false);
+  const BLOCKED_TEXT = "Sorry, we can't take online bookings from this " +
+    "number. Please call us.";
   const {HttpsError} = functions.https;
   const {Timestamp} = require("firebase-admin/firestore");
   const out = {};
@@ -310,6 +314,9 @@ module.exports = (deps) => {
           throw new HttpsError("invalid-argument",
               "Enter a UK mobile number, for example 07700 900123.");
         }
+        if (await isBlocked(fleetId, fleet, phone)) {
+          throw new HttpsError("permission-denied", BLOCKED_TEXT);
+        }
         const req = context.rawRequest || {};
         const ip = String((req.headers && req.headers["x-forwarded-for"]) ||
           req.ip || "").split(",")[0].trim();
@@ -444,6 +451,9 @@ module.exports = (deps) => {
         const d = data || {};
         const {session, fleetId, fleet, settings} =
           await sessionFor(d.token);
+        if (await isBlocked(fleetId, fleet, session.phone)) {
+          throw new HttpsError("permission-denied", BLOCKED_TEXT);
+        }
         const rideType = settings.types.includes(d.rideType) ? d.rideType :
           settings.types[0];
         const passengers = Math.round(Number(d.passengers) || 1);

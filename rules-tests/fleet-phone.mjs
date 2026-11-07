@@ -455,6 +455,34 @@ step('bot minutes, calls and bookings in the monthly totals');
 const u2 = (await adminGet(`fleets/${f.fleetId}`)).phoneUsage[month];
 assert.equal(u2.botBookings, 2); assert.equal(u2.botCalls, 3, 'CC1, CC4 and CC8 have ended'); assert.ok(u2.botMinutes >= 3);
 
+step('blocked numbers: staff block a caller; the call gets a message and ends, never rings or reaches the bot');
+await assert.rejects(OP.call('blockFleetNumber', { phone: '01527 111222' }), /your own taxi number/);
+await OP.call('blockFleetNumber', { phone: '07700 900999', reason: 'abusive' });
+const blk = await adminGet(`fleets/${f.fleetId}/blockedNumbers/+447700900999`);
+assert.equal(blk.reason, 'abusive'); assert.equal(blk.byName, 'Olivia');
+r = await twilio({ step: 'incoming' }, { From: '+447700900999', To: APP_NUMBER, CallSid: 'CB1' });
+assert.match(r.body, /can&apos;t take bookings from this number/); assert.match(r.body, /<Hangup\/>/);
+assert.doesNotMatch(r.body, /<Dial|<Gather|Identity/);
+assert.equal((await adminGet(`fleets/${f.fleetId}/phoneCalls/CB1`)).status, 'blocked');
+await twilio({ step: 'status' }, { CallSid: 'CB1', To: APP_NUMBER, CallStatus: 'completed', CallDuration: '6' });
+assert.equal((await adminGet(`fleets/${f.fleetId}/phoneCalls/CB1`)).status, 'blocked', 'not turned into a missed call');
+
+step('withheld numbers: allowed by default; the owner (only) can refuse them');
+await assert.rejects(OP.call('setFleetBlockWithheld', { on: true }), /owner/);
+await O.call('setFleetBlockWithheld', { on: true });
+for (const [sid, from] of [['CB2', 'anonymous'], ['CB3', '+266696687'], ['CB4', '']]) {
+  r = await twilio({ step: 'incoming' }, { From: from, To: APP_NUMBER, CallSid: sid });
+  assert.match(r.body, /does not take calls from withheld numbers/, from || 'empty');
+}
+r = await twilio({ step: 'incoming' }, { From: '+447700900990', To: APP_NUMBER, CallSid: 'CB5' });
+assert.doesNotMatch(r.body, /withheld|can&apos;t take bookings/, 'shown numbers still get through');
+await O.call('setFleetBlockWithheld', { on: false });
+
+step('unblocked: the caller gets through again');
+await OP.call('unblockFleetNumber', { phone: '+447700900999' });
+r = await twilio({ step: 'incoming' }, { From: '+447700900999', To: APP_NUMBER, CallSid: 'CB6' });
+assert.doesNotMatch(r.body, /can&apos;t take bookings/); assert.match(r.body, /Thank you for calling/);
+
 console.log('ALL PHONE CHECKS PASSED');
 fake.close();
 process.exit(0);

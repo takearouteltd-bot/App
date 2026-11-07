@@ -660,6 +660,13 @@ service cloud.firestore {
         allow delete: if isAdmin();
       }
 
+      /* Numbers the fleet won't take bookings from (blockFleetNumber in
+         functions/fleetPhone.js). Staff see them; only the server writes. */
+      match /blockedNumbers/{phone} {
+        allow read: if isAdmin() || fleetStaffOf(fleetId);
+        allow write: if false;
+      }
+
       /* Account clients the fleet bills. Staff keep them; an account with
          history is switched off with active, not deleted. */
       match /accounts/{accountId} {
