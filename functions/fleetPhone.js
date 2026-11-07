@@ -333,6 +333,12 @@ module.exports = (deps) => {
         .length});
   Object.assign(out, bot.out);
 
+  // The web booker (one booking page per fleet) and its tracking page.
+  Object.assign(out, require("./fleetWeb")({functions, db, FieldValue, text,
+    toE164, booking: deps.booking, sendText: bot.sendText,
+    customerCard: bot.customerCard, assertFleetManager, TWILIO_SECRETS,
+    stripe: deps.stripe, STRIPE_SECRETS: deps.STRIPE_SECRETS}));
+
   /* ------------------------------ webhooks --------------------------- */
 
   /* Every Twilio callback for the office phone, by ?step=. Answers TwiML. */

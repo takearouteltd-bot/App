@@ -22,3 +22,5 @@ Fleet office phone (fleetPhone.js): `node rules-tests/fleet-phone.mjs`, same set
 New app bookings checked by the server (cities, price against the route, payment method, bidding, promo codes): `node rules-tests/booking-checks.mjs`, same set-up as fleet-phone with ROUTES_API_BASE=http://127.0.0.1:8999 in functions/.env.local (it starts its own fake Routes on :8999, so run it before fleet-phone, not alongside).
 
 Rules unit tests can also be run from App/ with `firebase emulators:exec --only firestore --project demo-tar 'node --test rules-tests/*.test.mjs'`.
+
+Web booker (fleetWeb.js: sign-in codes, booking, card hold/capture/release, tracking, texts): `node rules-tests/web-booker.mjs`, same set-up as booking-checks plus STRIPE_API_BASE=http://127.0.0.1:8999 in functions/.env.local (fake Twilio, Google and Stripe on :8999).

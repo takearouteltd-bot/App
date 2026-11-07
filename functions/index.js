@@ -43,7 +43,12 @@ function getStripe() {
       throw new functions.https.HttpsError("failed-precondition",
           "Payments are not configured. STRIPE_SECRET_KEY is missing.");
     }
-    stripeClient = require("stripe")(key);
+    // Tests only: STRIPE_API_BASE points the client at a fake Stripe.
+    const base = process.env.STRIPE_API_BASE ?
+      new URL(process.env.STRIPE_API_BASE) : null;
+    stripeClient = base ? require("stripe")(key, {host: base.hostname,
+      port: Number(base.port), protocol: base.protocol.replace(":", "")}) :
+      require("stripe")(key);
   }
   return stripeClient;
 }
@@ -825,6 +830,11 @@ exports.chargeOnRideCompletion = functions
           // Charge the agreed fare rather than nothing.
           console.error("❌ Fare so far failed, full fare:", rideId, error);
         }
+      }
+
+      // Taxi firm jobs paid online are taken by fleetWeb.js, not here.
+      if (after.source === "phone" && after.collectBy === "online") {
+        return null;
       }
 
       // Cash: nothing to charge. Record the final amount, waiting included,
@@ -4468,5 +4478,5 @@ Object.assign(exports, require("./fleet")({
   functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
   hasExpiredDocument, toE164, toMillis, addOneMonth,
   TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor,
-  STRIPE_SECRETS, fleetBilling, shared: fleetShared,
+  STRIPE_SECRETS, fleetBilling, shared: fleetShared, stripe,
 }));

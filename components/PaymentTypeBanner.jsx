@@ -21,6 +21,19 @@ export default function PaymentTypeBanner({ method, collectBy, account, style })
       </View>
     );
   }
+  // A fleet's web booking the customer paid online: no money to take.
+  if (collectBy === 'online') {
+    return (
+      <View
+        style={[styles.banner, styles.card, style]}
+        accessibilityLabel="Paid online. Do not take payment."
+      >
+        <Ionicons name="checkmark-circle-outline" size={20} color={COLORS.limeInk} />
+        <Text style={[styles.title, { color: COLORS.limeInk }]}>PAID ONLINE</Text>
+        <Text style={styles.detail}>Do not take payment</Text>
+      </View>
+    );
+  }
   // A fleet's phone booking paid by card on the driver's own terminal.
   const terminal = cash && collectBy === 'card';
   if (terminal) {

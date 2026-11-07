@@ -2037,9 +2037,14 @@ module.exports = (deps) => {
    * @param {Object} me {uid, fleetId, fleet, manager}, plus bookedBy when it
    *   is not an operator ({uid: null, name, via: "bot" | "link"}).
    * @param {Object} d The booking, as createFleetBooking takes it.
-   * @return {Promise<Object>} {rideId, status, fare}
+   * @param {Object=} opts Server-only: {paidOnline, extra} (the web booker:
+   *   a card job held until paid, and fields added to the ride).
+   * @return {Promise<Object>} {rideId, status, fare, currency, later,
+   *   phone, pickupAtMs}
    */
-  async function bookPhoneJob(me, d) {
+  async function bookPhoneJob(me, d, opts) {
+    // Set by the server only (the web booker), never from a request.
+    const o = opts || {};
     const phone = toE164(d.customer && d.customer.phone);
     const name = text(d.customer && d.customer.name, 80);
     if (!phone) {
@@ -2112,8 +2117,8 @@ module.exports = (deps) => {
 
     // How the driver takes the money. A label only: TakeARoute never handles
     // it, so paymentMethod stays "cash" and nothing is charged or credited.
-    const collectBy = ["card", "account"].includes(d.collectBy) ?
-      d.collectBy : "cash";
+    const collectBy = o.paidOnline ? "online" :
+      ["card", "account"].includes(d.collectBy) ? d.collectBy : "cash";
     const notes = text(d.notes, 500);
     // An account job goes on the client's bill: the driver takes no money.
     let account = null;
@@ -2129,11 +2134,14 @@ module.exports = (deps) => {
     }
     const notePrefix = account ?
       `ACCOUNT JOB for ${account.company}: do not take payment.` :
+      collectBy === "online" ? "PAID ONLINE: do not take payment." :
       collectBy === "card" ? "CARD PAYMENT: take it on your terminal." : "";
+    // Paid online: held until the card is authorised (fleetWeb.js).
+    const held = o.paidOnline === true;
 
     const rideRef = db.collection("rides").doc();
     const ts = FieldValue.serverTimestamp();
-    await rideRef.set({
+    await rideRef.set(Object.assign({
       source: "phone",
       fleetId: me.fleetId,
       fleetName: me.fleet.name,
@@ -2145,7 +2153,7 @@ module.exports = (deps) => {
       notes: `${notePrefix} ${notes}`.trim(),
       bookedBy: me.bookedBy ||
         {uid: me.uid, name: me.manager.name || me.manager.email || ""},
-      status: later ? "scheduled" : "dispatching",
+      status: held ? "payment_pending" : later ? "scheduled" : "dispatching",
       rideType,
       pickupLocation: pickup,
       stops,
@@ -2172,10 +2180,11 @@ module.exports = (deps) => {
       cancellationPolicy: {fee: 0, freeMinutes: 0, arrivedFee: 0,
         noShowWaitMinutes: cfg.cancellation.noShowWaitMinutes,
         driverSharePercent: 0},
-      paymentMethod: "cash",
+      paymentMethod: held ? "card" : "cash",
       collectBy,
       account,
-      payment: {method: "cash", status: "pending", transactionId: null},
+      payment: {method: held ? "card" : "cash", status: "pending",
+        transactionId: null},
       pickupAt: pickupAtMs === null ? null : Timestamp.fromMillis(pickupAtMs),
       dispatchAt: Timestamp.fromMillis(dispatchAtMs),
       dispatch: {
@@ -2183,14 +2192,14 @@ module.exports = (deps) => {
         nearest,
         driverId,
         leadMinutes: lead,
-        offeredAt: later ? null : ts,
-        rounds: later ? 0 : 1,
+        offeredAt: later || held ? null : ts,
+        rounds: later || held ? 0 : 1,
       },
       timestamps: {createdAt: ts, acceptedAt: null, startedAt: null,
         completedAt: null},
       cancellation: {by: null, reason: null, at: null},
       rating: {riderToDriver: null, driverToRider: null, feedback: null},
-    });
+    }, o.extra || {}));
 
     if (appRider) {
       await db.collection("fleets").doc(me.fleetId).collection("customers")
@@ -2202,8 +2211,10 @@ module.exports = (deps) => {
         {from: pickup, to: dropoff, rideType}).catch((error) => {
       console.error("Could not save customer:", error.message);
     });
-    return {rideId: rideRef.id, status: later ? "scheduled" : "dispatching",
-      fare: fare.total};
+    return {rideId: rideRef.id,
+      status: held ? "payment_pending" : later ? "scheduled" : "dispatching",
+      fare: fare.total, currency: fare.currency, later, phone,
+      pickupAtMs};
   }
 
   /**
@@ -2221,6 +2232,28 @@ module.exports = (deps) => {
     return {distanceKm: Number(route.distanceKm.toFixed(2)),
       durationMinutes: Math.round(route.durationMinutes),
       total: fare.total, currency: fare.currency};
+  }
+
+  /**
+   * One route, a fare for each vehicle class (the web booker).
+   * @param {Object} pickup Point.
+   * @param {Object} dropoff Point.
+   * @param {Array} stops Points in between.
+   * @param {Array} types Vehicle class ids.
+   * @return {Promise<Object>} {distanceKm, durationMinutes, fares, currency}
+   */
+  async function quoteTypes(pickup, dropoff, stops, types) {
+    const [route, raw] = await Promise.all([
+      routeFor(pickup, dropoff, stops || []), rawConfig()]);
+    const fares = {};
+    let currency = "GBP";
+    types.forEach((t) => {
+      const f = fareFor(raw, route, t);
+      fares[t] = f.total;
+      currency = f.currency;
+    });
+    return {distanceKm: Number(route.distanceKm.toFixed(2)),
+      durationMinutes: Math.round(route.durationMinutes), fares, currency};
   }
 
   /* Sends a phone job again: to another driver, to the whole fleet, or
@@ -2291,6 +2324,13 @@ module.exports = (deps) => {
       throw new HttpsError("failed-precondition",
           "A driver has already accepted this job, so it can no longer be " +
           "changed. Cancel it and book again if needed.");
+    }
+    // The customer's card was authorised for this route and price.
+    if (ride.collectBy === "online") {
+      throw new HttpsError("failed-precondition",
+          "The customer paid for this booking online, so it can't be " +
+          "changed here. Cancel it (the card hold is released) and ask " +
+          "them to book again.");
     }
 
     const update = {};
@@ -2915,6 +2955,11 @@ module.exports = (deps) => {
     if (!ride.fleetId || !ride.driverId) return null;
     if (ride.source === "phone") {
       if (ride.status !== "completed") return null;
+      // Paid online through TakeARoute: counts once the money is taken.
+      if (ride.collectBy === "online") {
+        return ride.webPayment && ride.webPayment.status === "captured" ?
+          "online" : null;
+      }
       return ride.collectBy === "account" ? "account" :
         ride.collectBy === "card" ? "card" : "cash";
     }
@@ -2937,6 +2982,7 @@ module.exports = (deps) => {
     // What actually reached the fleet's wallet, which never changes afterwards.
     if (kind === "appCard") return toPence(ride.earnings.driverEarning);
     if (kind === "cancelFee") return toPence(ride.cancellationFeeDriverShare);
+    if (kind === "online") return toPence(ride.webPayment.capturedAmount);
     return fareOf(ride);
   }
 
@@ -2953,7 +2999,8 @@ module.exports = (deps) => {
   function settlementOf(ride, kind, percent) {
     const farePence = settledPence(ride, kind);
     const commissionPence = Math.round(farePence * percent / 100);
-    const fleetHoldsIt = ["account", "appCard", "cancelFee"].includes(kind);
+    const fleetHoldsIt = ["account", "appCard", "cancelFee", "online"]
+        .includes(kind);
     return {
       kind, farePence, commissionPercent: percent, commissionPence,
       balancePence: fleetHoldsIt ? farePence - commissionPence :
@@ -3350,7 +3397,8 @@ module.exports = (deps) => {
   Object.assign(out, require("./fleetPhone")({functions, db, toE164,
     TWILIO_SECRETS, twilioConfig, assertFleetManager, assertAdmin,
     findRiderByPhone, findDriversByPhone, phoneFor, text, FieldValue,
-    booking: {bookPhoneJob, quoteOne, placeSearch, placeDetails,
+    stripe: deps.stripe, STRIPE_SECRETS,
+    booking: {bookPhoneJob, quoteOne, quoteTypes, placeSearch, placeDetails,
       placeFromText, point, CLASS_MULTIPLIERS}}));
 
   return out;

@@ -83,6 +83,8 @@ export default function RideCompletedScreen() {
             <Text style={styles.heroSub}>
               {ride.collectBy === 'account'
                 ? `On ${ride.account?.company || 'the client'}'s account. Your fleet pays you.`
+                : ride.collectBy === 'online'
+                ? 'Paid online by the customer. Your fleet pays you.'
                 : ride.collectBy === 'card'
                 ? 'Paid on your card terminal'
                 : ride.paymentMethod === 'cash'

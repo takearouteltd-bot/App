@@ -902,6 +902,7 @@ module.exports = (deps) => {
     return {rideId: result.rideId, status: result.status, fare: result.fare};
   });
 
-  return {out, enabled, start, turn, onCallEnded, AI_SECRETS,
+  return {out, enabled, start, turn, onCallEnded, AI_SECRETS, sendText,
+    customerCard,
     allSecrets: TWILIO_SECRETS.concat(AI_SECRETS)};
 };
