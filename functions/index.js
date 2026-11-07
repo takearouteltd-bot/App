@@ -1,5 +1,8 @@
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
+// FieldValue imported directly too: admin.firestore.FieldValue is not
+// filled in under the functions emulator, which the tests run against.
+const {FieldValue: FV} = require("firebase-admin/firestore");
 const express = require("express");
 const app = express();
 
@@ -2266,6 +2269,7 @@ exports.rejectDriverPayout = functions.https.onCall(async (data, context) => {
 
   const payoutRef = db.collection("driverPayouts").doc(payoutId);
 
+  let rejected = null;
   try {
     await db.runTransaction(async (transaction) => {
       const payoutSnap = await transaction.get(payoutRef);
@@ -2275,13 +2279,14 @@ exports.rejectDriverPayout = functions.https.onCall(async (data, context) => {
       }
 
       const payout = payoutSnap.data();
+      rejected = payout;
 
       if (payout.status !== "pending_admin") {
         throw new functions.https.HttpsError("failed-precondition",
             "Payout not in pending status");
       }
 
-      const now = admin.firestore.FieldValue.serverTimestamp();
+      const now = FV.serverTimestamp();
       const walletRef = db.collection("driverWallets").doc(payout.driverId);
 
       transaction.update(payoutRef, {
@@ -2294,7 +2299,7 @@ exports.rejectDriverPayout = functions.https.onCall(async (data, context) => {
       });
 
       transaction.update(walletRef, {
-        availableBalance: admin.firestore.FieldValue.increment(payout.amount),
+        availableBalance: FV.increment(payout.amount),
         updatedAt: now,
       });
 
@@ -2314,6 +2319,17 @@ exports.rejectDriverPayout = functions.https.onCall(async (data, context) => {
         });
       }
     });
+
+    // The money is back in the wallet; tell the driver why it wasn't sent.
+    if (rejected && rejected.driverId) {
+      await sendPush([rejected.driverId], {
+        title: "Withdrawal not sent",
+        body: `${emailMoney(rejected.amount, rejected.currency || "GBP")} ` +
+          `is back in your wallet. Reason: ${String(reason).slice(0, 120)}`,
+        channelId: "general",
+        data: {type: "payout"},
+      }).catch((error) => console.error("Payout rejection push", error));
+    }
 
     return {success: true, payoutId: payoutId};
   } catch (error) {
@@ -2932,11 +2948,197 @@ async function offerRideToDrivers(rideId, ride) {
   return null;
 }
 
+/* ---------------- new app bookings: city and promo code ----------------
+   The passenger app writes the booking itself, so the server checks the two
+   things the app can be wrong about before any driver is offered it:
+   - working cities: once any city is switched on, pickups outside every
+     city are refused (same "nearest city whose radius covers it" rule as
+     cityFor() in the app's utils/cities.js);
+   - promo codes: switched on, in date, the same discount, uses left
+     (maxUses, counted in `used`), and once per passenger
+     (promoCodes/{CODE}/uses/{riderId}; a use whose ride was cancelled does
+     not count). A booking that fails is cancelled with the reason in
+     cancelMessage, never re-priced behind the passenger's back. */
+
+/**
+ * Why a code cannot be used, or null when it can.
+ * @param {?Object} promo promoCodes/{CODE} data.
+ * @param {?Object} use promoCodes/{CODE}/uses/{riderId} data.
+ * @param {boolean} useCounts Whether that earlier use still counts.
+ * @return {?string} Reason, as a sentence for the passenger.
+ */
+function promoProblem(promo, use, useCounts) {
+  const percent = Number(promo && promo.percent);
+  if (!promo || promo.active === false || !(percent > 0 && percent <= 100)) {
+    return "This code is not valid.";
+  }
+  if (promo.expiresAt &&
+      Date.now() > Date.parse(`${promo.expiresAt}T23:59:59Z`)) {
+    return "This code has expired.";
+  }
+  const max = Number(promo.maxUses);
+  if (Number.isFinite(max) && max > 0 && Number(promo.used || 0) >= max) {
+    return "This code has been fully used.";
+  }
+  if (use && useCounts) return "You have already used this code.";
+  return null;
+}
+
+/**
+ * Whether a passenger's earlier use of a code still counts: it does unless
+ * that ride was cancelled.
+ * @param {?Object} use Use record.
+ * @param {string} rideId The ride being booked now.
+ * @param {Function} read Reads a doc ref (tx.get inside a transaction).
+ * @return {Promise<boolean>} Counts.
+ */
+async function useStillCounts(use, rideId, read) {
+  if (!use) return false;
+  if (use.rideId === rideId) return false;
+  if (!use.rideId) return true;
+  const earlier = await read(db.collection("rides").doc(use.rideId));
+  const status = earlier.exists ? earlier.data().status : "cancelled";
+  return status !== "cancelled" && status !== "canceled";
+}
+
+/* The app checks a code here before showing the discount. */
+exports.checkPromoCode = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError("unauthenticated", "Login required");
+  }
+  const code = String((data && data.code) || "").toUpperCase()
+      .replace(/[^A-Z0-9]/g, "").slice(0, 40);
+  if (code.length < 3) return {ok: false, message: "This code is not valid."};
+  const ref = db.collection("promoCodes").doc(code);
+  const [promoSnap, useSnap] = await Promise.all([ref.get(),
+    ref.collection("uses").doc(context.auth.uid).get()]);
+  const promo = promoSnap.exists ? promoSnap.data() : null;
+  const use = useSnap.exists ? useSnap.data() : null;
+  const counts = await useStillCounts(use, null, (r) => r.get());
+  const problem = promoProblem(promo, use, counts);
+  if (problem) return {ok: false, message: problem};
+  return {ok: true, code, percent: Number(promo.percent)};
+});
+
+/**
+ * Cancels a new booking the server will not take, and tells the passenger.
+ * @param {string} rideId Ride id.
+ * @param {Object} ride Ride data.
+ * @param {string} reason Code for the record.
+ * @param {string} message What the passenger is told.
+ * @return {Promise<null>} Nothing.
+ */
+async function refuseNewRide(rideId, ride, reason, message) {
+  const rideRef = db.collection("rides").doc(rideId);
+  const done = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(rideRef);
+    if (!snap.exists || snap.data().status !== "searching") return false;
+    const riderRef = ride.riderId ?
+      db.collection("riders").doc(ride.riderId) : null;
+    const rider = riderRef ? await tx.get(riderRef) : null;
+    tx.update(rideRef, {
+      status: "cancelled",
+      cancelledBy: "system",
+      cancelReason: reason,
+      cancelMessage: message,
+      cancelledAt: FV.serverTimestamp(),
+    });
+    if (rider && rider.exists && rider.data().currentRideId === rideId) {
+      tx.update(riderRef, {currentRideId: null});
+    }
+    return true;
+  });
+  if (done && ride.riderId) {
+    await sendPush([ride.riderId], {
+      title: "Booking not accepted",
+      body: message,
+      channelId: "trip-updates",
+      data: {type: "trip", rideId},
+    }).catch(() => null);
+  }
+  return null;
+}
+
+/**
+ * Checks a new app booking. Returns false when it was refused.
+ * @param {string} rideId Ride id.
+ * @param {Object} ride Ride data (cityId may be corrected in place).
+ * @return {Promise<boolean>} Go ahead.
+ */
+async function checkNewRide(rideId, ride) {
+  const rideRef = db.collection("rides").doc(rideId);
+
+  const citySnap = await db.collection("cities")
+      .where("active", "==", true).get();
+  const cities = citySnap.docs.map((d) => ({id: d.id, ...d.data()}));
+  if (cities.length) {
+    let best = null;
+    let bestKm = Infinity;
+    for (const c of cities) {
+      const km = distanceKm(ride.pickupLocation,
+          {latitude: Number(c.latitude), longitude: Number(c.longitude)});
+      if (km <= Number(c.radiusKm || 0) && km < bestKm) {
+        best = c;
+        bestKm = km;
+      }
+    }
+    if (!best) {
+      const names = cities.map((c) => c.name).filter(Boolean).sort();
+      await refuseNewRide(rideId, ride, "outside_service_area",
+          "TakeARoute doesn't operate at this pickup yet." +
+          (names.length ? ` We currently cover ${names.join(", ")}.` : ""));
+      return false;
+    }
+    if (ride.cityId !== best.id) {
+      ride.cityId = best.id;
+      ride.cityName = best.name || null;
+      await rideRef.update({cityId: best.id, cityName: best.name || null});
+    }
+  }
+
+  const code = ride.fare && ride.fare.promoCode;
+  if (code) {
+    const promoRef = db.collection("promoCodes").doc(String(code));
+    const useRef = promoRef.collection("uses").doc(ride.riderId);
+    let problem = null;
+    await db.runTransaction(async (tx) => {
+      const [promoSnap, useSnap] = await Promise.all([tx.get(promoRef),
+        tx.get(useRef)]);
+      const promo = promoSnap.exists ? promoSnap.data() : null;
+      const use = useSnap.exists ? useSnap.data() : null;
+      const counts = await useStillCounts(use, rideId, (r) => tx.get(r));
+      problem = promoProblem(promo, use, counts);
+      if (!problem && Math.abs(Number(promo.percent) / 100 -
+          Number(ride.fare.discount || 0)) > 0.0001) {
+        problem = "The discount on this code has changed.";
+      }
+      if (problem) return;
+      // Counted once per passenger, even if they cancel and book again.
+      const fresh = !use;
+      tx.set(useRef, {rideId, riderId: ride.riderId,
+        usedAt: FV.serverTimestamp()});
+      if (fresh) {
+        tx.update(promoRef, {used: FV.increment(1)});
+      }
+    });
+    if (problem) {
+      await refuseNewRide(rideId, ride, "promo_invalid",
+          `The promo code ${code} couldn't be used: ${problem} ` +
+          "Please book again without it.");
+      return false;
+    }
+  }
+  return true;
+}
+
 exports.notifyDriversOfNewRide = functions.firestore
     .document("rides/{rideId}")
     .onCreate(async (snap, context) => {
       const ride = snap.data();
       if (ride.status !== "searching") return null;
+      if (ride.riderId && !(await checkNewRide(context.params.rideId, ride))) {
+        return null;
+      }
       return offerRideToDrivers(context.params.rideId, ride);
     });
 

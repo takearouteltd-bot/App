@@ -204,6 +204,13 @@ export default function RideRequestScreen() {
           navigation.popToTop();
           return;
         }
+        if (data.cancelledBy === 'system' && data.cancelMessage) {
+          // The server refused the booking (outside every city, or a promo
+          // code that could not be used) and says why.
+          Alert.alert('Booking not accepted', data.cancelMessage);
+          navigation.popToTop();
+          return;
+        }
         if (!cancelledByMe.current) {
           Alert.alert('Ride cancelled', 'This ride has been cancelled.');
         }

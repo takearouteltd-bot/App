@@ -138,7 +138,7 @@ service cloud.firestore {
         "payoutTermsAcceptance",
         "driverLicenseFrontUrl", "driverLicenseBackUrl", "pcoLicenseUrl",
         "vehicleLicenceUrl", "insuranceUrl", "motUrl", "dbsCertificateUrl",
-        "accountDetails"
+        "accountDetails", "vehicleType"
       ];
     }
 

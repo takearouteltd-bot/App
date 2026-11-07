@@ -13,7 +13,8 @@ import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import RouteDirections from '../../components/RouteDirections';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { db } from '../../config/firebase';
+import { db, functions } from '../../config/firebase';
+import { httpsCallable } from 'firebase/functions';
 import {
   addDoc,
   collection,
@@ -181,15 +182,12 @@ export default function FareEstimationScreen({ route }) {
     }
     setPromoChecking(true);
     try {
-      const snap = await getDoc(doc(db, 'promoCodes', code));
-      const data = snap.exists() ? snap.data() : null;
-      const percent = Number(data?.percent);
-      const expired = data?.expiresAt
-        ? new Date(`${data.expiresAt}T23:59:59`) < new Date()
-        : false;
-
-      if (!data || data.active === false || expired || !(percent > 0 && percent <= 100)) {
-        Alert.alert('Promo code', expired ? 'This code has expired.' : 'This code is not valid.');
+      // The server checks the limits (uses left, once per passenger) that
+      // the app cannot see.
+      const result = await httpsCallable(functions, 'checkPromoCode')({ code });
+      const { ok, percent, message } = result.data || {};
+      if (!ok) {
+        Alert.alert('Promo code', message || 'This code is not valid.');
         return;
       }
       setPromoCode(code);
@@ -235,6 +233,16 @@ export default function FareEstimationScreen({ route }) {
       }
     } catch (error) {
       console.log('Active ride check failed:', error);
+    }
+
+    // Once any working city is switched on, TakeARoute only operates inside
+    // them. The server checks this too (checkNewRide in functions/index.js).
+    if (cities.length && !cityFor(cities, origin)) {
+      Alert.alert(
+        'Not in your area yet',
+        `TakeARoute doesn't operate at this pickup yet. We currently cover ${cities.map((c) => c.name).join(', ')}.`
+      );
+      return;
     }
 
     // Cash rides need no card. Card rides need what the server actually
