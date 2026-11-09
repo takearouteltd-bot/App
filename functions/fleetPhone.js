@@ -39,7 +39,7 @@ const crypto = require("crypto");
 module.exports = (deps) => {
   const {functions, db, toE164, TWILIO_SECRETS, twilioConfig,
     assertFleetManager, assertAdmin, findRiderByPhone, findDriversByPhone,
-    phoneFor, text, FieldValue} = deps;
+    phoneFor, text, FieldValue, lineTools} = deps;
   const {HttpsError} = functions.https;
   const out = {};
 
@@ -1002,6 +1002,20 @@ module.exports = (deps) => {
         return {ok: true, number: appNumber};
       });
 
+  /**
+   * Ends a fleet's line.
+   * @param {Object} fleetRef The fleet.
+   * @param {Object} line fleets/{id}.phoneLine.
+   * @return {Promise<void>} Done.
+   */
+  async function releaseLine(fleetRef, line) {
+    if (!line.shared && line.numberSid) {
+      await twilioApi(twilioConfig(), "DELETE",
+          `/IncomingPhoneNumbers/${line.numberSid}.json`);
+    }
+    await fleetRef.update({phoneLine: FieldValue.delete()});
+  }
+
   /* Ends a fleet's line: a bought number goes back to Twilio (its monthly
      charge stops); the app's own number just stops ringing the fleet. */
   out.adminFleetPhoneRelease = functions.runWith({secrets: TWILIO_SECRETS})
@@ -1014,14 +1028,11 @@ module.exports = (deps) => {
         if (!line || !line.number) {
           throw new HttpsError("not-found", "This fleet has no line.");
         }
-        const tw = twilioConfig();
-        if (!line.shared && line.numberSid) {
-          await twilioApi(tw, "DELETE",
-              `/IncomingPhoneNumbers/${line.numberSid}.json`);
-        }
-        await fleetRef.update({phoneLine: FieldValue.delete()});
+        await releaseLine(fleetRef, line);
         return {ok: true};
       });
+
+  lineTools.release = releaseLine;
 
   return out;
 };

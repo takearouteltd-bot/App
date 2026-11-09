@@ -332,7 +332,7 @@ export default function App() {
         </Text>
         <Text style={[TYPE.body, { color: COLORS.muted, textAlign: "center", marginBottom: SPACE[6] }]}>
           {blockInfo?.kind === 'fleet_removed'
-            ? `${blockInfo.removedFrom || 'Your fleet'} removed you, so this driver account is suspended. Only ${blockInfo.removedFrom || 'your fleet'} can reinstate it. To drive with your own car, for another fleet or for TakeARoute, delete this account below and register again.`
+            ? /has closed$/.test(blockInfo.reason || '') ? `${blockInfo.reason}, so this driver account is suspended. Please contact TakeARoute.` : `${blockInfo.removedFrom || 'Your fleet'} removed you, so this driver account is suspended. Only ${blockInfo.removedFrom || 'your fleet'} can reinstate it. To drive with your own car, for another fleet or for TakeARoute, delete this account below and register again.`
             : <>
               {blockInfo?.byFleet
                 ? `${blockInfo.fleetName || 'Your fleet'} has suspended your account for breaking the terms and conditions.`

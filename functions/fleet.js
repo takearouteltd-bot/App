@@ -1349,9 +1349,10 @@ module.exports = (deps) => {
    * @param {Function} check Throws if the caller may not, given the
    *     driver's data.
    * @param {string} by Who did it, kept on the driver.
+   * @param {Object=} opts {closing: true} when the whole fleet is closing.
    * @return {Promise<Object>} {fleetId, fleetName, type, restored}
    */
-  async function takeOutOfFleet(driverId, check, by) {
+  async function takeOutOfFleet(driverId, check, by, opts = {}) {
     const driverRef = db.collection("drivers").doc(driverId);
     const first = await driverRef.get();
     const fleetId = first.exists ? first.data().fleetId : null;
@@ -1389,7 +1390,8 @@ module.exports = (deps) => {
       const fleetName = driver.fleetName || "the fleet";
       const blockFields = suspendNow ? {
         blocked: true,
-        blockedReason: `Removed from ${fleetName}`,
+        blockedReason: opts.closing ? `${fleetName} has closed` :
+          `Removed from ${fleetName}`,
         blockedKind: "fleet_removed",
         blockedAt: new Date().toISOString(),
         blockedBy: by,
@@ -1421,9 +1423,12 @@ module.exports = (deps) => {
     await returnOffers(fleetId, driverId, docs);
 
     await sendPush([driverId], result.suspended ? {
-      title: `You were removed from ${result.fleetName}`,
-      body: "Your driver account is suspended. Only " +
-        `${result.fleetName} can reinstate it.`,
+      title: opts.closing ? `${result.fleetName} has closed` :
+        `You were removed from ${result.fleetName}`,
+      body: opts.closing ?
+        "Your driver account is suspended. Please contact TakeARoute." :
+        "Your driver account is suspended. Only " +
+          `${result.fleetName} can reinstate it.`,
       channelId: "general",
     } : {
       title: `You left ${result.fleetName}`,
@@ -3743,9 +3748,116 @@ module.exports = (deps) => {
     return {status};
   });
 
+  /* ------------------------- closing a fleet --------------------------
+     A TakeARoute admin closes a fleet for good (there is no way back). Not
+     while it has jobs open or money in its wallet. Drivers come out as if
+     removed one by one (company drivers suspended, self-employed carry on),
+     its phone line ends, and its staff logins go, which frees their emails
+     and numbers; a login that is also a driver, passenger or admin keeps
+     its sign-in. Customers, trips, invoices and payments all stay. The
+     fleet stays "suspended", which every booking route already refuses, and
+     closedAt marks it. Safe to press again if it stops part way. */
+  const lineTools = {};
+  const OPEN_JOBS = ["scheduled", "dispatching", "accepted", "arrived",
+    "ongoing"];
+
+  out.adminCloseFleet = functions
+      .runWith({secrets: TWILIO_SECRETS, timeoutSeconds: 300})
+      .https.onCall(async (data, context) => {
+        await assertAdmin(context);
+        const d = data || {};
+        const fleetId = text(d.fleetId, 128);
+        const fleetRef = db.collection("fleets").doc(fleetId || "-");
+        const snap = await fleetRef.get();
+        if (!snap.exists) throw new HttpsError("not-found", "No such fleet.");
+        const fleet = snap.data();
+        if (fleet.closedAt) {
+          throw new HttpsError("already-exists", "This fleet is closed.");
+        }
+        if (text(d.confirmName, 200) !== fleet.name) {
+          throw new HttpsError("invalid-argument",
+              "Type the fleet's name exactly to close it.");
+        }
+        const wallet = await db.collection("fleetWallets").doc(fleetId).get();
+        const balance = wallet.exists ?
+          Number(wallet.data().availableBalance) || 0 : 0;
+        if (balance > 0) {
+          throw new HttpsError("failed-precondition",
+              `This fleet still has ${balance.toFixed(2)} in its wallet. ` +
+              "Pay it out first.");
+        }
+        const openJobs = async () => (await db.collection("rides")
+            .where("fleetId", "==", fleetId)
+            .where("status", "in", OPEN_JOBS).get()).size;
+        const refuseOpen = (n) => new HttpsError("failed-precondition",
+            `This fleet has ${n} job${n === 1 ? "" : "s"} still open. ` +
+            "Finish or cancel them first.");
+        const open = await openJobs();
+        if (open) throw refuseOpen(open);
+
+        // Paused first, so nothing new can be booked while it closes.
+        const by = `${context.auth.token.email || "an admin"} (TakeARoute)`;
+        await fleetRef.update({status: "suspended", suspendedReason: "closed",
+          closing: true});
+        const late = await openJobs();
+        if (late) {
+          await fleetRef.update({status: fleet.status || "active",
+            suspendedReason: fleet.suspendedReason || FieldValue.delete(),
+            closing: FieldValue.delete()});
+          throw refuseOpen(late);
+        }
+
+        const drivers = await db.collection("drivers")
+            .where("fleetId", "==", fleetId).get();
+        let stuck = 0;
+        for (const doc of drivers.docs) {
+          await takeOutOfFleet(doc.id, () => null, by, {closing: true})
+              .catch((error) => {
+                stuck += 1;
+                console.error("closeFleet driver", doc.id, error.message);
+              });
+        }
+        if (stuck) {
+          throw new HttpsError("aborted", `${stuck} driver` +
+            `${stuck === 1 ? "" : "s"} could not be taken out. ` +
+            "Press Close fleet again.");
+        }
+        const asking = await db.collection("drivers")
+            .where("fleetRequest.fleetId", "==", fleetId).get();
+        await Promise.all(asking.docs.map((doc) => doc.ref.update({
+          fleetRequest: FieldValue.delete()})));
+
+        if (fleet.phoneLine && fleet.phoneLine.number) {
+          await lineTools.release(fleetRef, fleet.phoneLine);
+        }
+
+        const staff = await db.collection("fleetManagers")
+            .where("fleetId", "==", fleetId).get();
+        const closedStaff = [];
+        for (const doc of staff.docs) {
+          const m = doc.data();
+          closedStaff.push({uid: doc.id, name: m.name || "",
+            email: m.email || "", role: m.role || ""});
+          const others = await Promise.all(["drivers", "riders", "admins"]
+              .map((c) => db.collection(c).doc(doc.id).get()));
+          await doc.ref.delete();
+          if (!others.some((o) => o.exists)) {
+            await admin.auth().deleteUser(doc.id).catch((error) => {
+              if (error.code !== "auth/user-not-found") throw error;
+            });
+          }
+        }
+        await db.collection("fleetQueues").doc(fleetId).delete();
+        const previously = fleet.closedStaff || [];
+        await fleetRef.update({closedAt: FieldValue.serverTimestamp(),
+          closedBy: by, closing: FieldValue.delete(),
+          closedStaff: previously.concat(closedStaff)});
+        return {ok: true, drivers: drivers.size, logins: closedStaff.length};
+      });
+
   /* The fleet office phone (fleetPhone.js). */
   Object.assign(out, require("./fleetPhone")({functions, db, toE164,
-    TWILIO_SECRETS, twilioConfig, assertFleetManager, assertAdmin,
+    TWILIO_SECRETS, twilioConfig, assertFleetManager, assertAdmin, lineTools,
     findRiderByPhone, findDriversByPhone, phoneFor, text, FieldValue,
     stripe: deps.stripe, STRIPE_SECRETS,
     booking: {bookPhoneJob, quoteOne, quoteTypes, placeSearch, placeDetails,
