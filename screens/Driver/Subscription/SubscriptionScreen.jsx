@@ -163,6 +163,23 @@ export default function SubscriptionScreen() {
     />
   );
 
+  // Given by a TakeARoute admin: nothing to pay.
+  if (subscription?.paymentMethod === 'admin_granted') {
+    return (
+      <Screen>
+        <ScreenHeader title="Membership" />
+        <Card tone="dark" style={styles.hero}>
+          <View style={styles.heroTop}>
+            <Text style={styles.heroPlan}>Driver membership</Text>
+            <StatusPill status="approved" label="Active" />
+          </View>
+          <Text style={[styles.heroPrice, { fontSize: 28 }]}>Given by TakeARoute</Text>
+          <Text style={styles.heroSub}>There is nothing to pay.</Text>
+        </Card>
+      </Screen>
+    );
+  }
+
   // A fleet pays this driver's membership (functions/fleet.js).
   if (subscription?.paymentMethod === 'fleet') {
     return (

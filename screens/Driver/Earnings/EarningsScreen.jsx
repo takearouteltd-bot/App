@@ -264,7 +264,7 @@ export default function EarningsScreen() {
         </View>
       ) : null}
 
-      {subscription && subscription.status === 'active' && subscription.paymentMethod !== 'fleet' ? (
+      {subscription && subscription.status === 'active' && !['fleet', 'admin_granted'].includes(subscription.paymentMethod) ? (
         <Card style={{ marginTop: SPACE[3] }}>
           <Text style={styles.txTitle}>Subscription {money(appConfig.subscription.monthlyPrice)} a month</Text>
           <Text style={TYPE.small}>

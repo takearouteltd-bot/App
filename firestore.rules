@@ -170,7 +170,7 @@ service cloud.firestore {
           "blockedReason", "blockedBy", "blockedAt", "blockedByFleet"]) &&
         /* Joining and leaving a fleet go through functions/fleet.js. */
         !changed.hasAny(["fleetId", "fleetName", "fleetJoinedAt", "fleetRequest",
-          "fleetInvite", "subscriptionBeforeFleet", "lastFleetId", "fleetLeftAt",
+          "fleetInvite", "subscriptionBeforeFleet", "subscriptionBeforeGrant", "lastFleetId", "fleetLeftAt",
           "fleetLeftBy", "fleetDriverType"]) &&
         /* Hours and rest are kept by enforceDriverHours and admins. */
         !changed.hasAny(["workLog", "restUntil", "restStartedAt", "restDue",

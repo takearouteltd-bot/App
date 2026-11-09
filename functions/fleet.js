@@ -1743,6 +1743,75 @@ module.exports = (deps) => {
 
   /* A TakeARoute admin suspends an account (driver and passenger records
      alike) or lifts it, and the person is told. */
+  /* A TakeARoute admin gives a chosen driver the paid membership for free,
+     or takes it back. No end date and nothing charged while it is on: the
+     renewal jobs only look at drivers with a due date. What they had before
+     is kept and comes back when it is turned off. A driver whose fleet pays
+     is left to the fleet. */
+  out.adminSetDriverMembership = functions.https.onCall(
+      async (data, context) => {
+        await assertAdmin(context);
+        const driverId = text(data && data.driverId, 128);
+        const granted = Boolean(data && data.granted === true);
+        const ref = db.collection("drivers").doc(driverId || "-");
+        const by = context.auth.token.email || "an admin";
+        const changed = await db.runTransaction(async (tx) => {
+          const snap = await tx.get(ref);
+          if (!snap.exists) {
+            throw new HttpsError("not-found", "Driver not found.");
+          }
+          const driver = snap.data();
+          const sub = driver.subscription || null;
+          const isGranted = Boolean(sub &&
+            sub.paymentMethod === "admin_granted");
+          if (granted === isGranted) return false;
+          if (granted) {
+            if (driver.approved !== true) {
+              throw new HttpsError("failed-precondition",
+                  "Approve this driver first.");
+            }
+            if (sub && sub.paymentMethod === "fleet") {
+              throw new HttpsError("failed-precondition",
+                  "This driver's fleet already pays their membership.");
+            }
+            tx.update(ref, {
+              subscription: {
+                status: "active", tier: "granted", amount: 0,
+                paymentMethod: "admin_granted", debtAmount: 0,
+                lastPaidAt: FieldValue.serverTimestamp(), graceUntil: null,
+                nextBillingDate: null, grantedBy: by,
+                activatedAt: FieldValue.serverTimestamp(),
+              },
+              subscriptionBeforeGrant: sub || FieldValue.delete(),
+              onboardingComplete: true,
+            });
+            return true;
+          }
+          const before = driver.subscriptionBeforeGrant;
+          const restore = before &&
+            ["active", "past_due", "suspended"].includes(before.status);
+          tx.update(ref, {
+            subscription: restore ? before : FieldValue.delete(),
+            subscriptionBeforeGrant: FieldValue.delete(),
+          });
+          return true;
+        });
+        if (changed) {
+          await sendPush([driverId], granted ? {
+            title: "Your membership is active",
+            body: "TakeARoute has given you the driver membership. " +
+              "There is nothing to pay.",
+            channelId: "general",
+          } : {
+            title: "Your membership has changed",
+            body: "Your free membership has ended. Open Membership in " +
+              "the app to carry on.",
+            channelId: "general",
+          }).catch(() => null);
+        }
+        return {ok: true, granted, changed};
+      });
+
   out.setAccountSuspension = functions.https.onCall(async (data, context) => {
     await assertAdmin(context);
     const uid = text(data && data.uid, 128);
