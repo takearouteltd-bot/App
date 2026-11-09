@@ -61,7 +61,7 @@ const val = (f) => {
   return f.stringValue ?? f.booleanValue ?? f.timestampValue;
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function until(check, what, tries = 80) {
+async function until(check, what, tries = 240) {
   for (let i = 0; i < tries; i++) {
     const got = await check();
     if (got) return got;

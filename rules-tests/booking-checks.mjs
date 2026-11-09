@@ -50,7 +50,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Waits for the onCreate check to settle: cancelled, or price-checked.
 async function settled(id) {
-  for (let i = 0; i < 60; i++) {
+  // The emulator runs every trigger of the previous step first, one by one.
+  for (let i = 0; i < 240; i++) {
     const r = await adminGet(`rides/${id}`);
     if (val(r.status) === 'cancelled' || val(r.pricing) === 'checked') return r;
     await sleep(250);
