@@ -109,7 +109,28 @@ module.exports = ({functions, db, sendPush, loadAppConfig, distanceKm}) => {
           const decision = penaltyDecision(cfg.cancellation, km);
           let until = null;
 
-          if (decision.applied && decision.type === "money") {
+          // A company driver's fares go to the fleet and they never withdraw,
+          // so a wallet debit could never be collected. It comes off what
+          // the fleet owes them, on their statement, instead.
+          const statementFleet = driver.fleetId &&
+            driver.fleetDriverType !== "self" ? driver.fleetId : null;
+          if (decision.applied && decision.type === "money" && statementFleet) {
+            const pence = Math.round(decision.amount * 100);
+            const fleetRef = db.collection("fleets").doc(statementFleet);
+            tx.set(fleetRef.collection("driverPayments").doc(), {
+              driverId,
+              direction: "penalty",
+              amountPence: pence,
+              note: "Penalty for cancelling a job",
+              rideId,
+              paidAt: FieldValue.serverTimestamp(),
+            });
+            tx.set(fleetRef.collection("driverAccounts").doc(driverId), {
+              driverId,
+              owedPence: FieldValue.increment(-pence),
+              updatedAt: FieldValue.serverTimestamp(),
+            }, {merge: true});
+          } else if (decision.applied && decision.type === "money") {
             const currency = String(before.currency || cfg.currency ||
               "GBP").toUpperCase();
             if (wallet.exists) {
@@ -184,9 +205,11 @@ module.exports = ({functions, db, sendPush, loadAppConfig, distanceKm}) => {
               minutes: decision.minutes,
               reason: decision.reason,
               until,
+              chargedTo: decision.applied && decision.type === "money" ?
+                (statementFleet ? "fleet_statement" : "wallet") : null,
             },
           });
-          return decision;
+          return Object.assign({}, decision, {statementFleet});
         });
 
         if (outcome && outcome.applied) {
@@ -194,8 +217,9 @@ module.exports = ({functions, db, sendPush, loadAppConfig, distanceKm}) => {
             title: "Penalty for cancelling a job",
             body: outcome.type === "money" ?
               `You cancelled a job you had accepted, so ` +
-                `${outcome.amount.toFixed(2)} has been taken from your ` +
-                `balance.` :
+                `${outcome.amount.toFixed(2)} has been taken from ` +
+                (outcome.statementFleet ? `what your fleet owes you.` :
+                  `your balance.`) :
               `You cancelled a job you had accepted, so you can't go ` +
                 `online for ${outcome.minutes} minutes.`,
             data: {type: "driver_cancel_penalty", rideId},

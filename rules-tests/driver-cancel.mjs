@@ -211,8 +211,25 @@ job = await seedJob({ source: 'phone', fleetId: 'f1', riderId: null, paymentMeth
 await cancelJob(job.id, 'dispatching');
 rec = await waitRecord(job);
 assert.equal(rec.fleetId, 'f1'); assert.equal(rec.source, 'phone'); assert.equal(rec.penalty.applied, true);
-assert.equal(await walletOf(), 11);
 assert.equal(val((await adminGet(`rides/${job.id}`)).status), 'dispatching');
+
+step('a company driver\'s money penalty goes on their fleet statement, not their wallet');
+assert.equal(rec.penalty.chargedTo, 'fleet_statement');
+assert.equal(await walletOf(), 12.5);
+assert.equal(val((await adminGet(`fleets/f1/driverAccounts/${driverId}`)).owedPence), -150);
+const onStatement = (await list('fleets/f1/driverPayments')).filter((d) => val(d.fields.rideId) === job.id);
+assert.equal(onStatement.length, 1);
+assert.equal(val(onStatement[0].fields.direction), 'penalty');
+assert.equal(val(onStatement[0].fields.amountPence), 150);
+
+step('a self-employed fleet driver\'s money penalty comes off their own wallet');
+await seedDriver(NEAR, { fleetId: 'f1', fleetDriverType: 'self' });
+job = await seedJob();
+await cancelJob(job.id);
+rec = await waitRecord(job);
+assert.equal(rec.penalty.chargedTo, 'wallet');
+assert.equal(await walletOf(), 11);
+assert.equal(val((await adminGet(`fleets/f1/driverAccounts/${driverId}`)).owedPence), -150);
 
 step('a wallet below zero cannot be withdrawn');
 await adminSet(`driverWallets/${payoutDriver}`, { availableBalance: -5, totalEarned: 0, currency: 'GBP' });

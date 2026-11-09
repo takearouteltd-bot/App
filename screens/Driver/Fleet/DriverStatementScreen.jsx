@@ -146,7 +146,7 @@ export default function DriverStatementScreen() {
               <View key={p.id}>
                 {i > 0 ? <Divider style={{ marginVertical: SPACE[3] }} /> : null}
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                  <Text style={TYPE.body}>{p.direction === 'toDriver' ? `${fleetName} paid you` : `You paid ${fleetName}`}</Text>
+                  <Text style={TYPE.body}>{p.direction === 'penalty' ? 'Penalty for cancelling a job' : p.direction === 'toDriver' ? `${fleetName} paid you` : `You paid ${fleetName}`}</Text>
                   <Text style={TYPE.body}>{pounds(p.amountPence)}</Text>
                 </View>
                 <Text style={[TYPE.small, { marginTop: SPACE[1] }]}>{formatWhen(p.paidAt)}{p.note ? ` · ${p.note}` : ''}</Text>
