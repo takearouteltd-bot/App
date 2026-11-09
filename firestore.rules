@@ -147,7 +147,7 @@ service cloud.firestore {
     function driverGrantsNothing(data) {
       return data.get("approved", false) == false &&
         data.get("blocked", false) == false &&
-        !data.keys().hasAny(["blockedByFleet"]) &&
+        !data.keys().hasAny(["blockedByFleet", "cancelBlockedUntil"]) &&
         data.get("femaleVerified", false) == false &&
         !("subscription" in data) &&
         !data.keys().hasAny(["fleetId", "fleetName", "fleetRequest", "fleetInvite",
@@ -175,6 +175,8 @@ service cloud.firestore {
         /* Hours and rest are kept by enforceDriverHours and admins. */
         !changed.hasAny(["workLog", "restUntil", "restStartedAt", "restDue",
           "restEndedEarlyAt", "restEndedEarlyBy"]) &&
+        /* A time penalty for cancelling a job (functions/driverPenalty.js). */
+        !changed.hasAny(["cancelBlockedUntil"]) &&
         (!changed.hasAny(["approved"]) || request.resource.data.approved == false);
     }
 
@@ -209,6 +211,12 @@ service cloud.firestore {
               resource.data.status != "online" &&
               resource.data.get("restUntil", null) is timestamp &&
               resource.data.restUntil > request.time) &&
+            /* ...and not during a penalty for cancelling a job. Only from
+               offline, so finishing another trip can still close it. */
+            !(request.resource.data.status == "online" &&
+              resource.data.get("status", "offline") == "offline" &&
+              resource.data.get("cancelBlockedUntil", null) is timestamp &&
+              resource.data.cancelBlockedUntil > request.time) &&
             (
               resource.data.onboardingComplete != true ||
               !request.resource.data.diff(resource.data).affectedKeys()
@@ -333,6 +341,9 @@ service cloud.firestore {
         // no new job in between.
         get(/databases/$(database)/documents/drivers/$(request.auth.uid))
           .data.get("restDue", false) != true &&
+        // Serving a time penalty for cancelling a job: no new jobs.
+        get(/databases/$(database)/documents/drivers/$(request.auth.uid))
+          .data.get("cancelBlockedUntil", request.time) <= request.time &&
         // A blocked driver takes nothing, a passenger who blocked this
         // driver never gets them, and female-only jobs need a verified
         // female driver. The app filters these too; this makes it binding.
@@ -392,6 +403,7 @@ service cloud.firestore {
         driver.approved == true &&
         driver.get("blocked", false) != true &&
         driver.get("restDue", false) != true &&
+        driver.get("cancelBlockedUntil", request.time) <= request.time &&
         myVehicleServes(resource.data);
     }
 
@@ -452,7 +464,9 @@ service cloud.firestore {
          these fields, which is why they are locked. */
       allow update: if isAdmin() || (
         signedIn() && (
-          riderRideUpdate(rideId) || driverClaimsRide() || driverRideUpdate() ||
+          /* driverRideUpdate first: it is cheap when it isn't theirs, and a
+             driver's own updates then stop short of the 1000-expression cap. */
+          riderRideUpdate(rideId) || driverRideUpdate() || driverClaimsRide() ||
           driverClaimsFleetJob() || driverDeclinesFleetJob()
         )
       );
@@ -760,6 +774,17 @@ service cloud.firestore {
         allow read: if isAdmin() || fleetStaffOf(fleetId);
         allow write: if isAdmin();
       }
+    }
+
+    /* Jobs drivers cancelled after accepting. Written by the server only
+       (functions/driverPenalty.js). */
+    match /driverCancellations/{cancelId} {
+      allow get: if isAdmin() ||
+        (signedIn() && resource.data.driverId == request.auth.uid) ||
+        (resource.data.fleetId is string && fleetStaffOf(resource.data.fleetId));
+      allow list: if isAdmin() ||
+        (resource.data.fleetId is string && fleetStaffOf(resource.data.fleetId));
+      allow write: if false;
     }
 
     /* Zone queues, kept by functions/fleet.js. The office sees them, and

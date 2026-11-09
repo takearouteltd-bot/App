@@ -21,7 +21,8 @@ import { auth, db } from '../../../config/firebase';
 import { useDriverPosition } from '../../../utils/driverLocation';
 
 import { currencySymbol, money } from '../../../utils/appConfig';
-import { noShowFeeFor, noShowWaitMs } from '../../../utils/cancellation';
+import { driverCancelPenalty, noShowFeeFor, noShowWaitMs } from '../../../utils/cancellation';
+import { useAppConfig } from '../../../utils/appConfig';
 import SafetyButton from '../../../components/SafetyButton';
 import PaymentTypeBanner from '../../../components/PaymentTypeBanner';
 import PhoneCustomerCard from '../../../components/PhoneCustomerCard';
@@ -65,6 +66,7 @@ export default function DriverRideInProgressScreen() {
   // The phone's own GPS (session watcher) first; the Firestore mirror of it
   // as a fallback, e.g. on a cold resume before the first fix.
   const position = useDriverPosition();
+  const appConfig = useAppConfig();
   const [mirroredLocation, setMirroredLocation] = useState(null);
   const liveLat = position.coords?.latitude;
   const liveLng = position.coords?.longitude;
@@ -270,13 +272,24 @@ export default function DriverRideInProgressScreen() {
     }
   }, [rideId, navigation]);
 
-  /* The driver gives the job back. It returns to "searching" so the next
-     available driver can take it, and this driver is not offered it again. */
+  /* The driver cancels the job. It returns to "searching" so the next
+     available driver can take it (a fleet job goes back to the fleet), and
+     this driver is not offered it again. The warning is an estimate; the
+     server decides any penalty (functions/driverPenalty.js). */
   const handleCancel = useCallback(() => {
-    Alert.alert('Give this job back?', 'It will be offered to another driver.', [
+    const penalty = driverCancelPenalty(appConfig.cancellation, driverLocation, ride?.pickupLocation);
+    let message = ride?.source === 'phone'
+      ? 'It will go back to your fleet.'
+      : 'It will be offered to another driver.';
+    if (penalty?.type === 'money') {
+      message += ` ${money(penalty.amount, ride?.currency)} will be taken from your balance as a penalty.`;
+    } else if (penalty?.type === 'time') {
+      message += ` As a penalty you won't be able to go online for ${penalty.minutes} minute${penalty.minutes === 1 ? '' : 's'}.`;
+    }
+    Alert.alert('Cancel this job?', message, [
       { text: 'Keep job', style: 'cancel' },
       {
-        text: 'Give back',
+        text: 'Cancel job',
         style: 'destructive',
         onPress: async () => {
           const id = driverIdRef.current;
@@ -303,7 +316,7 @@ export default function DriverRideInProgressScreen() {
         },
       },
     ]);
-  }, [rideId, releaseDriver, goHome, ride?.source]);
+  }, [rideId, releaseDriver, goHome, ride?.source, ride?.currency, ride?.pickupLocation, appConfig.cancellation, driverLocation]);
 
   /* After arriving, the driver can end the job if the passenger does not show.
      The ride is cancelled outright (not re-offered) and the passenger told.
@@ -569,7 +582,7 @@ export default function DriverRideInProgressScreen() {
               accessibilityRole="button"
             >
               <Text style={styles.giveBackText}>
-                {arrived ? 'Passenger has not turned up' : 'Give this job back'}
+                {arrived ? 'Passenger has not turned up' : 'Cancel job'}
               </Text>
             </TouchableOpacity>
           </ScrollView>

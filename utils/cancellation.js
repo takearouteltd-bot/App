@@ -13,6 +13,8 @@
 //     charges the same, once they have waited `noShowWaitMinutes`.
 //   - otherwise: `fee`, if more than `freeMinutes` have passed since the
 //     driver accepted.
+
+import { kmBetween } from './cities';
 const BEFORE_PICKUP = ['accepted', 'arrived'];
 
 function millis(ts) {
@@ -59,4 +61,22 @@ export function noShowFeeFor(ride, now = Date.now()) {
   const arrived = millis(ride.arrivedAt);
   if (!(arrivedFee > 0) || !arrived) return 0;
   return now - arrived >= noShowWaitMs(ride) ? round2(arrivedFee) : 0;
+}
+
+// What cancelling this job would cost the driver, for the warning only: the
+// server decides (functions/driverPenalty.js). Null means nothing.
+// Returns { type: 'money', amount } or { type: 'time', minutes }.
+export function driverCancelPenalty(settings, driverLocation, pickup) {
+  const mode = num(settings?.driverPenaltyMode, 0);
+  const amount = num(settings?.driverPenaltyAmount, 0);
+  const minutes = num(settings?.driverPenaltyMinutes, 0);
+  const radius = num(settings?.driverPenaltyRadiusKm, 0);
+  if (mode !== 1 && mode !== 2) return null;
+  if (mode === 1 && !(amount > 0)) return null;
+  if (mode === 2 && !(minutes > 0)) return null;
+  if (radius > 0) {
+    if (!driverLocation || !pickup) return null;
+    if (kmBetween(driverLocation, pickup) > radius) return null;
+  }
+  return mode === 1 ? { type: 'money', amount: round2(amount) } : { type: 'time', minutes };
 }

@@ -54,6 +54,12 @@ export const DEFAULT_APP_CONFIG = {
     arrivedFee: 0,
     noShowWaitMinutes: 5,
     driverSharePercent: 100,
+    // A driver cancelling a job they accepted. Mode 0 none, 1 money, 2 time
+    // off the road. Radius in km from the pickup; 0 means every cancel.
+    driverPenaltyMode: 0,
+    driverPenaltyAmount: 0,
+    driverPenaltyMinutes: 0,
+    driverPenaltyRadiusKm: 0,
   },
   // Passengers may ask for a female driver. If none accepts within
   // waitSeconds they are offered any driver instead.

@@ -82,7 +82,11 @@ const CONFIG_DEFAULTS = {
   },
   fares: {minimumFare: 6},
   cancellation: {fee: 0, freeMinutes: 2, arrivedFee: 0, noShowWaitMinutes: 5,
-    driverSharePercent: 100},
+    driverSharePercent: 100,
+    // A driver cancelling a job they accepted (driverPenalty.js).
+    // Mode 0 none, 1 money, 2 time off the road. Radius 0 = every cancel.
+    driverPenaltyMode: 0, driverPenaltyAmount: 0, driverPenaltyMinutes: 0,
+    driverPenaltyRadiusKm: 0},
 };
 
 /**
@@ -152,6 +156,14 @@ async function loadAppConfig() {
           d.cancellation.noShowWaitMinutes),
       driverSharePercent: Math.min(100, numSetting(data.cancellation,
           "driverSharePercent", d.cancellation.driverSharePercent)),
+      driverPenaltyMode: Math.min(2, Math.round(numSetting(data.cancellation,
+          "driverPenaltyMode", d.cancellation.driverPenaltyMode))),
+      driverPenaltyAmount: numSetting(data.cancellation,
+          "driverPenaltyAmount", d.cancellation.driverPenaltyAmount),
+      driverPenaltyMinutes: numSetting(data.cancellation,
+          "driverPenaltyMinutes", d.cancellation.driverPenaltyMinutes),
+      driverPenaltyRadiusKm: numSetting(data.cancellation,
+          "driverPenaltyRadiusKm", d.cancellation.driverPenaltyRadiusKm),
     },
     dispatch: {
       searchRadiusKm: numSetting(data.dispatch, "searchRadiusKm",
@@ -643,6 +655,8 @@ exports.authorizePaymentOnRideAccept = functions
               admin.firestore.FieldValue.arrayUnion(driverId) :
               ride.declinedBy || [],
             lastDriverCancelAt: admin.firestore.FieldValue.serverTimestamp(),
+            // Our doing, not the driver's: no penalty (driverPenalty.js).
+            serverReleasedAt: FV.serverTimestamp(),
           });
           if (driverId) {
             // Same release as when a driver gives a job back.
@@ -1249,7 +1263,7 @@ exports.cancelRidePayment = functions
             status: "captured",
             amount: feeMinor,
             type: "cancellation_fee",
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: FV.serverTimestamp(),
           });
           await db.collection("rides").doc(rideId).update({
             paymentStatus: "cancellation_fee",
@@ -1273,10 +1287,10 @@ exports.cancelRidePayment = functions
               if (walletSnap.exists) {
                 tx.update(walletRef, {
                   availableBalance:
-                    admin.firestore.FieldValue.increment(driverShare),
+                    FV.increment(driverShare),
                   totalEarned:
-                    admin.firestore.FieldValue.increment(driverShare),
-                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    FV.increment(driverShare),
+                  updatedAt: FV.serverTimestamp(),
                 });
               } else {
                 tx.set(walletRef, {
@@ -1285,8 +1299,8 @@ exports.cancelRidePayment = functions
                   pendingBalance: 0,
                   currency: rideCurrency(after).toUpperCase(),
                   walletStatus: "active",
-                  createdAt: admin.firestore.FieldValue.serverTimestamp(),
-                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                  createdAt: FV.serverTimestamp(),
+                  updatedAt: FV.serverTimestamp(),
                 });
               }
               tx.set(walletRef.collection("transactions").doc(), {
@@ -1297,7 +1311,7 @@ exports.cancelRidePayment = functions
                 paymentIntentId,
                 status: "cleared",
                 description: "Cancellation fee for ride " + rideId,
-                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                createdAt: FV.serverTimestamp(),
               });
               tx.update(db.collection("rides").doc(rideId),
                   {cancellationFeePaid: true});
@@ -1318,7 +1332,7 @@ exports.cancelRidePayment = functions
               driverId: after.driverId || null,
               type: "cancellation_fee",
               error: String(error && error.message || error),
-              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              createdAt: FV.serverTimestamp(),
             }).catch(() => null);
             return null;
           }
@@ -1334,7 +1348,7 @@ exports.cancelRidePayment = functions
         // 2. Update payments collection
         await db.collection("payments").doc(paymentIntentId).update({
           status: "canceled",
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: FV.serverTimestamp(),
         });
 
         console.log("🧯 Payment canceled:", rideId);
@@ -4479,6 +4493,9 @@ exports.detectDocumentExpiry = functions
    FLEETS AND PHONE BOOKINGS (fleet.js)
 ====================================== */
 Object.assign(exports, fleetBilling.functions);
+Object.assign(exports, require("./driverPenalty")({
+  functions, db, sendPush, loadAppConfig, distanceKm,
+}).functions);
 Object.assign(exports, require("./fleet")({
   functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
   hasExpiredDocument, toE164, toMillis, addOneMonth,

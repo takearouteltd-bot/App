@@ -1,7 +1,7 @@
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
 import { readFileSync } from 'node:fs';
 import { test, before, after, beforeEach } from 'node:test';
-import { doc, setDoc, updateDoc, getDoc, arrayUnion } from 'firebase/firestore';
+import { collection, doc, setDoc, updateDoc, getDoc, getDocs, arrayUnion, limit, orderBy, query, Timestamp, where } from 'firebase/firestore';
 
 let env;
 const RULES = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');
@@ -12,6 +12,12 @@ const phoneJob = (extra = {}) => ({
   dispatch: { driverId: null }, declinedBy: [], walletProcessed: false, ...extra,
 });
 
+const cFuture = () => Timestamp.fromMillis(Date.now() + 3600 * 1000);
+const cPast = () => Timestamp.fromMillis(Date.now() - 3600 * 1000);
+const cAppJob = (extra = {}) => ({
+  riderId: 'r1', driverId: null, status: 'searching', rideType: 'RouteMini', walletProcessed: false, pricing: 'checked',
+  declinedBy: [], fare: { total: 10 }, fareEstimate: 10, ...extra,
+});
 before(async () => {
   env = await initializeTestEnvironment({ projectId: 'demo-tar', firestore: { rules: RULES, host: '127.0.0.1', port: 8080 } });
 });
@@ -39,6 +45,16 @@ beforeEach(async () => {
     await setDoc(doc(db, 'rides/sched'), phoneJob({ status: 'scheduled' }));
     await setDoc(doc(db, 'rides/took'), phoneJob({ status: 'accepted', driverId: 'd1' }));
     await setDoc(doc(db, 'rides/app'), { riderId: 'r1', driverId: 'd1', status: 'accepted', rideType: 'RouteMini' });
+    await setDoc(doc(db, 'drivers/cfree'), { approved: true, vehicleType: 'RouteMini', status: 'online', fleetId: 'f1' });
+    await setDoc(doc(db, 'drivers/cblocked'), { approved: true, vehicleType: 'RouteMini', status: 'online', fleetId: 'f1', cancelBlockedUntil: cFuture() });
+    await setDoc(doc(db, 'drivers/coff'), { approved: true, vehicleType: 'RouteMini', status: 'offline', cancelBlockedUntil: cFuture() });
+    await setDoc(doc(db, 'drivers/cexpired'), { approved: true, vehicleType: 'RouteMini', status: 'offline', cancelBlockedUntil: cPast() });
+    await setDoc(doc(db, 'drivers/cbusy'), { approved: true, vehicleType: 'RouteMini', status: 'on_ride', cancelBlockedUntil: cFuture() });
+    await setDoc(doc(db, 'rides/cphone'), phoneJob());
+    await setDoc(doc(db, 'rides/capp'), cAppJob());
+    await setDoc(doc(db, 'rides/ctook'), cAppJob({ status: 'accepted', driverId: 'cfree' }));
+    await setDoc(doc(db, 'driverCancellations/c1'), { fleetId: 'f1', driverId: 'cfree', at: new Date(), rideId: 'x' });
+    await setDoc(doc(db, 'driverCancellations/c2'), { fleetId: null, driverId: 'dind', at: new Date(), rideId: 'y' });
   });
 });
 after(async () => { await env.cleanup(); });
@@ -223,3 +239,50 @@ test('unpaid driver can still finish a trip in progress', async () => {
 test('fleet staff see their blocked numbers', () => assertSucceeds(getDoc(doc(as('op1'), 'fleets/f1/blockedNumbers/+447700900999'))));
 test('another fleet cannot see them', () => assertFails(getDoc(doc(as('own2'), 'fleets/f1/blockedNumbers/+447700900999'))));
 test('staff cannot block or unblock directly (the server does it)', () => assertFails(setDoc(doc(as('own1'), 'fleets/f1/blockedNumbers/+447700900111'), { phone: '+447700900111' })));
+
+// Driver cancel penalty (functions/driverPenalty.js).
+const cGiveBack = { status: 'searching', driverId: null, acceptedAt: null, lastDriverCancelAt: new Date() };
+test('a driver cannot set or clear their own time penalty', async () => {
+  await assertFails(updateDoc(doc(as('cfree'), 'drivers/cfree'), { cancelBlockedUntil: cPast() }));
+  await assertFails(updateDoc(doc(as('coff'), 'drivers/coff'), { cancelBlockedUntil: null }));
+});
+test('a new driver doc cannot arrive already holding the field', async () => {
+  await assertFails(setDoc(doc(as('new1'), 'drivers/new1'), { approved: false, blocked: false, femaleVerified: false, cancelBlockedUntil: cPast() }));
+});
+test('going online: refused during a penalty, fine once it ends, and a trip in progress can still close', async () => {
+  await assertFails(updateDoc(doc(as('coff'), 'drivers/coff'), { status: 'online' }));
+  await assertSucceeds(updateDoc(doc(as('cexpired'), 'drivers/cexpired'), { status: 'online' }));
+  await assertSucceeds(updateDoc(doc(as('cbusy'), 'drivers/cbusy'), { status: 'online' }));
+});
+test('claiming a phone job: refused during a penalty, allowed without one', async () => {
+  await assertFails(updateDoc(doc(as('cblocked'), 'rides/cphone'), claim('cblocked')));
+  await assertSucceeds(updateDoc(doc(as('cfree'), 'rides/cphone'), claim('cfree')));
+});
+test('claiming an app job: refused during a penalty, allowed without one', async () => {
+  await assertFails(updateDoc(doc(as('cblocked'), 'rides/capp'), claim('cblocked')));
+  await assertSucceeds(updateDoc(doc(as('cfree'), 'rides/capp'), claim('cfree')));
+});
+test('giving a job back still works, but a driver cannot pass it off as a server release', async () => {
+  await assertFails(updateDoc(doc(as('cfree'), 'rides/ctook'), { ...cGiveBack, serverReleasedAt: new Date() }));
+  await assertSucceeds(updateDoc(doc(as('cfree'), 'rides/ctook'), cGiveBack));
+});
+test('driverCancellations: admin, the driver and that fleet read; nobody writes', async () => {
+  await assertSucceeds(getDoc(doc(as('adm'), 'driverCancellations/c1')));
+  await assertSucceeds(getDoc(doc(as('adm'), 'driverCancellations/c2')));
+  await assertSucceeds(getDoc(doc(as('cfree'), 'driverCancellations/c1')));
+  await assertSucceeds(getDoc(doc(as('op1'), 'driverCancellations/c1')));
+  await assertFails(getDoc(doc(as('op2'), 'driverCancellations/c1')));
+  await assertFails(getDoc(doc(as('op1'), 'driverCancellations/c2')));
+  await assertFails(getDoc(doc(as('r1'), 'driverCancellations/c1')));
+  await assertFails(setDoc(doc(as('adm'), 'driverCancellations/c9'), { fleetId: 'f1' }));
+  await assertFails(updateDoc(doc(as('cfree'), 'driverCancellations/c1'), { penalty: null }));
+});
+test('the fleet panel query works for its own fleet only', async () => {
+  const q = (db, fleetId) => query(collection(db, 'driverCancellations'), where('fleetId', '==', fleetId), orderBy('at', 'desc'), limit(200));
+  await assertSucceeds(getDocs(q(as('op1'), 'f1')));
+  await assertFails(getDocs(q(as('op2'), 'f1')));
+});
+test('the admin panel query works', async () => {
+  await assertSucceeds(getDocs(query(collection(as('adm'), 'driverCancellations'), orderBy('at', 'desc'), limit(200))));
+  await assertFails(getDocs(query(collection(as('op1'), 'driverCancellations'), orderBy('at', 'desc'), limit(200))));
+});

@@ -33,6 +33,12 @@ export function restEndsAt(driver, now = Date.now()) {
   return until && until > now ? until : null;
 }
 
+// When a time penalty for cancelling a job ends, in ms, or null if none.
+export function cancelBlockEndsAt(driver, now = Date.now()) {
+  const until = driver?.cancelBlockedUntil?.toMillis?.();
+  return until && until > now ? until : null;
+}
+
 export function formatHours(ms) {
   const mins = Math.max(0, Math.floor(ms / 60000));
   const h = Math.floor(mins / 60);

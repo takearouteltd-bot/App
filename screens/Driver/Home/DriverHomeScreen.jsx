@@ -39,7 +39,7 @@ import { servesCity } from '../../../utils/cities';
 import { biddingEnabled, counterSteps, offerSeconds, sendCounterOffer } from '../../../utils/bidding';
 import { clearJobAlerts, ringForNewJob, stopJobRing } from '../../../utils/notifications';
 import PaymentTypeBanner from '../../../components/PaymentTypeBanner';
-import { formatHours, formatRestEnd, restEndsAt, workedInLastDay } from '../../../utils/driverHours';
+import { formatHours, formatRestEnd, restEndsAt, workedInLastDay, cancelBlockEndsAt } from '../../../utils/driverHours';
 import {
   COLORS, TYPE, SPACE, RADIUS, SHADOW,
   Button, Chip, Banner, RouteLine, Loading, Sheet, EmptyState,
@@ -104,6 +104,7 @@ export default function DriverHomeScreen() {
     return () => clearInterval(id);
   }, []);
   const restUntil = restEndsAt(hoursDoc, now);
+  const cancelBlockUntil = cancelBlockEndsAt(hoursDoc, now);
   const wasOnlineRef = useRef(null);
   const maxShiftHoursRef = useRef(maxShiftHours);
   maxShiftHoursRef.current = maxShiftHours;
@@ -247,6 +248,7 @@ export default function DriverHomeScreen() {
       setHoursDoc({
         workLog: data.workLog,
         restUntil: data.restUntil,
+        cancelBlockedUntil: data.cancelBlockedUntil,
         status: data.status,
         shiftStartedAt: data.shiftStartedAt,
       });
@@ -316,6 +318,13 @@ export default function DriverHomeScreen() {
     const newStatus = !isOnline ? 'online' : 'offline';
 
     // Resting after the hours limit: the server won't let them back on yet.
+    if (newStatus === 'online' && cancelBlockUntil) {
+      Alert.alert(
+        'You can’t go online yet',
+        `You cancelled a job you had accepted, so you can go online again at ${formatRestEnd(cancelBlockUntil)}.`
+      );
+      return;
+    }
     if (newStatus === 'online' && restUntil) {
       Alert.alert(
         'You’re resting',
@@ -959,6 +968,8 @@ export default function DriverHomeScreen() {
             <Text style={TYPE.small} numberOfLines={1}>
               {isOnline
                 ? hoursLabel(hoursDoc, maxShiftHours, now) || 'Waiting for jobs'
+                : cancelBlockUntil
+                ? `Cancelled a job · back online at ${formatRestEnd(cancelBlockUntil, now)}`
                 : restUntil
                 ? `Resting · back online at ${formatRestEnd(restUntil, now)}`
                 : isApproved
@@ -970,7 +981,7 @@ export default function DriverHomeScreen() {
           </View>
 
           <TouchableOpacity
-            style={[styles.goBtn, isOnline ? styles.goBtnOff : restUntil ? styles.goBtnRest : styles.goBtnOn]}
+            style={[styles.goBtn, isOnline ? styles.goBtnOff : restUntil || cancelBlockUntil ? styles.goBtnRest : styles.goBtnOn]}
             onPress={toggleOnlineStatus}
             activeOpacity={0.85}
             accessibilityRole="button"

@@ -24,3 +24,5 @@ New app bookings checked by the server (cities, price against the route, payment
 Rules unit tests can also be run from App/ with `firebase emulators:exec --only firestore --project demo-tar 'node --test rules-tests/*.test.mjs'`.
 
 Web booker (fleetWeb.js: sign-in codes, booking, card hold/capture/release, tracking, texts): `node rules-tests/web-booker.mjs`, same set-up as booking-checks plus STRIPE_API_BASE=http://127.0.0.1:8999 in functions/.env.local (fake Twilio, Google and Stripe on :8999).
+
+Admin's no-show fee and the driver cancel penalty (functions/driverPenalty.js, cancelRidePayment): `node rules-tests/driver-cancel.mjs`, same set-up as booking-checks plus STRIPE_API_BASE=http://127.0.0.1:8999 in functions/.env.local (fake Routes and Stripe on :8999). Rules for it are in fleet.test.mjs: keep rules tests in that one file, because `node --test` runs files at the same time and each clears the emulator.
