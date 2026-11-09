@@ -358,7 +358,7 @@ export default function App() {
 
   return (
     <StripeProvider
-      publishableKey="pk_test_51T4pFQEZ0ibzrAsgeuyTPpR8IZlV1Crsq1B5cLKaMo2UqLWmWENtmZqARrVpLnO7WCv3xv3JZaTFh3fES00qBgr100445BbowE"
+      publishableKey="pk_live_51T4pF7REPqWRLyvftXlZAED5bv5rrFjSh9MQle6LfToqYzspQzy5DDNZy8gU7fG2ilbj9UGhHAexEP5feYj9QW3p00AaGLzXVu"
     >
       <NavigationContainer ref={navigationRef} onReady={() => setNavReady(true)}>
         <Stack.Navigator screenOptions={{ headerShown: false }}>
