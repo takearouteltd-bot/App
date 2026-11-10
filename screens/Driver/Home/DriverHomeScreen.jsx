@@ -43,8 +43,9 @@ import PaymentTypeBanner from '../../../components/PaymentTypeBanner';
 import { formatHours, formatRestEnd, restEndsAt, workedInLastDay, cancelBlockEndsAt } from '../../../utils/driverHours';
 import {
   COLORS, TYPE, SPACE, RADIUS, SHADOW,
-  Button, Chip, Banner, RouteLine, Loading, Sheet, EmptyState,
+  Button, Chip, Banner, RouteLine, Loading, Sheet, EmptyState, isCoord,
 } from '../../../components/ui/kit';
+import RouteDirections from '../../../components/RouteDirections';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { distanceText } from '../../../utils/routes';
 import { DRIVER_MAP_STYLE } from '../../../utils/driverMapStyle';
@@ -53,7 +54,7 @@ import { DRIVER_MAP_STYLE } from '../../../utils/driverMapStyle';
 // passengers does not have to do it again every shift.
 const HIDE_EARNINGS_KEY = 'driver.hideEarnings';
 
-const { width } = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
 // A job whose timer ran out stays off the list this long before it can be
 // shown again (it won't ring again).
 const MISSED_SNOOZE_MS = 60000;
@@ -135,6 +136,8 @@ export default function DriverHomeScreen() {
   const penaltyExplained = useRef(null);
   const [workingCityId, setWorkingCityId] = useState(null);
   const [femaleVerified, setFemaleVerified] = useState(false);
+  // Off: this driver isn't offered jobs paid in cash (server and here).
+  const [cashJobs, setCashJobs] = useState(true);
   // The taxi firm this driver works for, if any (functions/fleet.js).
   const [fleetId, setFleetId] = useState(null);
   // What a passenger sees on this driver's counter-offers.
@@ -163,6 +166,8 @@ export default function DriverHomeScreen() {
   const currentRideIdRef = useRef(null);
   currentRideIdRef.current = currentRideId;
   const [timer, setTimer] = useState(15);
+  // The countdown's starting value, for the bar on the Accept button.
+  const [timerTotal, setTimerTotal] = useState(15);
   const [isAccepting, setIsAccepting] = useState(false);
 
   const [earningsToday, setEarningsToday] = useState(0);
@@ -244,6 +249,7 @@ export default function DriverHomeScreen() {
       );
       setWorkingCityId(data.workingCityId || null);
       setFemaleVerified(data.femaleVerified === true);
+      setCashJobs(data.cashJobs !== false);
       setFleetId(data.fleetId || null);
       setDriverCard({
         name: data.firstName || (data.fullName || '').split(' ')[0] || 'Driver',
@@ -527,6 +533,8 @@ export default function DriverHomeScreen() {
       if (!data.pickupLocation || data.fleetId !== fleetId) return;
       const target = data.dispatch?.driverId || null;
       if (target && target !== driverId) return;
+      // Cash jobs off: only one the office sent to this driver by name.
+      if (!cashJobs && !target && !['account', 'card', 'online'].includes(data.collectBy)) return;
       if (Array.isArray(data.declinedBy) && data.declinedBy.includes(driverId)) return;
       const snooze = snoozed.current.get(data.id);
       if (snooze && snooze.until > Date.now()) return;
@@ -555,6 +563,8 @@ export default function DriverHomeScreen() {
       if (Array.isArray(data.blockedDriverIds) && data.blockedDriverIds.includes(driverId)) return;
       // Somebody who booked and paid for Executive does not get a Mini.
       if (!canServe(vehicleType, data.rideType)) return;
+      // Cash jobs switched off.
+      if (!cashJobs && data.paymentMethod === 'cash') return;
       // Chosen a working city? Then only that city's jobs.
       if (!servesCity(workingCityId, data.cityId)) return;
       // Passenger asked for a female driver: verified female drivers only.
@@ -595,7 +605,7 @@ export default function DriverHomeScreen() {
       if (next) animateCard();
       return next;
     });
-  }, [searchingRides, fleetRides, fleetId, isOnline, location, isApproved, searchRadiusKm, driverId, vehicleType, workingCityId, femaleVerified, animateCard]);
+  }, [searchingRides, fleetRides, fleetId, isOnline, location, isApproved, searchRadiusKm, driverId, vehicleType, workingCityId, femaleVerified, cashJobs, animateCard]);
 
   // Going offline takes the offer card down with it.
   useEffect(() => {
@@ -648,6 +658,66 @@ export default function DriverHomeScreen() {
     return undefined;
   }, [isOnline, pulseAnim]);
 
+  /* Cash jobs on or off: the server stops offering cash jobs when off. */
+  const toggleCashJobs = useCallback(() => {
+    if (!driverId) return;
+    const next = !cashJobs;
+    const save = () => {
+      setCashJobs(next);
+      updateDoc(doc(db, 'drivers', driverId), { cashJobs: next }).catch(() => {
+        setCashJobs(!next);
+        Alert.alert('Could not change it', 'Check your connection and try again.');
+      });
+    };
+    if (next) return save();
+    Alert.alert(
+      'Turn cash jobs off?',
+      "You won't be offered jobs the passenger pays in cash, including phone bookings from your fleet. Your office can still send you one by name.",
+      [{ text: 'Keep them on', style: 'cancel' }, { text: 'Turn off', style: 'destructive', onPress: save }]
+    );
+  }, [driverId, cashJobs]);
+
+  /* The job on offer on the map, like Uber: the route from the driver to the
+     pickup (grey) and on to the drop-off (black), framed above the card.
+     The driver's start point is frozen when the card appears, so GPS
+     movement doesn't refetch the route (each fetch is a paid Routes call).
+     The real drive to the pickup also replaces the estimate on the card. */
+  const [offerMap, setOfferMap] = useState(null);
+  const [pickupLeg, setPickupLeg] = useState(null);
+  const offerMapId = useRef(null);
+  useEffect(() => {
+    const ride = currentRideId ? rideRequests.find((r) => r.id === currentRideId) : null;
+    if (!ride || !isCoord(ride.pickupLocation)) {
+      if (offerMapId.current) {
+        offerMapId.current = null;
+        setOfferMap(null);
+        setPickupLeg(null);
+        if (location) {
+          mapRef.current?.animateToRegion(
+            { latitude: location.latitude, longitude: location.longitude, latitudeDelta: 0.01, longitudeDelta: 0.01 },
+            500
+          );
+        }
+      }
+      return;
+    }
+    if (offerMapId.current === ride.id) return;
+    offerMapId.current = ride.id;
+    setPickupLeg(null);
+    const from = isCoord(location) ? { latitude: location.latitude, longitude: location.longitude } : null;
+    const dropoff = isCoord(ride.dropoffLocation) ? ride.dropoffLocation : null;
+    setOfferMap({ id: ride.id, from, pickup: ride.pickupLocation, dropoff, stops: (ride.stops || []).filter(isCoord) });
+    const points = [from, ride.pickupLocation, dropoff].filter(Boolean);
+    setTimeout(() => {
+      mapRef.current?.fitToCoordinates(points, {
+        edgePadding: { top: 140, right: 60, bottom: Math.round(height * 0.55), left: 60 },
+        animated: true,
+      });
+    }, 50);
+    // Only when the card changes; location is read as it is at that moment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentRideId, rideRequests]);
+
   /* The offer countdown. When it runs out the job moves on, rather than
      sitting at "1s" forever as it used to. */
   const waitingOnCounter = !!(currentRideId && sentOffers[currentRideId]);
@@ -664,13 +734,13 @@ export default function DriverHomeScreen() {
     const queueSeconds = Math.max(1, Math.min(DEFAULT_QUEUE_OFFER_SECONDS,
       offeredAt ? Math.ceil((offeredAt + DEFAULT_QUEUE_OFFER_SECONDS * 1000 - Date.now()) / 1000) : DEFAULT_QUEUE_OFFER_SECONDS));
 
-    setTimer(
-      waitingOnCounter
-        ? offerSeconds(appConfig)
-        : queueJob
-        ? queueSeconds
-        : Math.max(5, Math.round(dispatchConfig.requestTimeoutSeconds || 15))
-    );
+    const startAt = waitingOnCounter
+      ? offerSeconds(appConfig)
+      : queueJob
+      ? queueSeconds
+      : Math.max(5, Math.round(dispatchConfig.requestTimeoutSeconds || 15));
+    setTimer(startAt);
+    setTimerTotal(queueJob ? DEFAULT_QUEUE_OFFER_SECONDS : startAt);
 
     const interval = setInterval(() => {
       setTimer((prev) => {
@@ -981,6 +1051,40 @@ export default function DriverHomeScreen() {
         showsCompass={false}
         toolbarEnabled={false}
       >
+        {offerMap?.from ? (
+          <RouteDirections
+            key={`to-${offerMap.id}`}
+            origin={offerMap.from}
+            destination={offerMap.pickup}
+            strokeWidth={4}
+            strokeColor="#8a9099"
+            onReady={(r) => setPickupLeg({ id: offerMap.id, minutes: r.duration, km: r.distance })}
+          />
+        ) : null}
+        {offerMap?.dropoff ? (
+          <RouteDirections
+            key={`trip-${offerMap.id}`}
+            origin={offerMap.pickup}
+            waypoints={offerMap.stops}
+            destination={offerMap.dropoff}
+            strokeWidth={5}
+            strokeColor={COLORS.midnight}
+          />
+        ) : null}
+        {offerMap ? (
+          <Marker coordinate={offerMap.pickup} anchor={{ x: 0.5, y: 0.5 }}>
+            <View style={styles.offerPickupPin}>
+              <Ionicons name="person" size={14} color={COLORS.white} />
+            </View>
+          </Marker>
+        ) : null}
+        {offerMap?.dropoff ? (
+          <Marker coordinate={offerMap.dropoff} anchor={{ x: 0.5, y: 0.5 }}>
+            <View style={styles.offerDropPin}>
+              <View style={styles.offerDropDot} />
+            </View>
+          </Marker>
+        ) : null}
         {location ? (
           <Marker coordinate={location} anchor={{ x: 0.5, y: 0.5 }} flat>
             <View style={styles.carMarker}>
@@ -1028,6 +1132,22 @@ export default function DriverHomeScreen() {
             </Text>
           </TouchableOpacity>
         </View>
+
+        {isApproved ? (
+          <TouchableOpacity
+            style={[styles.cashToggle, !cashJobs && styles.cashToggleOff]}
+            onPress={toggleCashJobs}
+            activeOpacity={0.85}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: cashJobs }}
+            accessibilityLabel="Cash jobs"
+          >
+            <Ionicons name="cash-outline" size={16} color={cashJobs ? COLORS.midnight : COLORS.red} />
+            <Text style={[styles.cashToggleText, !cashJobs && { color: COLORS.red }]}>
+              {cashJobs ? 'Cash jobs on' : 'Cash jobs off'}
+            </Text>
+          </TouchableOpacity>
+        ) : null}
 
         {fleetHint ? (
           <TouchableOpacity
@@ -1224,7 +1344,10 @@ export default function DriverHomeScreen() {
               <View style={styles.fact}>
                 <Ionicons name="navigate-outline" size={16} color={COLORS.muted} />
                 <Text style={styles.factText}>
-                  {pickupMinutes(currentRide.pickupDistanceKm)} min ({distanceText(currentRide.pickupDistanceKm)}) to pickup
+                  {pickupLeg?.id === currentRide.id
+                    ? `${Math.max(1, Math.ceil(pickupLeg.minutes))} min (${distanceText(pickupLeg.km)})`
+                    : `About ${pickupMinutes(currentRide.pickupDistanceKm)} min (${distanceText(currentRide.pickupDistanceKm)})`}{' '}
+                  to pickup
                 </Text>
               </View>
               <View style={styles.fact}>
@@ -1235,6 +1358,7 @@ export default function DriverHomeScreen() {
               </View>
             </View>
 
+            <View style={styles.acceptWrap}>
             <Button
               title={
                 isAccepting
@@ -1247,6 +1371,12 @@ export default function DriverHomeScreen() {
               disabled={isAccepting}
               loading={isAccepting}
             />
+            {timer > 0 && !isAccepting ? (
+              <View pointerEvents="none" style={styles.countdownTrack}>
+                <View style={[styles.countdownFill, { width: `${Math.min(100, (timer / Math.max(1, timerTotal)) * 100)}%` }]} />
+              </View>
+            ) : null}
+            </View>
 
             {/* Bidding: counter with a higher price instead. */}
             {currentRide.bidding && biddingEnabled(appConfig) ? (
@@ -1313,6 +1443,26 @@ function RiderRatingChip({ riderId }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.surface },
+
+  cashToggle: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[2], alignSelf: 'flex-start',
+    backgroundColor: COLORS.white, borderRadius: RADIUS.pill,
+    paddingHorizontal: SPACE[3], paddingVertical: SPACE[2], marginTop: SPACE[2], ...SHADOW.float,
+  },
+  cashToggleOff: { borderWidth: 1, borderColor: COLORS.red },
+  cashToggleText: { fontSize: 13, fontWeight: '700', color: COLORS.midnight },
+  acceptWrap: { borderRadius: RADIUS.pill, overflow: 'hidden' },
+  countdownTrack: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 5, backgroundColor: 'rgba(255,255,255,0.18)' },
+  countdownFill: { height: 5, backgroundColor: COLORS.lime },
+  offerPickupPin: {
+    width: 30, height: 30, borderRadius: 15, backgroundColor: '#2f6fde',
+    borderWidth: 3, borderColor: COLORS.white, alignItems: 'center', justifyContent: 'center', ...SHADOW.float,
+  },
+  offerDropPin: {
+    width: 26, height: 26, borderRadius: 6, backgroundColor: COLORS.midnight,
+    borderWidth: 3, borderColor: COLORS.white, alignItems: 'center', justifyContent: 'center', ...SHADOW.float,
+  },
+  offerDropDot: { width: 8, height: 8, borderRadius: 2, backgroundColor: COLORS.white },
 
   carMarker: {
     width: 42, height: 42, borderRadius: 21,

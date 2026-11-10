@@ -174,6 +174,27 @@ assert.equal(rnd.dispatch.mode, 'queue'); assert.equal(rnd.dispatch.nearest, tru
 assert.equal(rnd.dispatch.driverId, d2.user.uid, 'nearest other driver'); assert.ok(rnd.declinedBy.includes(d1.user.uid));
 await O.call('cancelFleetBooking', { rideId: bnd.rideId });
 
+step('a driver with cash jobs off is skipped for a cash job, but still offered a card job or one sent by name');
+await updateDoc(doc(D2.db, 'drivers', d2.user.uid), { cashJobs: false });
+const giveBack = async (extra) => {
+  const b = await O.call('createFleetBooking', { customer: { phone: '07700900444', name: 'Nia' }, pickup: T5, dropoff: PAD, driverId: d1.user.uid, ...extra });
+  await updateDoc(doc(D.db, 'rides', b.rideId), claim(d1.user.uid));
+  await updateDoc(doc(D.db, 'rides', b.rideId), { status: 'dispatching', driverId: null, acceptedAt: null });
+  return b.rideId;
+};
+const cashId = await giveBack({});
+const rCash = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', cashId))).data(); return r.dispatch.mode === 'queue' && r.declinedBy?.includes(d1.user.uid) && (r.dispatch.queueDone || r.dispatch.driverId) ? r : null; }, 'cash job moved on');
+assert.notEqual(rCash.dispatch.driverId, d2.user.uid, 'cash-off driver skipped');
+await O.call('cancelFleetBooking', { rideId: cashId });
+const cardId = await giveBack({ collectBy: 'card' });
+const rCard = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', cardId))).data(); return r.dispatch.mode === 'queue' && r.dispatch.driverId ? r : null; }, 'card job offered');
+assert.equal(rCard.dispatch.driverId, d2.user.uid, 'card job still offered');
+await O.call('cancelFleetBooking', { rideId: cardId });
+const named = await O.call('createFleetBooking', { customer: { phone: '07700900444', name: 'Nia' }, pickup: T5, dropoff: PAD, driverId: d2.user.uid });
+assert.equal((await getDoc(doc(O.db, 'rides', named.rideId))).data().dispatch.driverId, d2.user.uid, 'office can still send by name');
+await O.call('cancelFleetBooking', { rideId: named.rideId });
+await updateDoc(doc(D2.db, 'drivers', d2.user.uid), { cashJobs: true });
+
 step('company driver cannot withdraw (fleet pays them); driver receipt: own trips only');
 await assert.rejects(D.call('requestDriverPayout', { amount: 20 }), /paid to Star Cars/);
 await assert.rejects(D2.call('emailDriverReceipt', { rideId: b1.rideId, email: 'me@test.dev' }), /not your trip/);

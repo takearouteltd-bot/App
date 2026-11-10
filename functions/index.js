@@ -3344,6 +3344,8 @@ async function offerRideToDrivers(rideId, ride) {
     if (d.workingCityId && d.workingCityId !== ride.cityId) return;
     // Passenger asked for a female driver: verified female drivers only.
     if (ride.femaleDriverOnly === true && d.femaleVerified !== true) return;
+    // The driver switched cash jobs off in the app.
+    if (d.cashJobs === false && ride.paymentMethod === "cash") return;
     const km = distanceKm(d.location, ride.pickupLocation);
     if (km <= cfg.dispatch.searchRadiusKm) nearby.push(snap.id);
   });

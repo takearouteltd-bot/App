@@ -67,6 +67,22 @@ export default function DriverProfileScreen() {
     }
   };
 
+  // Cash jobs on or off (drivers.cashJobs; off means no cash offers).
+  const cashOn = driver?.cashJobs !== false;
+  const toggleCash = () => {
+    if (!user?.uid) return;
+    const save = () =>
+      setDoc(doc(db, "drivers", user.uid), { cashJobs: !cashOn }, { merge: true }).catch(() =>
+        Alert.alert("Could not change it", "Please try again.")
+      );
+    if (!cashOn) return save();
+    Alert.alert(
+      "Turn cash jobs off?",
+      "You won't be offered jobs the passenger pays in cash, including phone bookings from your fleet. Your office can still send you one by name.",
+      [{ text: "Keep them on", style: "cancel" }, { text: "Turn off", style: "destructive", onPress: save }]
+    );
+  };
+
   useEffect(() => {
     if (!user?.uid) return;
 
@@ -286,6 +302,7 @@ export default function DriverProfileScreen() {
       <Section title="Help and safety">
         <RowGroup
           items={[
+            { icon: "cash-outline", iconColor: cashOn ? COLORS.midnight : COLORS.red, title: "Cash jobs", detail: cashOn ? "On: you're offered cash jobs" : "Off: no cash jobs offered to you", onPress: toggleCash },
             { icon: "chatbubbles-outline", iconColor: COLORS.midnight, title: "My reports", detail: "Issues, lost property and replies from support", onPress: () => navigation.navigate("MyReports", { role: "driver" }) },
             { icon: "shield-checkmark-outline", iconColor: COLORS.red, title: "Safety", detail: driver?.emergencyContact?.name ? `Emergency contact: ${driver.emergencyContact.name}` : "Add your next of kin", onPress: () => navigation.navigate("EmergencyContact", { role: "driver" }) },
             { icon: "document-text-outline", iconColor: COLORS.midnight, title: "Terms of use", onPress: openTerms },

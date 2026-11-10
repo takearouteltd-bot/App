@@ -372,6 +372,28 @@ module.exports = (deps) => {
   }
 
   /**
+   * Whether the driver is paid in cash on this job (not an account job,
+   * a card on the terminal or paid online).
+   * @param {Object} ride Ride data.
+   * @return {boolean} Cash in hand.
+   */
+  function cashInHand(ride) {
+    return !["account", "card", "online"].includes(ride.collectBy);
+  }
+
+  /**
+   * Whether automatic dispatch (nearest, all drivers, zone queue) may offer
+   * this job to the driver: a driver who switched cash jobs off in the app
+   * isn't offered them. The office can still pick them by name.
+   * @param {Object} d Driver data.
+   * @param {Object} ride Ride data.
+   * @return {boolean} Offer it.
+   */
+  function wantsJob(d, ride) {
+    return !(d.cashJobs === false && cashInHand(ride));
+  }
+
+  /**
    * Whether a driver can be sent a fleet job right now.
    * @param {Object} d Driver data.
    * @param {Object} ride Ride data.
@@ -452,7 +474,8 @@ module.exports = (deps) => {
     drivers.forEach((snap) => {
       const d = snap.data();
       if (skip.has(snap.id) || d.status !== "online" || positionStale(d) ||
-          d.isOnRide === true || !canTakeFleetJob(d, ride)) {
+          d.isOnRide === true || !canTakeFleetJob(d, ride) ||
+          !wantsJob(d, ride)) {
         return;
       }
       const km = distanceKm(d.location, ride.pickupLocation);
@@ -485,7 +508,8 @@ module.exports = (deps) => {
       drivers.forEach((snap) => {
         const d = snap.data();
         if (skip.has(snap.id) || d.status !== "online" || positionStale(d) ||
-            d.isOnRide === true || !canTakeFleetJob(d, ride)) {
+            d.isOnRide === true || !canTakeFleetJob(d, ride) ||
+            !wantsJob(d, ride)) {
           return;
         }
         const km = distanceKm(d.location, ride.pickupLocation);
@@ -625,6 +649,7 @@ module.exports = (deps) => {
         name: [d.firstName, d.lastName].filter(Boolean).join(" ") ||
           d.name || d.fullName || "Driver",
         vehicleType: d.vehicleType || "RouteMini",
+        noCash: d.cashJobs === false,
         since: was && was.zoneId === zone.id && was.since ? was.since : now,
       });
     });
@@ -693,7 +718,8 @@ module.exports = (deps) => {
       const skip = new Set(ride.declinedBy || []);
       for (const z of tried) {
         next = (queues[z.id] || []).find((e) => !skip.has(e.driverId) &&
-          canServe(e.vehicleType, ride.rideType)) || null;
+          canServe(e.vehicleType, ride.rideType) &&
+          !(e.noCash === true && cashInHand(ride))) || null;
         if (next) {
           zone = z;
           break;
