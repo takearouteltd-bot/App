@@ -307,7 +307,7 @@ export default function DriverRideToDropoffScreen() {
         ...extra,
       });
       batch.update(doc(db, 'drivers', ride.driverId), RELEASE);
-      await whenSaved(batch.commit(), 'Finishing the trip');
+      await whenSaved(batch.commit());
 
       navigation.navigate('RideCompleted', { rideId });
     } catch (error) {

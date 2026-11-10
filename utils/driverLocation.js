@@ -70,7 +70,7 @@ export function useDriverPosition() {
 const SAVE_EVERY_MS_ON_JOB = 10000;
 const SAVE_EVERY_MS_IDLE = 20000;
 const SAVE_AFTER_METRES = 150;
-let saving = false;
+let savingSince = 0;
 let lastSave = null;
 
 function metresApart(a, b) {
@@ -84,13 +84,14 @@ function metresApart(a, b) {
 }
 
 async function writeDriverLocation(driverId, coords, force = false) {
-  if (saving && !force) return;
+  // One at a time, but a save stuck on a dead connection doesn't stop them.
+  if (savingSince && Date.now() - savingSince < 30000 && !force) return;
   const now = Date.now();
   if (!force && lastSave && lastSave.driverId === driverId) {
     const every = jobDriverId ? SAVE_EVERY_MS_ON_JOB : SAVE_EVERY_MS_IDLE;
     if (now - lastSave.at < every && metresApart(lastSave.coords, coords) < SAVE_AFTER_METRES) return;
   }
-  saving = true;
+  savingSince = now;
   lastSave = { driverId, at: now, coords: { latitude: coords.latitude, longitude: coords.longitude } };
   try {
     await setDoc(
@@ -114,7 +115,7 @@ async function writeDriverLocation(driverId, coords, force = false) {
   } catch (error) {
     console.log('Location update error:', error);
   } finally {
-    saving = false;
+    if (savingSince === now) savingSince = 0;
   }
 }
 

@@ -240,7 +240,7 @@ export default function DriverRideInProgressScreen() {
         ...(awayM != null && awayM > ARRIVE_RADIUS_M
           ? { arrivedAwayFromPickupM: Math.round(awayM) }
           : {}),
-      }), 'Arriving');
+      }));
     } catch (error) {
       console.error('Error updating status:', error);
       Alert.alert('Could not update', 'Please try again.');
@@ -270,7 +270,7 @@ export default function DriverRideInProgressScreen() {
       await whenSaved(updateDoc(doc(db, 'rides', rideId), {
         status: 'ongoing',
         startedAt: serverTimestamp(),
-      }), 'Starting the trip');
+      }));
       if (!hasLeftScreen.current) {
         hasLeftScreen.current = true;
         navigation.replace('RideToDropoff', { rideId });
