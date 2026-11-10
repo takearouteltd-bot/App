@@ -82,8 +82,11 @@ export function durationText(minutes) {
   return `${h} hr${h === 1 ? '' : 's'}${rest ? ` ${rest} min${rest === 1 ? '' : 's'}` : ''}`;
 }
 
-// "850 m" or "3.4 km".
+// Distances are worked out in km and shown in miles (UK): "300 yd" or
+// "2.7 mi".
 export function distanceText(km) {
-  if (!km || km < 1) return `${Math.round((km || 0) * 1000)} m`;
-  return `${km.toFixed(1)} km`;
+  const n = Number(km) || 0;
+  const miles = n / 1.609344;
+  if (miles < 0.2) return `${Math.round(n * 1093.613)} yd`;
+  return `${miles.toFixed(1)} mi`;
 }

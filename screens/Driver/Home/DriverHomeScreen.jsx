@@ -46,6 +46,7 @@ import {
   Button, Chip, Banner, RouteLine, Loading, Sheet, EmptyState,
 } from '../../../components/ui/kit';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { distanceText } from '../../../utils/routes';
 
 // Remembered between launches, so a driver who hides their earnings from
 // passengers does not have to do it again every shift.
@@ -1220,12 +1221,12 @@ export default function DriverHomeScreen() {
             <View style={styles.facts}>
               <View style={styles.fact}>
                 <Ionicons name="navigate-outline" size={16} color={COLORS.muted} />
-                <Text style={styles.factText}>{currentRide.pickupDistanceKm.toFixed(1)} km away</Text>
+                <Text style={styles.factText}>{distanceText(currentRide.pickupDistanceKm)} away</Text>
               </View>
               <View style={styles.fact}>
                 <Ionicons name="time-outline" size={16} color={COLORS.muted} />
                 <Text style={styles.factText}>
-                  {currentRide.route?.distanceKm || 0} km · {Math.ceil(currentRide.route?.durationMinutes || 0)} min trip
+                  {distanceText(currentRide.route?.distanceKm || 0)} · {Math.ceil(currentRide.route?.durationMinutes || 0)} min trip
                 </Text>
               </View>
             </View>

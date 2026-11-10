@@ -2826,6 +2826,26 @@ module.exports = (deps) => {
       const phone = s.exists && (s.data().phoneNumber || s.data().phone);
       if (phone) phones[s.id] = phone;
     });
+    // Drivers who signed up with their phone number may only have it on
+    // their app account or their sign-in, as driverContact also finds.
+    const missing = [...ids].filter((id) => !phones[id]);
+    if (missing.length) {
+      const users = await db.getAll(
+          ...missing.map((id) => db.collection("users").doc(id)));
+      users.forEach((u) => {
+        const phone = u.exists && (u.data().phoneNumber || u.data().phone);
+        if (phone) phones[u.id] = phone;
+      });
+      const left = missing.filter((id) => !phones[id]);
+      for (let i = 0; i < left.length; i += 100) {
+        const r = await admin.auth()
+            .getUsers(left.slice(i, i + 100).map((uid) => ({uid})))
+            .catch(() => ({users: []}));
+        r.users.forEach((a) => {
+          if (a.phoneNumber) phones[a.uid] = a.phoneNumber;
+        });
+      }
+    }
     return {phones};
   });
 
@@ -3014,7 +3034,7 @@ module.exports = (deps) => {
       }
       if (!(radiusKm >= 0.2 && radiusKm <= 30)) {
         throw new HttpsError("invalid-argument",
-            `${name}: the radius must be between 0.2 and 30 km.`);
+            `${name}: the radius must be between 0.15 and 18 miles.`);
       }
       let id = text(z.id, 20).replace(/[^A-Za-z0-9]/g, "");
       while (!id || used.has(id)) {

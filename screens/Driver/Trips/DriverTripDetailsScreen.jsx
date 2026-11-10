@@ -13,6 +13,7 @@ import {
   Screen, ScreenHeader, Card, Section, Avatar, Button, RouteLine, StatRow, StatusPill, Skeleton,
   formatWhen,
 } from '../../../components/ui/kit';
+import { distanceText } from '../../../utils/routes';
 
 export default function DriverTripDetailsScreen() {
   const navigation = useNavigation();
@@ -164,7 +165,7 @@ export default function DriverTripDetailsScreen() {
           style={styles.stats}
           items={[
             { value: durationMinutes ? `${Math.ceil(durationMinutes)} min` : 'N/A', label: 'Duration' },
-            { value: distanceKm ? `${distanceKm.toFixed(1)} km` : 'N/A', label: 'Distance' },
+            { value: distanceKm ? distanceText(distanceKm) : 'N/A', label: 'Distance' },
             { value: trip.paymentStatus === 'no_charge' ? 'No charge' : trip.collectBy === 'online' ? 'Paid online' : trip.collectBy === 'account' ? 'Account' : trip.collectBy === 'card' ? 'Card terminal' : paymentMethod === 'cash' ? 'Cash' : 'Card', label: 'Paid by' },
           ]}
         />

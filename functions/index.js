@@ -59,6 +59,7 @@ const paymentAlerts = require("./paymentAlerts")({functions, db});
 // Fleet subscriptions: plans, card payments, grace period and pause.
 // loadAppConfig and toMillis are function declarations further down.
 const privacy = require("./privacy")({functions, db});
+const {inUk} = require("./ukArea");
 const fleetBilling = require("./fleetBilling")({
   functions, db, stripe, STRIPE_SECRETS,
   loadAppConfig: (...a) => loadAppConfig(...a),
@@ -3570,6 +3571,16 @@ async function checkNewRide(rideId, ride) {
   const citySnap = await db.collection("cities")
       .where("active", "==", true).get();
   const cities = citySnap.docs.map((d) => ({id: d.id, ...d.data()}));
+  // "All of the UK" (config/serviceArea): any UK pickup may book, in a
+  // city or not; pickups outside the UK are refused.
+  const areaSnap = await db.collection("config").doc("serviceArea").get();
+  const wholeUk = areaSnap.exists && areaSnap.data().wholeUk === true;
+  if (wholeUk && !inUk(ride.pickupLocation)) {
+    await refuseNewRide(rideId, ride, "outside_service_area",
+        "TakeARoute doesn't operate at this pickup yet. We currently cover" +
+        " the UK.");
+    return false;
+  }
   if (cities.length) {
     let best = null;
     let bestKm = Infinity;
@@ -3581,14 +3592,21 @@ async function checkNewRide(rideId, ride) {
         bestKm = km;
       }
     }
-    if (!best) {
+    if (!best && wholeUk) {
+      // In the UK but in no city: drivers who haven't picked a city get it.
+      if (ride.cityId) {
+        ride.cityId = null;
+        ride.cityName = null;
+        await rideRef.update({cityId: null, cityName: null});
+      }
+    } else if (!best) {
       const names = cities.map((c) => c.name).filter(Boolean).sort();
       await refuseNewRide(rideId, ride, "outside_service_area",
           "TakeARoute doesn't operate at this pickup yet." +
           (names.length ? ` We currently cover ${names.join(", ")}.` : ""));
       return false;
     }
-    if (ride.cityId !== best.id) {
+    if (best && ride.cityId !== best.id) {
       ride.cityId = best.id;
       ride.cityName = best.name || null;
       await rideRef.update({cityId: best.id, cityName: best.name || null});

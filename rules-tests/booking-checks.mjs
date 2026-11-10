@@ -95,6 +95,24 @@ r = await settled(id);
 assert.equal(val(r.status), 'searching'); assert.equal(val(r.cityId), 'redditch');
 await adminSet(`rides/${id}`, { status: 'completed' }, true);
 
+step('All of the UK on: a London pickup outside every city goes ahead with no city; Dublin and Calais are refused');
+await adminSet('config/serviceArea', { wholeUk: true });
+id = await book(R, rider, LONDON);
+r = await settled(id);
+assert.equal(val(r.status), 'searching'); assert.equal(val(r.cityId), null);
+await adminSet(`rides/${id}`, { status: 'completed' }, true);
+id = await book(R, rider, REDDITCH);
+r = await settled(id);
+assert.equal(val(r.status), 'searching'); assert.equal(val(r.cityId), 'redditch');
+await adminSet(`rides/${id}`, { status: 'completed' }, true);
+for (const place of [{ latitude: 53.35, longitude: -6.26, address: 'Dublin' }, { latitude: 50.95, longitude: 1.86, address: 'Calais' }]) {
+  id = await book(R, rider, place);
+  r = await settled(id);
+  assert.equal(val(r.status), 'cancelled', place.address);
+  assert.equal(val(r.cancelReason), 'outside_service_area'); assert.match(val(r.cancelMessage), /We currently cover the UK\./);
+}
+await adminSet('config/serviceArea', { wholeUk: false });
+
 step('promo check: unknown, off, expired, valid');
 await adminSet('promoCodes/WELCOME10', { code: 'WELCOME10', percent: 10, active: true, maxUses: 2, expiresAt: null });
 await adminSet('promoCodes/OLD5', { code: 'OLD5', percent: 5, active: true, expiresAt: '2020-01-01' });

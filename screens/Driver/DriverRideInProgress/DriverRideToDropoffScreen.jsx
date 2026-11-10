@@ -29,6 +29,7 @@ import {
   COLORS, TYPE, SPACE, RADIUS, SHADOW,
   Avatar, Banner, Button, Chip, IconButton, Loading, StatRow, isCoord,
 } from '../../../components/ui/kit';
+import { whenSaved } from '../../../utils/slowSave';
 
 const { height } = Dimensions.get('window');
 
@@ -251,7 +252,7 @@ export default function DriverRideToDropoffScreen() {
     const awayKm = awayM === null ? null : awayM / 1000;
 
     if (awayKm !== null && awayKm > COMPLETE_RADIUS_KM) {
-      const shown = awayM < 1000 ? `${Math.round(awayM)} m` : `${awayKm.toFixed(1)} km`;
+      const shown = distanceText(awayKm);
       Alert.alert(
         'You are not at the drop-off yet',
         `You are ${shown} away. Only complete the trip here if the passenger has asked to get out. They pay the fare so far, about ${money(amountDue(awayKm), ride?.currency)}.`,
@@ -305,7 +306,7 @@ export default function DriverRideToDropoffScreen() {
         ...extra,
       });
       batch.update(doc(db, 'drivers', ride.driverId), RELEASE);
-      await batch.commit();
+      await whenSaved(batch.commit(), 'Finishing the trip');
 
       navigation.navigate('RideCompleted', { rideId });
     } catch (error) {

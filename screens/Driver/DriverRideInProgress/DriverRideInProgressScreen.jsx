@@ -32,6 +32,8 @@ import {
   COLORS, TYPE, SPACE, RADIUS, SHADOW,
   Avatar, Banner, Button, RouteLine, Loading, StatRow, isCoord, validCoords,
 } from '../../../components/ui/kit';
+import { whenSaved } from '../../../utils/slowSave';
+import { distanceText } from '../../../utils/routes';
 
 const { height } = Dimensions.get('window');
 
@@ -231,13 +233,13 @@ export default function DriverRideInProgressScreen() {
   const markArrived = useCallback(async (awayM) => {
     setLoadingAction(true);
     try {
-      await updateDoc(doc(db, 'rides', rideId), {
+      await whenSaved(updateDoc(doc(db, 'rides', rideId), {
         status: 'arrived',
         arrivedAt: serverTimestamp(),
         ...(awayM != null && awayM > ARRIVE_RADIUS_M
           ? { arrivedAwayFromPickupM: Math.round(awayM) }
           : {}),
-      });
+      }), 'Arriving');
     } catch (error) {
       console.error('Error updating status:', error);
       Alert.alert('Could not update', 'Please try again.');
@@ -250,7 +252,7 @@ export default function DriverRideInProgressScreen() {
   const handleArrived = useCallback(() => {
     const awayM = metresBetween(driverLocation, ride?.pickupLocation);
     if (awayM == null || awayM <= ARRIVE_RADIUS_M) return markArrived(awayM);
-    const shown = awayM < 1000 ? `${Math.round(awayM)} m` : `${(awayM / 1000).toFixed(1)} km`;
+    const shown = distanceText(awayM / 1000);
     Alert.alert(
       "You're not at the pickup yet",
       `You're ${shown} from the pickup. Mark as arrived anyway?`,
@@ -264,10 +266,10 @@ export default function DriverRideInProgressScreen() {
   const handleStartRide = useCallback(async () => {
     setLoadingAction(true);
     try {
-      await updateDoc(doc(db, 'rides', rideId), {
+      await whenSaved(updateDoc(doc(db, 'rides', rideId), {
         status: 'ongoing',
         startedAt: serverTimestamp(),
-      });
+      }), 'Starting the trip');
       if (!hasLeftScreen.current) {
         hasLeftScreen.current = true;
         navigation.replace('RideToDropoff', { rideId });
@@ -523,7 +525,7 @@ export default function DriverRideInProgressScreen() {
                 style={styles.stats}
                 items={[
                   { value: `${eta} min`, label: 'To pickup' },
-                  distance ? { value: `${distance} km`, label: 'Distance' } : null,
+                  distance ? { value: distanceText(Number(distance)), label: 'Distance' } : null,
                 ]}
               />
             ) : null}

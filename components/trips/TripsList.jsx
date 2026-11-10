@@ -10,6 +10,7 @@ import { money } from '../../utils/appConfig';
 import {
   COLORS, TYPE, SPACE, ScreenHeader, Card, StatusPill, RouteLine, EmptyState, Loading, Chip,
 } from '../ui/kit';
+import { distanceText } from '../../utils/routes';
 
 const FILTERS = [
   { key: 'all', label: 'All' },
@@ -81,7 +82,7 @@ function TripRow({ trip, role, onPress }) {
 
       <View style={styles.bottom}>
         <Text style={TYPE.small}>
-          {trip.route?.distanceKm ? `${Number(trip.route.distanceKm).toFixed(1)} km` : ''}
+          {trip.route?.distanceKm ? distanceText(trip.route.distanceKm) : ''}
           {trip.route?.durationMinutes ? `, ${Math.ceil(trip.route.durationMinutes)} min` : ''}
         </Text>
         <Text style={[TYPE.figure, cancelled && !feeCharged && { color: COLORS.muted, textDecorationLine: 'line-through' }]}>

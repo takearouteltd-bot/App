@@ -24,6 +24,7 @@ import {
   COLORS, TYPE, SPACE, RADIUS, Screen, Sheet, Card, Button, Banner, Avatar, IconButton,
   RouteLine, Loading, MapUnavailable, isCoord, validCoords, regionCovering,
 } from '../../components/ui/kit';
+import { distanceText } from '../../utils/routes';
 
 
 // How long we have been looking. Real elapsed time, rather than a progress bar
@@ -508,7 +509,7 @@ export default function RideRequestScreen() {
 
             <View style={styles.facts}>
               <Fact icon="card-outline" text={money(fareEstimate, rideData.currency)} />
-              <Fact icon="navigate-outline" text={`${distanceKm} km`} />
+              <Fact icon="navigate-outline" text={distanceText(distanceKm)} />
               <Fact icon="time-outline" text={`${Math.ceil(durationMinutes)} min`} />
             </View>
 

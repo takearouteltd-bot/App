@@ -10,6 +10,7 @@ import EmailReceiptButton from '../../components/EmailReceiptButton';
 import StarRating from '../../components/StarRating';
 import StopRows from '../../components/trips/StopRows';
 import { COLORS, TYPE, SPACE, Screen, Card, Button, Loading, RouteLine } from '../../components/ui/kit';
+import { distanceText } from '../../utils/routes';
 
 export default function RiderRideCompletedScreen() {
   const route = useRoute();
@@ -69,7 +70,7 @@ export default function RiderRideCompletedScreen() {
   const fare = ride.fare || {};
   const total = Number(fare.finalTotal ?? fare.total ?? ride.fareEstimate ?? 0);
   const currency = ride.currency || fare.currency;
-  const distance = ride.route?.distanceKm ? `${ride.route.distanceKm} km` : null;
+  const distance = ride.route?.distanceKm ? distanceText(ride.route.distanceKm) : null;
   const duration = ride.route?.durationMinutes ? `${Math.ceil(ride.route.durationMinutes)} min` : null;
 
   // fare.subtotal is already after the promo, so the promo is added back to

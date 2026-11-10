@@ -32,7 +32,8 @@ import {
 import { ACTIVE_RIDE_STATUSES } from '../../utils/modeSwitch';
 import { getAuth } from 'firebase/auth';
 import { useAppConfig, currencySymbol, surgeMultiplier, cashEnabled, femaleDriverEnabled } from '../../utils/appConfig';
-import { useCities, cityFor } from '../../utils/cities';
+import { useCities, useWholeUk, cityFor } from '../../utils/cities';
+import { inUk } from '../../utils/ukArea';
 import { biddingEnabled, minOffer, fareAtPrice } from '../../utils/bidding';
 import { MAX_STOPS } from '../../utils/stops';
 import {
@@ -92,6 +93,7 @@ export default function FareEstimationScreen({ route }) {
   const appConfig = useAppConfig();
   // Which working city the pickup is in, so only that city's drivers get it.
   const cities = useCities();
+  const wholeUk = useWholeUk();
   const [distance, setDistance] = useState(0);
   const [duration, setDuration] = useState(0);
   const [selectedRide, setSelectedRide] = useState('RouteMini');
@@ -270,10 +272,14 @@ export default function FareEstimationScreen({ route }) {
 
     // Once any working city is switched on, TakeARoute only operates inside
     // them. The server checks this too (checkNewRide in functions/index.js).
-    if (cities.length && !cityFor(cities, origin)) {
+    // With "All of the UK" on, any UK pickup can book.
+    const outside = wholeUk ? !inUk(origin) : cities.length && !cityFor(cities, origin);
+    if (outside) {
       Alert.alert(
         'Not in your area yet',
-        `TakeARoute doesn't operate at this pickup yet. We currently cover ${cities.map((c) => c.name).join(', ')}.`
+        wholeUk
+          ? "TakeARoute doesn't operate at this pickup yet. We currently cover the UK."
+          : `TakeARoute doesn't operate at this pickup yet. We currently cover ${cities.map((c) => c.name).join(', ')}.`
       );
       return;
     }

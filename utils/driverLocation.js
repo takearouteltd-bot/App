@@ -62,7 +62,36 @@ export function useDriverPosition() {
 
 // Same fields the home screen always wrote. Shown on the dashboard's Live
 // drivers page and read by every ride screen.
-async function writeDriverLocation(driverId, coords) {
+// How often the position is saved. Every save also refreshes each screen
+// watching the driver record, and on a weak signal saves queue up in front
+// of the driver's own taps (finishing a trip), so: at most one save in
+// flight, every 10 s on a job and 20 s while waiting for one, sooner after
+// a big move. The dashboard and dispatch treat 5 minutes as stale.
+const SAVE_EVERY_MS_ON_JOB = 10000;
+const SAVE_EVERY_MS_IDLE = 20000;
+const SAVE_AFTER_METRES = 150;
+let saving = false;
+let lastSave = null;
+
+function metresApart(a, b) {
+  const R = 6371000;
+  const dLat = ((b.latitude - a.latitude) * Math.PI) / 180;
+  const dLng = ((b.longitude - a.longitude) * Math.PI) / 180;
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((a.latitude * Math.PI) / 180) * Math.cos((b.latitude * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+async function writeDriverLocation(driverId, coords, force = false) {
+  if (saving && !force) return;
+  const now = Date.now();
+  if (!force && lastSave && lastSave.driverId === driverId) {
+    const every = jobDriverId ? SAVE_EVERY_MS_ON_JOB : SAVE_EVERY_MS_IDLE;
+    if (now - lastSave.at < every && metresApart(lastSave.coords, coords) < SAVE_AFTER_METRES) return;
+  }
+  saving = true;
+  lastSave = { driverId, at: now, coords: { latitude: coords.latitude, longitude: coords.longitude } };
   try {
     await setDoc(
       doc(db, 'drivers', driverId),
@@ -84,6 +113,8 @@ async function writeDriverLocation(driverId, coords) {
     );
   } catch (error) {
     console.log('Location update error:', error);
+  } finally {
+    saving = false;
   }
 }
 
@@ -210,7 +241,7 @@ export async function requestDriverPosition(driverId) {
 
     update({ coords: fix.coords, status: 'granted' });
     if (driverId) {
-      await writeDriverLocation(driverId, fix.coords);
+      await writeDriverLocation(driverId, fix.coords, true);
       await startWatching(driverId);
     }
     return 'granted';

@@ -16,6 +16,7 @@ import {
   COLORS, TYPE, SPACE, RADIUS, Screen, ScreenHeader, Card, Button, Avatar, StatusPill, StatRow,
   RouteLine, formatWhen,
 } from '../../../components/ui/kit';
+import { distanceText } from '../../../utils/routes';
 
 export default function RiderTripDetailsScreen() {
   const navigation = useNavigation();
@@ -296,7 +297,7 @@ export default function RiderTripDetailsScreen() {
         <StatRow
           items={[
             { value: durationMinutes ? `${Math.ceil(durationMinutes)} min` : 'N/A', label: 'Duration' },
-            { value: distanceKm ? `${distanceKm.toFixed(1)} km` : 'N/A', label: 'Distance' },
+            { value: distanceKm ? distanceText(distanceKm) : 'N/A', label: 'Distance' },
             { value: trip.paymentStatus === 'no_charge' ? 'No charge' : paymentMethod === 'cash' ? 'Cash' : 'Card', label: 'Paid by' },
           ]}
         />

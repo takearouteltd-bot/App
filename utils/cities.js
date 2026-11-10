@@ -8,7 +8,7 @@
 //   - a driver who has chosen a city is offered only that city's jobs
 //   - a driver who has not chosen one is offered jobs by search radius alone
 import { useEffect, useState } from 'react';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
 export function kmBetween(a, b) {
@@ -62,4 +62,20 @@ export function cityFor(cities, point) {
 export function servesCity(driverCityId, rideCityId) {
   if (!driverCityId) return true;
   return driverCityId === rideCityId;
+}
+
+/* "All of the UK" from the dashboard (config/serviceArea): when on, any UK
+   pickup can book, in a working city or not. */
+export function useWholeUk() {
+  const [wholeUk, setWholeUk] = useState(false);
+  useEffect(
+    () =>
+      onSnapshot(
+        doc(db, 'config', 'serviceArea'),
+        (snap) => setWholeUk(snap.exists() && snap.data().wholeUk === true),
+        () => setWholeUk(false)
+      ),
+    []
+  );
+  return wholeUk;
 }

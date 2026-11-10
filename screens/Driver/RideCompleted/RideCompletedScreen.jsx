@@ -9,6 +9,7 @@ import { db } from '../../../config/firebase';
 import { money } from '../../../utils/appConfig';
 import StarRating from '../../../components/StarRating';
 import { COLORS, TYPE, SPACE, SHADOW, Card, Button, Loading, RouteLine, StatRow } from '../../../components/ui/kit';
+import { distanceText } from '../../../utils/routes';
 
 export default function RideCompletedScreen() {
   const route = useRoute();
@@ -52,7 +53,7 @@ export default function RideCompletedScreen() {
   // moment after completion; the estimate shows until then.
   const earned = Number(fare.finalTotal ?? fare.total ?? ride.fareEstimate ?? 0);
   const settled = fare.finalTotal !== undefined;
-  const distance = ride.route?.distanceKm ? `${ride.route.distanceKm} km` : null;
+  const distance = ride.route?.distanceKm ? distanceText(ride.route.distanceKm) : null;
   const duration = ride.route?.durationMinutes ? `${Math.ceil(ride.route.durationMinutes)} min` : null;
 
   const show = (v) => money(Number(v) || 0, currency);
