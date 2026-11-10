@@ -916,26 +916,13 @@ exports.chargeOnRideCompletion = functions
 
       if (!paymentIntentId) {
         // A 100% promo: nothing was held because nothing is owed. That is
-        // not a failed payment. A driver's earnings are the fare the
-        // passenger pays, so this trip earns nothing and an admin decides
-        // whether to make it up.
+        // not a failed payment. creditPromoTopUp pays the driver the fare.
         const owedFare = Number((after.fare && after.fare.total) ||
           after.fareEstimate || 0);
         if (!(owedFare > 0)) {
-          const f = after.fare || {};
           await db.collection("rides").doc(rideId).update({
             "paymentStatus": "no_charge",
             "fare.finalTotal": 0,
-          });
-          await paymentAlerts.raise("promo_free_trip", rideId, {
-            title: "Free trip on a 100% promo: driver not paid",
-            detail: "The passenger paid nothing, so the driver earned " +
-              "nothing for this trip. The amount shown is the fare the " +
-              "promo removed.",
-            amount: Math.round((Number(f.discountAmount) || 0) *
-              (1 + (Number(f.vatPercent) || 0) / 100) * 100) / 100,
-            currency: rideCurrency(after).toUpperCase(),
-            rideId, driverId: after.driverId || null,
           });
           return null;
         }
@@ -1646,6 +1633,94 @@ exports.creditDriverWalletOnRideCompletion = functions.firestore
 
         return null;
       }
+    });
+
+/* ---------------- promo codes are paid for by TakeARoute ----------------
+   A promo code is TakeARoute's offer, so the driver is not out of pocket:
+   once the trip is settled (card taken, cash, or nothing to take on a 100%
+   code) the discount, VAT included, goes into the same wallet as the fare
+   (the fleet's for a fleet driver). Its own wallet line, so the driver sees
+   it and admin can add up what promos cost. Once per ride
+   (promoTopUpProcessed, checked inside the transaction). */
+
+/**
+ * What TakeARoute owes the driver for a ride's promo, VAT included.
+ * @param {Object} ride Ride data.
+ * @return {number} Pounds, 2 dp; 0 when there is nothing to pay.
+ */
+function promoTopUpAmount(ride) {
+  const fare = ride.fare || {};
+  // An agreed (offered) price is what was charged; no promo applies to it.
+  if (!fare.promoCode || fare.agreedPrice != null) return 0;
+  const discount = Number(fare.discountAmount) || 0;
+  if (!(discount > 0)) return 0;
+  const vat = Number(fare.vatPercent) || 0;
+  return Math.round(discount * (1 + vat / 100) * 100) / 100;
+}
+
+exports.creditPromoTopUp = functions.firestore
+    .document("rides/{rideId}")
+    .onUpdate(async (change, context) => {
+      const before = change.before.data() || {};
+      const after = change.after.data() || {};
+      const rideId = context.params.rideId;
+      const settled = ["captured", "cash", "no_charge"];
+      if (after.status !== "completed" || after.promoTopUpProcessed ||
+          !settled.includes(after.paymentStatus) ||
+          settled.includes(before.paymentStatus) ||
+          !after.driverId) {
+        return null;
+      }
+      const amount = promoTopUpAmount(after);
+      if (!(amount > 0)) return null;
+
+      const fleetId = after.fleetId || null;
+      const walletRef = fleetId ?
+        db.collection("fleetWallets").doc(fleetId) :
+        db.collection("driverWallets").doc(after.driverId);
+      const rideRef = db.collection("rides").doc(rideId);
+      try {
+        await db.runTransaction(async (tx) => {
+          const rideSnap = await tx.get(rideRef);
+          if (!rideSnap.exists || rideSnap.data().promoTopUpProcessed) return;
+          const walletSnap = await tx.get(walletRef);
+          if (!walletSnap.exists) {
+            tx.set(walletRef, {
+              availableBalance: amount, totalEarned: amount, pendingBalance: 0,
+              currency: rideCurrency(after).toUpperCase(),
+              walletStatus: "active",
+              createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp(),
+            });
+          } else {
+            tx.update(walletRef, {
+              availableBalance: FV.increment(amount),
+              totalEarned: FV.increment(amount),
+              updatedAt: FV.serverTimestamp(),
+            });
+          }
+          tx.set(walletRef.collection("transactions").doc(), {
+            type: "promo_top_up", amount, rideId, driverId: after.driverId,
+            promoCode: String(after.fare.promoCode), status: "cleared",
+            description: "Promo paid by TakeARoute, ride " + rideId,
+            createdAt: FV.serverTimestamp(),
+          });
+          tx.update(rideRef, {
+            "promoTopUpProcessed": true,
+            "earnings.promoTopUp": amount,
+            "earnings.promoPaidTo": fleetId ? "fleet" : "driver",
+          });
+        });
+        console.log("Promo top-up credited:", rideId, amount);
+      } catch (error) {
+        console.error("Promo top-up failed:", rideId, error);
+        await paymentAlerts.raise("promo_top_up_failed", rideId, {
+          title: "Promo not paid to the driver",
+          detail: String(error && error.message || error).slice(0, 300),
+          amount, currency: rideCurrency(after).toUpperCase(),
+          rideId, driverId: after.driverId, fleetId,
+        });
+      }
+      return null;
     });
 
 

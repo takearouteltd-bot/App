@@ -755,13 +755,21 @@ module.exports = (deps) => {
   /* ------------------------------ settings --------------------------- */
 
   /* The owner switches the booking bot on or off. */
-  out.saveFleetPhoneBot = functions.https.onCall(async (data, context) => {
-    const me = await deps.assertFleetManager(context, true);
-    const on = Boolean(data && data.enabled);
-    await db.collection("fleets").doc(me.fleetId).update({
-      phoneBot: {enabled: on, updatedAt: iso(), updatedBy: me.uid}});
-    return {enabled: on};
-  });
+  out.saveFleetPhoneBot = functions.runWith({secrets: AI_SECRETS})
+      .https.onCall(async (data, context) => {
+        const me = await deps.assertFleetManager(context, true);
+        const on = Boolean(data && data.enabled);
+        // Without its keys the bot never answers (enabled() above), so do not
+        // let the switch say On.
+        if (on && !(process.env.CLOUDFLARE_ACCOUNT_ID &&
+        process.env.CLOUDFLARE_AI_TOKEN)) {
+          throw new functions.https.HttpsError("failed-precondition",
+              "The booking bot is not set up yet. Please contact TakeARoute.");
+        }
+        await db.collection("fleets").doc(me.fleetId).update({
+          phoneBot: {enabled: on, updatedAt: iso(), updatedBy: me.uid}});
+        return {enabled: on};
+      });
 
   /* --------------------------- booking links ------------------------- */
 

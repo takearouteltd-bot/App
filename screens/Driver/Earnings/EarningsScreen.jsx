@@ -130,11 +130,13 @@ export default function EarningsScreen() {
   // what was charged.
   const isSubscription = (t) => ['subscription_deduction', 'subscription', 'subscription_card_payment'].includes(t.type);
   const isPenalty = (t) => t.type === 'cancel_penalty';
+  // A promo code's discount, paid back by TakeARoute: part of the trip's pay.
+  const isTripPay = (t) => t.type === 'ride_earning' || t.type === 'promo_top_up';
   const filteredTransactions =
     selectedFilter === 'All'
       ? transactions
       : transactions.filter((t) => {
-          if (selectedFilter === 'Trips') return t.type === 'ride_earning';
+          if (selectedFilter === 'Trips') return isTripPay(t);
           if (selectedFilter === 'Payouts') return t.type === 'payout_request' || t.type === 'payout';
           if (selectedFilter === 'Subscription') return isSubscription(t);
           if (selectedFilter === 'Penalties') return isPenalty(t);
@@ -149,7 +151,7 @@ export default function EarningsScreen() {
     return d.getTime();
   })();
   const earnedThisWeek = transactions
-    .filter((t) => t.type === 'ride_earning' && (t.createdAt?.toMillis?.() || 0) >= weekStart)
+    .filter((t) => isTripPay(t) && (t.createdAt?.toMillis?.() || 0) >= weekStart)
     .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
 
   const formatDate = (timestamp) => {
@@ -185,6 +187,7 @@ export default function EarningsScreen() {
     let icon = 'car-outline';
     let title = item.description || item.type;
     if (item.type === 'ride_earning') title = 'Trip earnings';
+    if (item.type === 'promo_top_up') title = 'Promo paid by TakeARoute';
     if (item.type === 'payout_request' || item.type === 'payout') {
       icon = 'arrow-down-outline';
       title = 'Withdrawal';
