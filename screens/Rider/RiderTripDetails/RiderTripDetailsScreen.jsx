@@ -6,8 +6,11 @@ import { useNavigation, useRoute } from '@react-navigation/native';
 import MapView, { Marker, Polyline } from 'react-native-maps';
 import { arrayRemove, arrayUnion, doc, getDoc, onSnapshot, setDoc, deleteField } from 'firebase/firestore';
 import { auth, db } from '../../../config/firebase';
-import { currencySymbol } from '../../../utils/appConfig';
+import { money } from '../../../utils/appConfig';
+import { stopsOf } from '../../../utils/stops';
 import EmailReceiptButton from '../../../components/EmailReceiptButton';
+import StarRating from '../../../components/StarRating';
+import StopRows from '../../../components/trips/StopRows';
 import { STATUS_LABEL, STATUS_PILL } from '../../../components/trips/TripsList';
 import {
   COLORS, TYPE, SPACE, RADIUS, Screen, ScreenHeader, Card, Button, Avatar, StatusPill, StatRow,
@@ -87,6 +90,7 @@ export default function RiderTripDetailsScreen() {
       params: {
         origin: { latitude: p.latitude, longitude: p.longitude, address: p.address },
         destination: { latitude: d.latitude, longitude: d.longitude, address: d.address, description: d.address },
+        stops: stopsOf(trip),
       },
     });
   };
@@ -129,10 +133,15 @@ export default function RiderTripDetailsScreen() {
   const pillStatus = STATUS_PILL[status] || 'pending';
   const statusLabel = STATUS_LABEL[status] || status;
 
+  // A cancelled trip costs only the fee actually taken, if any.
+  const fare = trip.fare || {};
+  const isCancelled = status === 'cancelled' || status === 'canceled';
+  const feeCharged = isCancelled ? Number(trip.cancellationFee) || 0 : 0;
+  const rowMoney = (n) => money(n, trip.currency || fare.currency);
+
   // Fare is an object; finalTotal (with waiting time) once the trip is paid.
-  const fareTotal = Number(trip.fare?.finalTotal ?? trip.fare?.total ?? 0);
+  const fareTotal = isCancelled ? feeCharged : Number(fare.finalTotal ?? fare.total ?? 0);
   const paymentMethod = trip.paymentMethod || trip.payment?.method || 'card';
-  const currency = currencySymbol(trip.fare?.currency);
 
   // ✅ Pickup & dropoff from nested location objects
   const pickup = trip.pickupLocation || {};
@@ -148,13 +157,42 @@ export default function RiderTripDetailsScreen() {
   const distanceKm = Number(routeInfo.distanceKm) || 0;
   const durationMinutes = routeInfo.durationMinutes ?? 0;
 
-  const fareRows = [
-    ['Base Fare', trip.fare?.baseFare?.toFixed(2) || '0.00'],
-    ['Distance Fare', trip.fare?.distanceFare?.toFixed(2) || '0.00'],
-    ['Time Fare', trip.fare?.timeFare?.toFixed(2) || '0.00'],
-    trip.fare?.vat > 0 ? ['VAT', trip.fare?.vat?.toFixed(2)] : null,
-    trip.fare?.waitingCharge > 0 ? ['Waiting time', trip.fare.waitingCharge.toFixed(2)] : null,
-  ].filter(Boolean);
+  /* Every row that moved the price, so the column adds up to the total. An
+     agreed (bidding) price is one figure, so the parts behind the original
+     recommendation are left out. */
+  const rideMultiplier = Number(fare.rideMultiplier) || 1;
+  const surge = Number(fare.surgeMultiplier) || 1;
+  const promo = Number(fare.discountAmount) || 0;
+  const beforePromo = (Number(fare.subtotal) || 0) + promo;
+  const partsTotal =
+    ((Number(fare.baseFare) || 0) + (Number(fare.distanceFare) || 0) + (Number(fare.timeFare) || 0)) *
+    rideMultiplier * surge;
+  // The parts are rounded to pennies, so allow for that before calling it.
+  const minimumApplied = beforePromo - partsTotal > Math.max(0.02, 0.015 * rideMultiplier * surge);
+  const carType = String(trip.rideType || 'Car').replace(/^Route/, '');
+  const endedEarlyOff = Number(fare.fullTotal) > Number(fare.total) ? Number(fare.fullTotal) - Number(fare.total) : 0;
+
+  const fareRows = isCancelled
+    ? feeCharged > 0
+      ? [[trip.cancelReason === 'passenger_no_show' ? 'No-show fee' : 'Cancellation fee', rowMoney(feeCharged)]]
+      : []
+    : [
+        ...(fare.agreedPrice != null
+          ? [['Agreed fare', rowMoney(fare.subtotal)]]
+          : [
+              ['Base Fare', rowMoney(fare.baseFare)],
+              ['Distance Fare', rowMoney(fare.distanceFare)],
+              ['Time Fare', rowMoney(fare.timeFare)],
+              rideMultiplier !== 1 ? [`${carType} pricing`, `× ${rideMultiplier}`] : null,
+              surge > 1 ? ['Busy-time pricing', `× ${surge}`] : null,
+              minimumApplied ? ['Minimum fare', rowMoney(beforePromo)] : null,
+              promo > 0 ? [`Promo${fare.promoCode ? ` ${fare.promoCode}` : ''}`, `-${rowMoney(promo)}`] : null,
+            ]),
+        fare.vat > 0 ? ['VAT', rowMoney(fare.vat)] : null,
+        endedEarlyOff > 0 ? ['Trip ended early', `-${rowMoney(endedEarlyOff)}`] : null,
+        // If the waiting charge could not be taken it is not part of the total.
+        fare.waitingCharge > 0 && !trip.extraChargeFailed ? ['Waiting time', rowMoney(fare.waitingCharge)] : null,
+      ].filter(Boolean);
 
   return (
     <Screen>
@@ -219,9 +257,11 @@ export default function RiderTripDetailsScreen() {
           pickup={pickup.address || 'Unknown pickup'}
           dropoff={dropoff.address || 'Unknown destination'}
         />
+        <StopRows ride={trip} />
       </Card>
 
-      {/* Driver Card — with real data */}
+      {/* Driver Card — with real data. A trip nobody accepted has no driver. */}
+      {trip.driverId ? (
       <Card style={styles.driverCard}>
         {loadingDriver ? (
           <ActivityIndicator size="small" color={COLORS.midnight} />
@@ -241,6 +281,15 @@ export default function RiderTripDetailsScreen() {
           </>
         )}
       </Card>
+      ) : null}
+
+      {/* The summary screen only appears if the trip screen was open at the
+          end, so an unrated trip can be rated here too. */}
+      {isCompleted && trip.driverId && !trip.driverRating ? (
+        <Card style={{ marginTop: SPACE[3] }}>
+          <StarRating rideId={trip.id} who="rider" prompt={`How was ${driver?.name || 'your driver'}?`} />
+        </Card>
+      ) : null}
 
       {/* Duration & Distance */}
       <Card style={{ marginTop: SPACE[3] }}>
@@ -248,7 +297,7 @@ export default function RiderTripDetailsScreen() {
           items={[
             { value: durationMinutes ? `${Math.ceil(durationMinutes)} min` : 'N/A', label: 'Duration' },
             { value: distanceKm ? `${distanceKm.toFixed(1)} km` : 'N/A', label: 'Distance' },
-            { value: paymentMethod === 'cash' ? 'Cash' : 'Card', label: 'Paid by' },
+            { value: trip.paymentStatus === 'no_charge' ? 'No charge' : paymentMethod === 'cash' ? 'Cash' : 'Card', label: 'Paid by' },
           ]}
         />
       </Card>
@@ -260,15 +309,13 @@ export default function RiderTripDetailsScreen() {
         {fareRows.map(([label, value]) => (
           <View key={label} style={styles.paymentRow}>
             <Text style={TYPE.small}>{label}</Text>
-            <Text style={TYPE.callout}>{currency}{value}</Text>
+            <Text style={TYPE.callout}>{value}</Text>
           </View>
         ))}
 
         <View style={styles.totalRow}>
           <Text style={styles.totalLabel}>Total Paid</Text>
-          <Text style={styles.totalValue}>
-            {currency}{fareTotal.toFixed(2)}
-          </Text>
+          <Text style={styles.totalValue}>{rowMoney(fareTotal)}</Text>
         </View>
       </Card>
 

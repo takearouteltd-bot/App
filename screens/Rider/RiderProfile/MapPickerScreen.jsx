@@ -103,6 +103,11 @@ export default function MapPickerScreen() {
         return;
       }
 
+      // Off the London default at once if the phone already knows roughly
+      // where it is; the fresh fix below then settles it.
+      const last = await Location.getLastKnownPositionAsync().catch(() => null);
+      if (last?.coords) moveTo(last.coords.latitude, last.coords.longitude);
+
       const location = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.High,
       });

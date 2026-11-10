@@ -4,6 +4,7 @@ import { Alert } from "../../../components/ui/alert";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import { getAuth } from "firebase/auth";
+import { watchMyDriverRecord } from "../../../utils/driverPrivate";
 import {
   getFirestore,
   doc,
@@ -12,10 +13,10 @@ import {
   query,
   where,
   getCountFromServer,
-  onSnapshot,
   setDoc,
 } from "firebase/firestore";
 import { money } from '../../../utils/appConfig';
+import appJson from '../../../app.json';
 import {
   COLORS,
   TYPE,
@@ -69,16 +70,10 @@ export default function DriverProfileScreen() {
   useEffect(() => {
     if (!user?.uid) return;
 
-    const driverRef = doc(db, "drivers", user.uid);
-    const unsubscribe = onSnapshot(
-      driverRef,
-      (snap) => {
-        if (snap.exists()) {
-          setDriver(snap.data());
-        } else {
-          setDriver(null);
-        }
-      },
+    // Includes the private record: the emergency contact below lives there.
+    const unsubscribe = watchMyDriverRecord(
+      user.uid,
+      (record) => setDriver(record),
       (error) => {
         console.error("Error listening to driver profile:", error);
       }
@@ -151,7 +146,7 @@ export default function DriverProfileScreen() {
 
   // Year they joined, e.g. "2026". Used in the facts row.
   const formatMemberSince = (timestamp) => {
-    if (!timestamp) return "2026";
+    if (!timestamp) return "—";
     const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
     return String(date.getFullYear());
   };
@@ -207,7 +202,7 @@ export default function DriverProfileScreen() {
         items={[
           { value: String(tripCount), label: tripCount === 1 ? "trip" : "trips" },
           { value: rating || "New", label: "rating" },
-          { value: driver?.createdAt ? formatMemberSince(driver.createdAt) : "2026", label: "joined" },
+          { value: driver?.createdAt ? formatMemberSince(driver.createdAt) : "—", label: "joined" },
         ]}
       />
 
@@ -241,7 +236,7 @@ export default function DriverProfileScreen() {
       <Section title="Driving">
         <RowGroup
           items={[
-            { icon: "car-outline", iconColor: COLORS.midnight, title: vehicle || "Vehicle", detail: driver?.registrationNumber ? driver.registrationNumber.toUpperCase() : "Add your vehicle details", onPress: () => navigation.navigate("VehicleInformation") },
+            { icon: "car-outline", iconColor: COLORS.midnight, title: vehicle || "Vehicle", detail: driver?.registrationNumber ? driver.registrationNumber.toUpperCase() : "No vehicle on file", onPress: () => navigation.navigate("VehicleInformation") },
             { icon: "folder-open-outline", iconColor: COLORS.midnight, title: "My documents", detail: documentAlerts.length ? `${documentAlerts.length} need${documentAlerts.length === 1 ? "s" : ""} updating` : "Licence, insurance, MOT and more", onPress: () => navigation.navigate("DriverDocuments") },
             { icon: "ribbon-outline", iconColor: COLORS.midnight, title: "Membership", detail: driver?.subscription?.paymentMethod === "admin_granted" ? "Given by TakeARoute" : driver?.subscription?.paymentMethod === "fleet" ? `Paid by ${driver.fleetName || "your fleet"}` : ({ active: "Active", past_due: "Payment due", suspended: "Paused, payment needed" })[driver?.subscription?.status] || "Not set up", onPress: () => navigation.navigate("SubscriptionDetails") },
             { icon: "people-outline", iconColor: COLORS.midnight, title: "Fleet", detail: driver?.fleetId ? `You drive for ${driver.fleetName || "a fleet"}` : driver?.fleetInvite ? `${driver.fleetInvite.fleetName || "A fleet"} invited you` : driver?.fleetRequest ? `Waiting for ${driver.fleetRequest.fleetName || "the fleet"}` : "Drive for a taxi firm", onPress: () => navigation.navigate("DriverFleet") },
@@ -320,7 +315,7 @@ export default function DriverProfileScreen() {
       />
 
       <View style={styles.footer}>
-        <Text style={TYPE.small}>TakeARoute Driver 1.0</Text>
+        <Text style={TYPE.small}>TakeARoute Driver {appJson.expo.version}</Text>
       </View>
     </Screen>
   );

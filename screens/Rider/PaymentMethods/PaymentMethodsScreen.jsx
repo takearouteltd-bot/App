@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, RefreshControl } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { collection, doc, getDoc, getDocs, limit, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { db } from '../../../config/firebase';
 import { currencySymbol } from '../../../utils/appConfig';
@@ -78,7 +78,9 @@ export default function PaymentsMethodScreen({ navigation }) {
     try {
       setError(null);
       const snapshot = await getDocs(
-        query(collection(db, 'payments'), where('riderId', '==', user.uid), limit(20))
+        // No limit here: without a server ordering, a limit keeps an arbitrary
+        // 20 and can leave out the latest payments. Trimmed after sorting.
+        query(collection(db, 'payments'), where('riderId', '==', user.uid))
       );
       const rows = snapshot.docs.map((d) => {
         const data = d.data();
@@ -89,7 +91,7 @@ export default function PaymentsMethodScreen({ navigation }) {
         };
       });
       rows.sort((a, b) => (b.createdAtDate?.getTime() || 0) - (a.createdAtDate?.getTime() || 0));
-      setTransactions(rows);
+      setTransactions(rows.slice(0, 20));
     } catch (err) {
       if (err?.code === 'permission-denied') return; // signing out
       console.error('Error fetching transactions:', err);

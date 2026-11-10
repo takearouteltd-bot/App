@@ -130,6 +130,12 @@ module.exports = (deps) => {
           update.status = "resolved";
           update.resolvedAt = FieldValue.serverTimestamp();
         }
+        // Back to not found yet: the report is open again.
+        if (["reported", "found"].includes(li.status) &&
+            r.status === "resolved" && d.status === undefined) {
+          update.status = "open";
+          update.resolvedAt = null;
+        }
       }
       update.lostItem = li;
     }

@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { Alert } from '../../../components/ui/alert';
 import { auth, db, functions } from '../../../config/firebase';
-import { doc, getDoc, collection, onSnapshot } from 'firebase/firestore';
+import { doc, collection, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { useNavigation } from '@react-navigation/native';
 import { money, useAppConfig } from '../../../utils/appConfig';
@@ -29,6 +29,9 @@ export default function SubscriptionScreen() {
   const [checking, setChecking] = useState(true);
   const [subscription, setSubscription] = useState(null);
   const [approval, setApproval] = useState(null);
+  // A company driver's card fares go to the fleet, so their wallet never
+  // fills: their membership comes off their card.
+  const [companyDriver, setCompanyDriver] = useState(false);
   const navigation = useNavigation();
   const driverId = auth.currentUser?.uid;
 
@@ -64,7 +67,6 @@ export default function SubscriptionScreen() {
       } else {
         Alert.alert('Membership paid', `${money(res.data?.amount ?? MONTHLY_PRICE)} was charged to your card.`);
       }
-      await loadSubscription();
     } catch (error) {
       Alert.alert('Payment did not go through', error.message || 'Please try again.');
     } finally {
@@ -72,25 +74,27 @@ export default function SubscriptionScreen() {
     }
   };
 
-  const loadSubscription = useCallback(async () => {
+  // Live, so a payment, a renewal or an admin's change shows straight away.
+  useEffect(() => {
     if (!driverId) {
       setChecking(false);
-      return;
+      return undefined;
     }
-    try {
-      const snap = await getDoc(doc(db, 'drivers', driverId));
-      setSubscription(snap.exists() ? snap.data().subscription || null : null);
-      setApproval(snap.exists() ? { approved: snap.data().approved === true, rejected: snap.data().onboardingStatus === 'rejected', reason: snap.data().rejectionReason || '' } : null);
-    } catch (err) {
-      console.log('Error fetching subscription:', err);
-    } finally {
-      setChecking(false);
-    }
+    return onSnapshot(
+      doc(db, 'drivers', driverId),
+      (snap) => {
+        const data = snap.exists() ? snap.data() : null;
+        setSubscription(data?.subscription || null);
+        setApproval(data ? { approved: data.approved === true, rejected: data.onboardingStatus === 'rejected', reason: data.rejectionReason || '' } : null);
+        setCompanyDriver(Boolean(data?.fleetId) && data?.fleetDriverType !== 'self');
+        setChecking(false);
+      },
+      (err) => {
+        console.log('Error fetching subscription:', err);
+        setChecking(false);
+      }
+    );
   }, [driverId]);
-
-  useEffect(() => {
-    loadSubscription();
-  }, [loadSubscription]);
 
   // Activation runs on the server (activateDriverMembership), which sets
   // the membership up and takes the first month from the wallet or card.
@@ -105,20 +109,24 @@ export default function SubscriptionScreen() {
       const activate = httpsCallable(functions, 'activateDriverMembership');
       const { data } = await activate({});
 
+      // What was actually taken or is owed: a re-activated suspended driver
+      // keeps their debt, which can differ from the monthly price.
+      const amount = money(data?.amount ?? MONTHLY_PRICE);
       Alert.alert(
-        data?.alreadyActive || data?.paid ? 'Membership active' : 'Payment needed',
+        data?.alreadyActive || data?.paid ? 'Membership active' : data?.stillSuspended ? 'Account still paused' : 'Payment needed',
         data?.alreadyActive
           ? 'Your membership is already active.'
           : data?.paid
           ? data.method === 'card'
-            ? `${money(MONTHLY_PRICE)} was charged to your card. You are all set.`
-            : `${money(MONTHLY_PRICE)} has been taken from your wallet. You are all set.`
-          : `${money(MONTHLY_PRICE)} is owed. Add a card under Membership and pay it, then you can go online.`
+            ? `${amount} was charged to your card. You are all set.`
+            : `${amount} has been taken from your wallet. You are all set.`
+          : data?.stillSuspended
+          ? `${amount} is still unpaid, so your account stays paused. Pay it by card under Membership to start driving again.`
+          : `${amount} is owed. Add a card under Membership and pay it, then you can go online.`
       );
 
-      // Staying put and re-reading, rather than replacing to a screen in
-      // another tab's stack, which throws.
-      await loadSubscription();
+      // Staying put: the listener above shows the result. Replacing to a
+      // screen in another tab's stack throws.
     } catch (err) {
       console.log('Activation error:', err);
       Alert.alert('Could not activate', err.message || 'Please try again.');
@@ -156,7 +164,7 @@ export default function SubscriptionScreen() {
           icon: 'card-outline',
           iconColor: COLORS.midnight,
           title: 'Card for membership',
-          detail: cardLabel || 'Used if your wallet is short at renewal',
+          detail: cardLabel || (companyDriver ? 'Your membership is charged to this card' : 'Used if your wallet is short at renewal'),
           onPress: openCards,
         },
       ]}
@@ -215,7 +223,7 @@ export default function SubscriptionScreen() {
           <Banner
             tone="danger"
             title="Your account is paused"
-            body={`Your membership of ${money(Number(subscription.debtAmount) || MONTHLY_PRICE)} is unpaid, so you cannot go online. Pay by card now to start driving again straight away. Card rides you complete also top up your wallet; cash rides do not.`}
+            body={`Your membership of ${money(Number(subscription.debtAmount) || MONTHLY_PRICE)} is unpaid, so you cannot go online. Pay by card now to start driving again straight away.${companyDriver ? '' : ' Card rides you complete also top up your wallet; cash rides do not.'}`}
           />
         </View>
         <Button
@@ -248,7 +256,7 @@ export default function SubscriptionScreen() {
             )}
           </View>
           <Text style={styles.heroPrice}>{money(MONTHLY_PRICE)}</Text>
-          <Text style={styles.heroSub}>per month, taken from your earnings</Text>
+          <Text style={styles.heroSub}>{companyDriver ? 'per month, charged to your card' : 'per month, taken from your earnings'}</Text>
           <View style={styles.heroRenewal}>
             <Text style={styles.heroRenewalLabel}>Next payment</Text>
             <Text style={styles.heroRenewalValue}>{formatDate(subscription.nextBillingDate)}</Text>
@@ -260,7 +268,7 @@ export default function SubscriptionScreen() {
             <Banner
               tone="warning"
               title="Payment due"
-              body={`We could not take this month's ${money(debtAmount || MONTHLY_PRICE)} from your wallet or card.${
+              body={`We could not take this month's ${money(debtAmount || MONTHLY_PRICE)} from your ${companyDriver ? 'card' : 'wallet or card'}.${
                 subscription.graceUntil ? ` Pay by ${formatDate(subscription.graceUntil)} to keep driving.` : ' Pay now to keep driving.'
               }`}
               action={
@@ -280,6 +288,8 @@ export default function SubscriptionScreen() {
               title={`${money(debtAmount)} outstanding`}
               body={firstMonthOwed
                 ? 'Pay this by card to go online.'
+                : companyDriver
+                ? 'This is charged to your saved card. You can pay it now.'
                 : 'Card rides you complete top up your wallet and this is taken from it. Otherwise it is charged to your saved card.'}
               action={
                 <Button
@@ -302,7 +312,7 @@ export default function SubscriptionScreen() {
               title: 'Next payment',
               detail: formatDate(subscription.nextBillingDate),
             },
-            { icon: 'wallet-outline', iconColor: COLORS.midnight, title: 'Paid from', detail: 'Your earnings wallet' },
+            { icon: 'wallet-outline', iconColor: COLORS.midnight, title: 'Paid from', detail: companyDriver ? 'Your saved card' : 'Your earnings wallet' },
             {
               icon: 'cash-outline',
               iconColor: COLORS.midnight,
@@ -315,7 +325,9 @@ export default function SubscriptionScreen() {
         <View style={styles.gap}>
           <Banner
             tone="info"
-            body="Your membership renews every month from your wallet, which card rides top up (cash fares stay with you and do not count). If there is not enough in it, we charge the card below. If neither works, you have a few days to pay before your account is paused."
+            body={companyDriver
+              ? 'Your membership renews every month on the card below. Your card fares go to your fleet, so they do not build up a wallet here. If the card cannot be charged, you have a few days to pay before your account is paused.'
+              : 'Your membership renews every month from your wallet, which card rides top up (cash fares stay with you and do not count). If there is not enough in it, we charge the card below. If neither works, you have a few days to pay before your account is paused.'}
           />
         </View>
         {cardRow}
@@ -356,8 +368,8 @@ export default function SubscriptionScreen() {
           {
             icon: 'wallet-outline',
             iconColor: COLORS.limeInk,
-            title: 'Paid from your earnings',
-            detail: 'Nothing to pay up front',
+            title: companyDriver ? 'Paid by card' : 'Paid from your wallet or card',
+            detail: 'First month before you go online',
           },
         ]}
       />
@@ -376,7 +388,9 @@ export default function SubscriptionScreen() {
         ) : (
           <Banner
             tone="info"
-            body={`If your wallet already holds ${money(MONTHLY_PRICE)} we take it now. If not, we charge your saved card. You can go online once it is paid. Card rides you complete top up your wallet for next month; cash fares stay with you and do not count.`}
+            body={companyDriver
+              ? `We charge ${money(MONTHLY_PRICE)} to your saved card. You can go online once it is paid. Your card fares go to your fleet, so they do not build up a wallet here.`
+              : `If your wallet already holds ${money(MONTHLY_PRICE)} we take it now. If not, we charge your saved card. You can go online once it is paid. Card rides you complete top up your wallet for next month; cash fares stay with you and do not count.`}
           />
         )}
       </View>

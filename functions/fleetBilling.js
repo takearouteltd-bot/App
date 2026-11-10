@@ -2,9 +2,10 @@
    FLEET BILLING
    What a fleet pays TakeARoute each month, and how it pays.
 
-   - Plan, chosen by the admin when the fleet is created: "per_driver"
-     (each company driver x fleets.perDriverMonthly, or the global driver
-     price) or "monthly" (one flat fleets.monthlyFee).
+   - Plan, chosen by the admin when the fleet is created: "per_driver" (each
+     driver, company or self-employed, pays their own TakeARoute membership
+     and the fleet is billed nothing) or "monthly" (one flat
+     fleets.monthlyFee that covers all its drivers).
    - billFleets (fleet.js) takes the bill from the fleet's wallet. If that
      leaves the wallet below zero, the fleet's saved card pays the rest.
    - No card, or the card fails: the fleet is "past due" for the driver grace
@@ -135,7 +136,9 @@ module.exports = (deps) => {
    */
   async function markPastDue(fleetId, owed, reason) {
     const cfg = await loadAppConfig();
-    const graceDays = Number(cfg.subscription.graceDays) || 3;
+    // 0 is a real setting: no grace at all.
+    const setDays = Number(cfg.subscription.graceDays);
+    const graceDays = Number.isFinite(setDays) && setDays >= 0 ? setDays : 3;
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(fleetRef(fleetId));
       if (!snap.exists) return;
@@ -181,8 +184,10 @@ module.exports = (deps) => {
         confirm: true,
         description: `TakeARoute subscription, ${fleet.name || fleetId}`,
         metadata: {type: "fleet_billing", fleetId},
-      }, {idempotencyKey:
-        `fleet-bill-${fleetId}-${day}-${Math.round(owed * 100)}`});
+        // Per card: Stripe replays a decline for a reused key, so a new card
+        // needs its own. The same card is still charged once that day.
+      }, {idempotencyKey: `fleet-bill-${fleetId}-${day}-` +
+        `${Math.round(owed * 100)}-${billing.paymentMethodId}`});
       if (pi.status === "succeeded") {
         await applyPayment(fleetId, pi, "card_on_file");
         return "paid";
@@ -382,6 +387,57 @@ module.exports = (deps) => {
         return {paid, status: fresh.status,
           billingStatus: (fresh.billing || {}).status || "ok",
           owed: await owedBy(me.fleetId)};
+      });
+
+  /* Tells the owner by email when the fleet goes past due or is paused for
+     not paying. The dashboard's banner reads billing.status and graceUntil
+     itself; this reaches an owner who is not looking at it. */
+  out.notifyFleetBillingChange = functions
+      .runWith({secrets: ["RESEND_API_KEY"]}).firestore
+      .document("fleets/{fleetId}")
+      .onUpdate(async (change, context) => {
+        const before = change.before.data() || {};
+        const after = change.after.data() || {};
+        const bill = after.billing || {};
+        const pastDue = bill.status === "past_due" &&
+          (before.billing || {}).status !== "past_due";
+        const paused = after.status === "suspended" &&
+          after.suspendedReason === "unpaid" && before.status !== "suspended";
+        if ((!pastDue && !paused) || !after.ownerEmail) return null;
+        const apiKey = process.env.RESEND_API_KEY;
+        if (!apiKey) return null;
+        const name = after.name || "your fleet";
+        const owed = `£${Number(bill.owed || 0).toFixed(2)}`;
+        const by = bill.graceUntil && bill.graceUntil.toDate ?
+          bill.graceUntil.toDate().toLocaleDateString("en-GB", {day: "numeric",
+            month: "long", timeZone: "Europe/London"}) : "soon";
+        const subject = paused ? `${name} has been paused on TakeARoute` :
+          `Payment needed for ${name} on TakeARoute`;
+        const text = paused ?
+          `Your TakeARoute subscription is unpaid (${owed}), so ${name} has ` +
+            "been paused. New bookings are off until it is paid. Sign in " +
+            "to your dashboard and choose Pay now: the fleet comes back on " +
+            "straight away." :
+          `We could not take your TakeARoute subscription payment of ` +
+            `${owed} for ${name}. Please pay by ${by}, or ${name} will be ` +
+            "paused. You can pay or change your card on your dashboard.";
+        const response = await fetch(process.env.RESEND_API_URL ||
+          "https://api.resend.com/emails", {
+          method: "POST",
+          headers: {"Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json"},
+          body: JSON.stringify({
+            from: "TakeARoute <billing@invoice.takearoute.ltd>",
+            to: [after.ownerEmail], subject, text,
+          }),
+        }).catch((error) => {
+          console.error("Fleet billing email", context.params.fleetId, error);
+          return null;
+        });
+        if (response && !response.ok) {
+          console.error("Fleet billing email failed:", response.status);
+        }
+        return null;
       });
 
   /* Daily: last card attempt, then pause fleets past their grace period. */

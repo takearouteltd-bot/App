@@ -27,7 +27,7 @@ export default function RideCompletedScreen() {
 
   useEffect(() => {
     if (!ride?.riderId) return;
-    getDoc(doc(db, 'riders', ride.riderId)).then((s) => s.exists() && setRider(s.data())).catch(() => {});
+    getDoc(doc(db, 'riderPublic', ride.riderId)).then((s) => s.exists() && setRider(s.data())).catch(() => {});
   }, [ride?.riderId]);
 
   useEffect(() => {
@@ -81,7 +81,9 @@ export default function RideCompletedScreen() {
             <Text style={styles.heroLabel}>Trip complete</Text>
             <Text style={styles.heroAmount}>{money(earned, currency)}</Text>
             <Text style={styles.heroSub}>
-              {ride.collectBy === 'account'
+              {ride.paymentStatus === 'no_charge'
+                ? 'The passenger had nothing to pay on this trip, so nothing was earned.'
+                : ride.collectBy === 'account'
                 ? `On ${ride.account?.company || 'the client'}'s account. Your fleet pays you.`
                 : ride.collectBy === 'online'
                 ? 'Paid online by the customer. Your fleet pays you.'

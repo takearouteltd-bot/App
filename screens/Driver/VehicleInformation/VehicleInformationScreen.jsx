@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, RefreshControl } from "react-native";
+import { View, Text, StyleSheet, RefreshControl, Linking } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { getAuth } from "firebase/auth";
 import { doc, getDoc, getFirestore } from "firebase/firestore";
@@ -75,7 +75,7 @@ export default function VehicleInformationScreen({ navigation }) {
   const heroIcon = CLASS_ICONS[type] || "car-sport";
   const heroLabel = typeMeta?.label || "Vehicle category not set";
   const heroDescription =
-    typeMeta?.description || "Update onboarding details to select a ride category.";
+    typeMeta?.description || "No ride category set. Email support to add one.";
 
   if (loading) {
     return (
@@ -155,7 +155,15 @@ export default function VehicleInformationScreen({ navigation }) {
             dot
           />
           <Text style={[TYPE.body, { color: COLORS.muted, marginTop: SPACE[3] }]}>
-            Keep your vehicle details up to date so your account stays compliant.
+            Changed vehicle? Email{" "}
+            <Text
+              style={{ color: COLORS.midnight, fontWeight: "700", textDecorationLine: "underline" }}
+              accessibilityRole="link"
+              onPress={() => Linking.openURL("mailto:support@takearoute.ltd?subject=Change%20my%20vehicle").catch(() => {})}
+            >
+              support@takearoute.ltd
+            </Text>
+            {" "}and we will update it once the new documents are checked. These details cannot be edited here.
           </Text>
         </Card>
       </Section>

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { doc, updateDoc } from "firebase/firestore";
+import { loadMyDriverRecord } from "../../utils/driverPrivate";
 import { auth, db } from "../../config/firebase";
 import { Alert } from "../../components/ui/alert";
 import { Banner, Card, COLORS, SPACE, TYPE } from "../../components/ui/kit";
@@ -28,7 +29,7 @@ const CHECKS = [
   },
   {
     step: 3,
-    ok: (d) => !!(d.makeModel && d.registrationNumber && d.vehicleType && d.motUrl && d.insuranceUrl),
+    ok: (d) => !!(d.makeModel && d.registrationNumber && d.vehicleType && d.motUrl && d.vehicleLicenceUrl && d.insuranceUrl),
     summary: (d) => [d.makeModel, d.registrationNumber].filter(Boolean).join(" · "),
   },
   {
@@ -55,8 +56,8 @@ export default function ApplicationSummaryScreen({ navigation, setOnboardingStat
   useEffect(() => {
     if (!driverId) return undefined;
     const load = () =>
-      getDoc(doc(db, "drivers", driverId))
-        .then((snap) => setDriver(snap.exists() ? snap.data() : {}))
+      loadMyDriverRecord(driverId)
+        .then((record) => setDriver(record.data))
         .catch((error) => console.log("Error fetching application summary:", error));
     load();
     return navigation.addListener("focus", load);

@@ -188,6 +188,7 @@ module.exports = ({functions, db, sendPush, loadAppConfig, distanceKm}) => {
             driverName: name,
             fleetId: before.fleetId || null,
             source: before.source === "phone" ? "phone" : "app",
+            via: (before.bookedBy && before.bookedBy.via) || null,
             statusWhenCancelled: before.status,
             pickup: (before.pickupLocation &&
               before.pickupLocation.address) || null,

@@ -54,8 +54,10 @@ service cloud.firestore {
 
     /* ================= PROMO CODES ================= */
 
+    /* The app sends a code to the server (checkPromoCode) and never
+       reads this collection, so nobody can list every code. */
     match /promoCodes/{code} {
-      allow read: if signedIn();
+      allow read: if isAdmin();
       allow write: if isAdmin();
     }
 
@@ -94,21 +96,18 @@ service cloud.firestore {
           exists(/databases/$(database)/documents/riders/$(userId)/cards/$(request.resource.data.defaultPaymentMethodId)));
     }
 
+    /* A passenger's record is theirs and admins' alone (phone, email,
+       emergency contact, Stripe customer). What a driver needs on a job is
+       the copy in riderPublic below. */
     match /riders/{userId} {
-      allow read: if isAdmin() || signedIn();
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
       allow create: if isAdmin() || (
         signedIn() && request.auth.uid == userId &&
         request.resource.data.get("blocked", false) == false &&
         !("stripeCustomerId" in request.resource.data)
       );
       allow update: if isAdmin() || (
-        signedIn() &&
-        (
-          (request.auth.uid == userId && riderKeepsGuardedFields(userId)) ||
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            "rating"
-          ])
-        )
+        signedIn() && request.auth.uid == userId && riderKeepsGuardedFields(userId)
       );
       allow delete: if isAdmin();
 
@@ -123,6 +122,20 @@ service cloud.firestore {
       match /savedPlaces/{placeId} {
         allow read, write: if isAdmin() || (signedIn() && request.auth.uid == userId);
       }
+    }
+
+    /* A passenger's name, photo and rating, for the driver on their trip.
+       Written by the server only (functions/privacy.js keeps it in step
+       with riders/{id}), so nothing private can land here by mistake. */
+    match /riderPublic/{userId} {
+      allow get: if isAdmin() || (
+        signedIn() && (
+          request.auth.uid == userId ||
+          exists(/databases/$(database)/documents/drivers/$(request.auth.uid))
+        )
+      );
+      allow list: if isAdmin();
+      allow write: if false;
     }
 
     /* ================= DRIVERS ================= */
@@ -142,10 +155,40 @@ service cloud.firestore {
       ];
     }
 
+    /* What never sits on drivers/{id}, because every signed-in user can read
+       that record. They live in driverPrivate/{id} (owner and admins) and
+       driverFiles/{id} (owner, admins, and the fleet checking the driver).
+       Keep in step with functions/privacy.js and the migration script. */
+    function driverPrivateFieldNames() {
+      return ["accountDetails", "bankDetails", "sortCode", "accountNumber",
+        "nin", "dob", "address", "phoneNumber", "phone", "email",
+        "emergencyContact", "payoutAccountId", "payoutAccountFingerprint",
+        "payoutTermsAcceptance"];
+    }
+
+    function driverFileFieldNames() {
+      return ["rightToWorkShareCode", "driverLicenseFrontUrl",
+        "driverLicenseBackUrl", "driverLicenseUrl", "pcoLicenseUrl",
+        "vehicleLicenceUrl", "insuranceUrl", "motUrl", "dbsCertificateUrl",
+        "companyAgreementUrl"];
+    }
+
+    function driverSensitiveFieldNames() {
+      return driverPrivateFieldNames().concat(driverFileFieldNames());
+    }
+
+    /* Whether this driver is still filling in their application. Once it is
+       handed in only admins and change requests touch the details. */
+    function stillApplying(driverId) {
+      let path = /databases/$(database)/documents/drivers/$(driverId);
+      return !exists(path) || get(path).data.get("onboardingComplete", false) != true;
+    }
+
     /* Only admins and Cloud Functions decide these. A driver may write
        approved: false (onboarding does), never true (UPDATED). */
     function driverGrantsNothing(data) {
-      return data.get("approved", false) == false &&
+      return !data.keys().hasAny(driverSensitiveFieldNames()) &&
+        data.get("approved", false) == false &&
         data.get("blocked", false) == false &&
         !data.keys().hasAny(["blockedByFleet", "cancelBlockedUntil"]) &&
         data.get("femaleVerified", false) == false &&
@@ -166,7 +209,12 @@ service cloud.firestore {
 
     function driverKeepsGuardedFields() {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
-      return !changed.hasAny(["subscription", "femaleVerified", "blocked",
+      return !changed.hasAny(driverSensitiveFieldNames()) &&
+        /* Handing in the application is one-way, so a driver cannot switch
+           it off to edit protected details and switch it back on. */
+        (!changed.hasAny(["onboardingComplete"]) ||
+          resource.data.get("onboardingComplete", false) != true) &&
+        !changed.hasAny(["subscription", "femaleVerified", "blocked",
           "blockedReason", "blockedBy", "blockedAt", "blockedByFleet"]) &&
         /* Joining and leaving a fleet go through functions/fleet.js. */
         !changed.hasAny(["fleetId", "fleetName", "fleetJoinedAt", "fleetRequest",
@@ -181,7 +229,17 @@ service cloud.firestore {
     }
 
     match /drivers/{driverId} {
-      allow read: if isAdmin() || signedIn();
+      /* Name, photo, car, plate and rating: passengers read the record of
+         their driver by id. Nobody but admins and the driver's fleet can
+         list drivers. Private details are not on this record at all. */
+      allow get: if signedIn();
+      allow list: if isAdmin() ||
+        (resource.data.get("fleetId", null) is string &&
+          fleetStaffOf(resource.data.fleetId)) ||
+        (resource.data.get("removedFromFleetId", null) is string &&
+          fleetStaffOf(resource.data.removedFromFleetId)) ||
+        (resource.data.get("fleetRequest", null) is map &&
+          fleetStaffOf(resource.data.fleetRequest.fleetId));
       allow create: if isAdmin() || (
         signedIn() && request.auth.uid == driverId &&
         driverGrantsNothing(request.resource.data)
@@ -189,8 +247,8 @@ service cloud.firestore {
       allow update: if isAdmin() || (
         signedIn() &&
         (
+          request.auth.uid == driverId &&
           (
-            request.auth.uid == driverId &&
             driverKeepsGuardedFields() &&
             /* Only an approved driver can put themselves online, and not
                one an admin has blocked (except finishing a trip they were
@@ -222,11 +280,59 @@ service cloud.firestore {
               !request.resource.data.diff(resource.data).affectedKeys()
                 .hasAny(protectedDriverFields())
             )
-          ) ||
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            "rating"
-          ])
+          )
         )
+      );
+      allow delete: if isAdmin();
+    }
+
+    /* A driver's private details: bank, NI number, date of birth, home
+       address, phone, email, emergency contact and payout account. Owner
+       and admins only. The driver fills these in while applying; afterwards
+       they go through changeRequests, and only the emergency contact stays
+       theirs to edit. The server writes the payout fields. */
+    function driverPrivateWritableNames() {
+      return ["accountDetails", "nin", "dob", "address", "phoneNumber", "phone", "email", "emergencyContact"];
+    }
+
+    match /driverPrivate/{driverId} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == driverId);
+      allow create: if isAdmin() || (
+        signedIn() && request.auth.uid == driverId &&
+        request.resource.data.keys().hasOnly(driverPrivateWritableNames()) &&
+        (stillApplying(driverId) || request.resource.data.keys().hasOnly(["emergencyContact"]))
+      );
+      allow update: if isAdmin() || (
+        signedIn() && request.auth.uid == driverId &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(driverPrivateWritableNames()) &&
+        (stillApplying(driverId) ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(["emergencyContact"]))
+      );
+      allow delete: if isAdmin();
+    }
+
+    /* A driver's documents and right to work code: the owner, admins, and
+       the staff of the fleet they work for or are asking to join. */
+    function fleetChecksDriver(driverId) {
+      let driver = get(/databases/$(database)/documents/drivers/$(driverId)).data;
+      return (driver.get("fleetId", null) is string && fleetStaffOf(driver.fleetId)) ||
+        (driver.get("fleetRequest", null) is map && fleetStaffOf(driver.fleetRequest.fleetId));
+    }
+
+    match /driverFiles/{driverId} {
+      allow get: if isAdmin() || (
+        signedIn() && (
+          request.auth.uid == driverId || fleetChecksDriver(driverId)
+        )
+      );
+      allow list: if isAdmin();
+      allow create: if isAdmin() || (
+        signedIn() && request.auth.uid == driverId && stillApplying(driverId) &&
+        request.resource.data.keys().hasOnly(driverFileFieldNames())
+      );
+      allow update: if isAdmin() || (
+        signedIn() && request.auth.uid == driverId && stillApplying(driverId) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(driverFileFieldNames())
       );
       allow delete: if isAdmin();
     }
@@ -265,21 +371,37 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys();
     }
 
-    function riderCancels() {
-      return rideChanged().hasOnly(["status", "cancelledBy", "cancelReason", "endedEarly", "cancelledAt"]) &&
-        request.resource.data.status == "cancelled" &&
-        request.resource.data.cancelledBy == "rider" &&
-        resource.data.status in ["searching", "accepted", "arrived", "ongoing"];
+    /* A time the money depends on comes from the server, not the phone
+       (FieldValue.serverTimestamp() in the app). Field may be left off. */
+    function stampedNow(field) {
+      return request.resource.data.get(field, request.time) == request.time;
     }
 
-    function riderChangesPreference() {
-      return rideChanged().hasOnly(["femaleDriverOnly", "femalePreferenceDropped"]) &&
+    /* endedEarly means a trip under way was cut short, nothing else: it may
+       not be used to dodge a cancel fee before pickup, and leaving it off
+       cannot be used to dodge paying for a trip in progress. */
+    function endedEarlyMatchesTrip() {
+      return (resource.data.status == "ongoing") ==
+        (request.resource.data.get("endedEarly", false) == true);
+    }
+
+    function riderCancels(changed) {
+      return changed.hasOnly(["status", "cancelledBy", "cancelReason", "endedEarly", "cancelledAt"]) &&
+        request.resource.data.status == "cancelled" &&
+        request.resource.data.cancelledBy == "rider" &&
+        resource.data.status in ["searching", "accepted", "arrived", "ongoing"] &&
+        stampedNow("cancelledAt") &&
+        endedEarlyMatchesTrip();
+    }
+
+    function riderChangesPreference(changed) {
+      return changed.hasOnly(["femaleDriverOnly", "femalePreferenceDropped"]) &&
         resource.data.status == "searching";
     }
 
     /* Raise only, and the card hold (fareEstimate) stays equal to the fare. */
-    function riderRaisesOffer() {
-      return rideChanged().hasOnly(["offeredFare", "fareEstimate", "fare"]) &&
+    function riderRaisesOffer(changed) {
+      return changed.hasOnly(["offeredFare", "fareEstimate", "fare"]) &&
         resource.data.status == "searching" &&
         request.resource.data.offeredFare is number &&
         request.resource.data.offeredFare >= resource.data.get("offeredFare", 0) &&
@@ -303,38 +425,40 @@ service cloud.firestore {
         driver.get("isOnRide", false) != true;
     }
 
-    function riderTakesOffer(rideId) {
-      return rideChanged().hasOnly(["status", "driverId", "acceptedAt", "walletProcessed",
+    function riderTakesOffer(rideId, changed) {
+      return changed.hasOnly(["status", "driverId", "acceptedAt", "walletProcessed",
           "offeredFare", "fareEstimate", "fare", "acceptedOfferId"]) &&
         resource.data.status == "searching" &&
         resource.data.get("pricing", "") == "checked" &&
         request.resource.data.status == "accepted" &&
         request.resource.data.walletProcessed == false &&
         request.resource.data.driverId is string &&
+        stampedNow("acceptedAt") &&
         offerMatchesWrite(rideId);
     }
 
-    function riderRatesDriver() {
-      return rideChanged().hasOnly(["driverRating"]) &&
+    function riderRatesDriver(changed) {
+      return changed.hasOnly(["driverRating"]) &&
         resource.data.status == "completed" &&
         !("driverRating" in resource.data);
     }
 
-    function riderRideUpdate(rideId) {
+    function riderRideUpdate(rideId, changed) {
       return request.auth.uid == resource.data.riderId && (
-        riderCancels() || riderChangesPreference() || riderRaisesOffer() ||
-        riderRatesDriver() || riderTakesOffer(rideId)
+        riderCancels(changed) || riderChangesPreference(changed) || riderRaisesOffer(changed) ||
+        riderRatesDriver(changed) || riderTakesOffer(rideId, changed)
       );
     }
 
     /* A free driver takes a searching job. */
-    function driverClaimsRide() {
-      return rideChanged().hasOnly(["status", "driverId", "acceptedAt", "walletProcessed"]) &&
+    function driverClaimsRide(changed) {
+      return changed.hasOnly(["status", "driverId", "acceptedAt", "walletProcessed"]) &&
         resource.data.status == "searching" &&
         resource.data.get("pricing", "") == "checked" &&
         request.resource.data.status == "accepted" &&
         request.resource.data.driverId == request.auth.uid &&
         request.resource.data.walletProcessed == false &&
+        stampedNow("acceptedAt") &&
         get(/databases/$(database)/documents/drivers/$(request.auth.uid))
           .data.approved == true &&
         // Over the hours limit: the rest starts after the current trip, so
@@ -356,31 +480,34 @@ service cloud.firestore {
         myVehicleServes(resource.data);
     }
 
-    function driverArrives() {
-      return rideChanged().hasOnly(["status", "arrivedAt", "arrivedAwayFromPickupM"]) &&
-        resource.data.status == "accepted" && request.resource.data.status == "arrived";
+    function driverArrives(changed) {
+      return changed.hasOnly(["status", "arrivedAt", "arrivedAwayFromPickupM"]) &&
+        resource.data.status == "accepted" && request.resource.data.status == "arrived" &&
+        request.resource.data.arrivedAt == request.time;
     }
 
-    function driverStarts() {
-      return rideChanged().hasOnly(["status", "startedAt"]) &&
-        resource.data.status == "arrived" && request.resource.data.status == "ongoing";
+    function driverStarts(changed) {
+      return changed.hasOnly(["status", "startedAt"]) &&
+        resource.data.status == "arrived" && request.resource.data.status == "ongoing" &&
+        request.resource.data.startedAt == request.time;
     }
 
-    function driverReachesStop() {
-      return rideChanged().hasOnly(["stopsCompleted"]) &&
+    function driverReachesStop(changed) {
+      return changed.hasOnly(["stopsCompleted"]) &&
         resource.data.status == "ongoing";
     }
 
-    function driverCompletes() {
-      return rideChanged().hasOnly(["status", "completedAt", "expiresAt", "cashCollected",
+    function driverCompletes(changed) {
+      return changed.hasOnly(["status", "completedAt", "expiresAt", "cashCollected",
           "completedAwayFromDropoff", "completeDistanceKm"]) &&
-        resource.data.status == "ongoing" && request.resource.data.status == "completed";
+        resource.data.status == "ongoing" && request.resource.data.status == "completed" &&
+        stampedNow("completedAt");
     }
 
     /* An app job goes back to searching; a phone job goes back to its
        fleet's operator (dispatching). */
-    function driverGivesBack() {
-      return rideChanged().hasOnly(["status", "driverId", "acceptedAt", "declinedBy", "lastDriverCancelAt"]) &&
+    function driverGivesBack(changed) {
+      return changed.hasOnly(["status", "driverId", "acceptedAt", "declinedBy", "lastDriverCancelAt"]) &&
         resource.data.status in ["accepted", "arrived"] &&
         request.resource.data.status ==
           (resource.data.get("source", "app") == "phone" ? "dispatching" : "searching") &&
@@ -389,9 +516,9 @@ service cloud.firestore {
 
     /* Phone jobs (functions/fleet.js): a driver of the job's fleet takes
        one sent to them, or to the whole fleet. */
-    function driverClaimsFleetJob() {
+    function driverClaimsFleetJob(changed) {
       let driver = get(/databases/$(database)/documents/drivers/$(request.auth.uid)).data;
-      return rideChanged().hasOnly(["status", "driverId", "acceptedAt", "walletProcessed"]) &&
+      return changed.hasOnly(["status", "driverId", "acceptedAt", "walletProcessed"]) &&
         resource.data.status == "dispatching" &&
         resource.data.get("fleetId", null) is string &&
         driver.get("fleetId", null) == resource.data.fleetId &&
@@ -400,6 +527,7 @@ service cloud.firestore {
         request.resource.data.status == "accepted" &&
         request.resource.data.driverId == request.auth.uid &&
         request.resource.data.walletProcessed == false &&
+        stampedNow("acceptedAt") &&
         driver.approved == true &&
         driver.get("blocked", false) != true &&
         driver.get("restDue", false) != true &&
@@ -408,9 +536,9 @@ service cloud.firestore {
     }
 
     /* The chosen driver, or one of the fleet, says no to a phone job. */
-    function driverDeclinesFleetJob() {
+    function driverDeclinesFleetJob(changed) {
       let driver = get(/databases/$(database)/documents/drivers/$(request.auth.uid)).data;
-      return rideChanged().hasOnly(["declinedBy"]) &&
+      return changed.hasOnly(["declinedBy"]) &&
         resource.data.status == "dispatching" &&
         driver.get("fleetId", null) == resource.data.get("fleetId", "") &&
         request.resource.data.declinedBy.toSet() ==
@@ -418,24 +546,34 @@ service cloud.firestore {
         request.resource.data.declinedBy.size() <= resource.data.get("declinedBy", []).size() + 1;
     }
 
-    function driverCancels() {
-      return rideChanged().hasOnly(["status", "cancelledBy", "cancelReason", "endedEarly", "cancelledAt"]) &&
+    function driverCancels(changed) {
+      return changed.hasOnly(["status", "cancelledBy", "cancelReason", "endedEarly", "cancelledAt"]) &&
         request.resource.data.status == "cancelled" &&
         request.resource.data.cancelledBy == "driver" &&
-        resource.data.status in ["accepted", "arrived", "ongoing"];
+        resource.data.status in ["accepted", "arrived", "ongoing"] &&
+        stampedNow("cancelledAt") &&
+        endedEarlyMatchesTrip();
     }
 
-    function driverRatesRider() {
-      return rideChanged().hasOnly(["riderRating"]) &&
+    function driverRatesRider(changed) {
+      return changed.hasOnly(["riderRating"]) &&
         resource.data.status == "completed" &&
         !("riderRating" in resource.data);
     }
 
-    function driverRideUpdate() {
+    function driverRideUpdate(changed) {
       return request.auth.uid == resource.data.driverId && (
-        driverArrives() || driverStarts() || driverReachesStop() || driverCompletes() ||
-        driverGivesBack() || driverCancels() || driverRatesRider()
+        driverArrives(changed) || driverStarts(changed) || driverReachesStop(changed) || driverCompletes(changed) ||
+        driverGivesBack(changed) || driverCancels(changed) || driverRatesRider(changed)
       );
+    }
+
+    /* The diff is worked out once: on a ride with many fields, working it
+       out in every check below reached the 1000-expression limit. */
+    function rideWriteAllowed(rideId) {
+      let changed = rideChanged();
+      return riderRideUpdate(rideId, changed) || driverRideUpdate(changed) || driverClaimsRide(changed) ||
+        driverClaimsFleetJob(changed) || driverDeclinesFleetJob(changed);
     }
 
     function myVehicleServes(ride) {
@@ -444,8 +582,29 @@ service cloud.firestore {
       );
     }
 
+    /* A suspended passenger cannot book. */
+    function passengerMayBook() {
+      let path = /databases/$(database)/documents/riders/$(request.auth.uid);
+      return !exists(path) || get(path).data.get("blocked", false) != true;
+    }
+
     match /rides/{rideId} {
-      allow read: if isAdmin() || signedIn();
+      /* The rider, the driver on the job and the fleet's staff see a ride,
+         so a customer's phone number stays with them. Approved drivers also
+         see app jobs still looking for a driver (no phone number on those);
+         a fleet's waiting phone jobs reach its drivers through
+         fleetJobOffers, without the customer's number. */
+      allow read: if isAdmin() || (
+        signedIn() && (
+          resource.data.riderId == request.auth.uid ||
+          resource.data.driverId == request.auth.uid ||
+          (resource.data.get("fleetId", null) is string &&
+            fleetStaffOf(resource.data.fleetId)) ||
+          (resource.data.status == "searching" &&
+            get(/databases/$(database)/documents/drivers/$(request.auth.uid))
+              .data.get("approved", false) == true)
+        )
+      );
 
       /* The server checks the price of every new app booking and marks it
          pricing: "checked" (checkNewRide in functions/index.js); the
@@ -455,7 +614,14 @@ service cloud.firestore {
         signedIn() &&
         request.resource.data.riderId == request.auth.uid &&
         request.resource.data.get("pricing", "") != "checked" &&
-        !("priceCheck" in request.resource.data)
+        !("priceCheck" in request.resource.data) &&
+        /* A booking from the app, nothing else: a phone job or a fleet job
+           here would skip the price check and ring a fleet. */
+        request.resource.data.status == "searching" &&
+        request.resource.data.get("source", "app") == "app" &&
+        !("fleetId" in request.resource.data) &&
+        request.resource.data.get("driverId", null) == null &&
+        passengerMayBook()
       );
 
       /* Updates are limited to what each side legitimately does, field by
@@ -466,8 +632,7 @@ service cloud.firestore {
         signedIn() && (
           /* driverRideUpdate first: it is cheap when it isn't theirs, and a
              driver's own updates then stop short of the 1000-expression cap. */
-          riderRideUpdate(rideId) || driverRideUpdate() || driverClaimsRide() ||
-          driverClaimsFleetJob() || driverDeclinesFleetJob()
+          rideWriteAllowed(rideId)
         )
       );
       allow delete: if isAdmin();
@@ -533,6 +698,24 @@ service cloud.firestore {
         allow read: if isAdmin();
         allow write: if isAdmin();
       }
+    }
+
+    /* A phone job waiting for a driver, without the customer's number, for
+       the fleet's own drivers (functions/privacy.js copies it from the ride
+       and removes it when the job moves on). */
+    match /fleetJobOffers/{rideId} {
+      /* "resource == null": the offer has already gone, and the driver's app
+         says "no longer available" rather than a permissions error. */
+      allow read: if isAdmin() || (
+        signedIn() && resource == null
+      ) || (
+        signedIn() &&
+        resource.data.fleetId is string &&
+        (fleetStaffOf(resource.data.fleetId) ||
+          get(/databases/$(database)/documents/drivers/$(request.auth.uid))
+            .data.get("fleetId", null) == resource.data.fleetId)
+      );
+      allow write: if false;
     }
 
     /* ================= NEARBY CARS (NEW) ================= */
@@ -601,7 +784,11 @@ service cloud.firestore {
         resource.data.get("fleetId", null) is string &&
         fleetStaffOf(resource.data.fleetId)
       );
-      allow create: if isAdmin() || signedIn();
+      allow create: if isAdmin() || (
+        signedIn() &&
+        request.resource.data.reporterId == request.auth.uid &&
+        !("fleetId" in request.resource.data)
+      );
 
       /* The reporter may only touch the reply markers; everything else
          about a case is set by admins (UPDATED). */

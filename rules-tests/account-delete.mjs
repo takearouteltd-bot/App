@@ -43,6 +43,8 @@ const d = await createUserWithEmailAndPassword(D.auth, 'd@test.dev', 'secret123'
 const uid = d.user.uid;
 await adminSet(`drivers/${uid}`, { approved: true, onboardingComplete: true, vehicleType: 'RouteMini', status: 'online', phoneNumber: '+447700900111', firstName: 'Drv', subscription: { status: 'active', paymentMethod: 'wallet_deduction' } });
 await adminSet(`riders/${uid}`, { fullName: 'Drv Rider', phoneNumber: '+447700900111' });
+await adminSet(`driverPrivate/${uid}`, { accountDetails: { sortCode: '123456', accountNumber: '12345678' }, nin: 'AB123456C' });
+await adminSet(`driverFiles/${uid}`, { motUrl: 'https://x/m' });
 await adminSet(`riders/${uid}/savedPlaces/home`, { label: 'Home' });
 await adminSet(`pushTokens/${uid}`, { tokens: ['x'] });
 await adminSet(`driverLocations/${uid}`, { lat: 1 });
@@ -64,13 +66,15 @@ await adminSet(`driverWallets/${uid}`, { availableBalance: 0 }, true);
 step('refused: withdrawal pending');
 await assert.rejects(D.call('deleteMyAccount', {}), /withdrawal is still being paid/);
 await adminSet('driverPayouts/p1', { status: 'completed' }, true);
+await adminSet(`driverWallets/${uid}`, { availableBalance: -4 }, true);
 
 step('deleted: records and sign-in gone; ride, payout amount and fleet invite kept');
 assert.deepEqual(await D.call('deleteMyAccount', {}), { ok: true });
-for (const p of [`drivers/${uid}`, `riders/${uid}`, `riders/${uid}/savedPlaces/home`, `pushTokens/${uid}`, `driverLocations/${uid}`, `driverWallets/${uid}`]) {
+for (const p of [`drivers/${uid}`, `driverPrivate/${uid}`, `driverFiles/${uid}`, `riderPublic/${uid}`, `riders/${uid}`, `riders/${uid}/savedPlaces/home`, `pushTokens/${uid}`, `driverLocations/${uid}`, `driverWallets/${uid}`]) {
   assert.equal(await exists(p), false, p + ' still there');
 }
 assert.equal(await exists('rides/r1'), true);
+assert.equal(await exists(`paymentAlerts/account_deleted_owing_${uid}`), true, 'what was owed is left for an admin');
 const p1 = await adminGet('driverPayouts/p1');
 assert.equal(p1.bankDetails, undefined); assert.equal(p1.amount.integerValue, '5');
 assert.equal(await exists('fleetInvites/+447700900111'), true);

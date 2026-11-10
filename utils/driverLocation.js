@@ -16,7 +16,15 @@
 // background task (with an Android notification and the iOS location
 // indicator) keeps writing drivers/{uid}; otherwise the passenger's map
 // shows the car frozen where the driver left the app.
+//
+// No background permission is needed for that. On Android a location service
+// with a notification, started while the app is on screen, runs on the normal
+// "while using the app" permission and keeps going while another app is
+// showing (expo-location: "user-initiated foreground service"). What it cannot
+// do is START with the app in the background, so a failed start is retried
+// when the driver comes back, and shown on the job screens (jobSharing).
 import { useEffect, useState } from 'react';
+import { AppState } from 'react-native';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { getAuth } from 'firebase/auth';
@@ -28,7 +36,8 @@ const FIX_TIMEOUT_MS = 10000;
 /* ---------------------------------------------------------------- store */
 
 // status: 'idle' | 'locating' | 'granted' | 'denied' | 'timeout' | 'error'
-const state = { coords: null, status: 'idle' };
+// jobSharing: 'off' | 'on' | 'failed' (keeping the position going in other apps)
+const state = { coords: null, status: 'idle', jobSharing: 'off' };
 const listeners = new Set();
 let watcher = null;
 let watchingFor = null;
@@ -102,7 +111,10 @@ TaskManager.defineTask(JOB_LOCATION_TASK, async ({ data, error }) => {
 async function startJobSharing(driverId) {
   jobDriverId = driverId;
   try {
-    if (await Location.hasStartedLocationUpdatesAsync(JOB_LOCATION_TASK)) return;
+    if (await Location.hasStartedLocationUpdatesAsync(JOB_LOCATION_TASK)) {
+      update({ jobSharing: 'on' });
+      return;
+    }
     await Location.startLocationUpdatesAsync(JOB_LOCATION_TASK, {
       accuracy: Location.Accuracy.High,
       timeInterval: 4000,
@@ -116,14 +128,25 @@ async function startJobSharing(driverId) {
         notificationColor: '#B8F03A',
       },
     });
+    if (jobDriverId === driverId) update({ jobSharing: 'on' });
   } catch (error) {
-    // Still covered while the app is open (the watcher above).
+    // Still covered while the app is open (the watcher above), but the driver
+    // has to know their passenger loses them in Google Maps.
     console.log('Could not start background location:', error?.message || error);
+    if (jobDriverId === driverId) update({ jobSharing: 'failed' });
   }
+}
+
+/* The job screens' "Try again": re-asks for location, then starts sharing. */
+export async function retryJobSharing(driverId) {
+  if (!driverId) return;
+  await requestDriverPosition(driverId);
+  await startJobSharing(driverId);
 }
 
 async function stopJobSharing() {
   jobDriverId = null;
+  update({ jobSharing: 'off' });
   try {
     if (await Location.hasStartedLocationUpdatesAsync(JOB_LOCATION_TASK)) {
       await Location.stopLocationUpdatesAsync(JOB_LOCATION_TASK);
@@ -241,7 +264,12 @@ export function useDriverLocationPublisher(driverId, enabled = true) {
   useEffect(() => {
     if (!driverId || !enabled || !onRide) return undefined;
     startJobSharing(driverId);
+    // Android refuses to start it while the app is in the background.
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active' && state.jobSharing === 'failed') startJobSharing(driverId);
+    });
     return () => {
+      sub.remove();
       stopJobSharing();
     };
   }, [driverId, enabled, onRide]);

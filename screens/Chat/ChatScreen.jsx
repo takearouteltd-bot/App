@@ -39,6 +39,15 @@ const QUICK_MESSAGES = [
   "Be there shortly",
 ];
 
+// The same idea from the passenger's side of the kerb.
+const PASSENGER_QUICK_MESSAGES = [
+  "I'm at the pickup",
+  "Coming out now",
+  "I'll be 2 mins",
+  "I can't see you",
+  "Can you come to the pin?",
+];
+
 const ChatScreen = ({ route }) => {
   const navigation = useNavigation();
   const {
@@ -281,7 +290,7 @@ const ChatScreen = ({ route }) => {
           <View style={styles.quickMessagesContainer}>
             <Text style={TYPE.label}>Quick Replies</Text>
             <View style={styles.quickMessagesRow}>
-              {QUICK_MESSAGES.map((msg) => (
+              {(userType === 'rider' ? PASSENGER_QUICK_MESSAGES : QUICK_MESSAGES).map((msg) => (
                 <Chip key={msg} label={msg} onPress={() => sendMessage(msg)} />
               ))}
             </View>

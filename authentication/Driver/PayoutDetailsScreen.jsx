@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { doc, getDoc, updateDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
+import { privateDocRef } from "../../utils/driverPrivate";
 import { onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "../../config/firebase";
 import { Alert } from "../../components/ui/alert";
@@ -44,7 +45,7 @@ export default function PayoutDetailsScreen({ navigation }) {
   // Bring back what they entered before, if they return to this step.
   useEffect(() => {
     if (!driverId) return;
-    getDoc(doc(db, "drivers", driverId))
+    getDoc(privateDocRef(driverId))
       .then((snap) => {
         const saved = snap.exists() ? snap.data().accountDetails : null;
         if (!saved) return;
@@ -84,7 +85,7 @@ export default function PayoutDetailsScreen({ navigation }) {
 
     setSaving(true);
     try {
-      await updateDoc(doc(db, "drivers", driverId), {
+      await setDoc(privateDocRef(driverId), {
         accountDetails: {
           accountHolder: accountHolder.trim(),
           sortCode,
@@ -93,6 +94,8 @@ export default function PayoutDetailsScreen({ navigation }) {
           acceptedStripeAgreement: true,
           updatedAt: new Date(),
         },
+      }, { merge: true });
+      await updateDoc(doc(db, "drivers", driverId), {
         onboardingStep: 5,
         onboardingComplete: false,
       });

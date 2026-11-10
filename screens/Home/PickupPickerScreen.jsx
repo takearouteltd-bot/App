@@ -129,7 +129,7 @@ export default function PickupPickerScreen() {
   };
 
   // Ranked near where the map was opened, not limited to it.
-  const search = usePlaceSearch({ near: initial });
+  const search = usePlaceSearch({ near: initial, regionCodes: ['gb'] });
 
   const choosePlace = async (item) => {
     const place = await search.pick(item);

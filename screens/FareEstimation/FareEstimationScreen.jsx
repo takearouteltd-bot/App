@@ -72,7 +72,11 @@ export default function FareEstimationScreen({ route }) {
 
   // Stops on the way, in order. The route (and so the fare, which is priced
   // on distance and time) goes through every one.
-  const [stops, setStops] = useState([]);
+  // "Book again" passes the old trip's stops in.
+  const [stops, setStops] = useState(Array.isArray(route.params?.stops) ? route.params.stops : []);
+  useEffect(() => {
+    if (Array.isArray(route.params?.stops)) setStops(route.params.stops);
+  }, [route.params?.stops]);
   useEffect(() => {
     const added = route.params?.addStop;
     if (!added) return;
@@ -93,6 +97,24 @@ export default function FareEstimationScreen({ route }) {
   const [selectedRide, setSelectedRide] = useState('RouteMini');
   const [loading, setLoading] = useState(false);
   const [routeCalculated, setRouteCalculated] = useState(false);
+  // Google can fail or find nothing. Without this the button stayed on
+  // "Working out your route…" for good, with no way out but Back.
+  const [routeFailed, setRouteFailed] = useState(false);
+  const [routeAttempt, setRouteAttempt] = useState(0);
+  // A new stop means a new route: the old price must not be bookable meanwhile.
+  useEffect(() => {
+    setRouteCalculated(false);
+    setRouteFailed(false);
+  }, [stops]);
+  useEffect(() => {
+    if (routeCalculated || routeFailed) return undefined;
+    const timer = setTimeout(() => setRouteFailed(true), 20000);
+    return () => clearTimeout(timer);
+  }, [routeCalculated, routeFailed, routeAttempt, stops]);
+  const retryRoute = () => {
+    setRouteFailed(false);
+    setRouteAttempt((n) => n + 1);
+  };
   const [promoCode, setPromoCode] = useState('');
   const [promoApplied, setPromoApplied] = useState(false);
   const [discount, setDiscount] = useState(0);
@@ -117,16 +139,27 @@ export default function FareEstimationScreen({ route }) {
   useEffect(() => {
     if (!allowCash && paymentMethod === 'cash') setPaymentMethod('card');
   }, [allowCash, paymentMethod]);
-  const [defaultCard, setDefaultCard] = useState(null);
+  // The card the server will charge: riders/{uid}.defaultPaymentMethodId.
+  const [cards, setCards] = useState([]);
+  const [defaultCardId, setDefaultCardId] = useState(null);
+  const defaultCard = cards.find((c) => (c.paymentMethodId || c.id) === defaultCardId) || cards[0] || null;
   const [showBreakdown, setShowBreakdown] = useState(false);
 
   useEffect(() => {
     if (!currentUser) return undefined;
     const cardsRef = collection(db, 'riders', currentUser.uid, 'cards');
     return onSnapshot(cardsRef, (snapshot) => {
-      const cards = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
-      setDefaultCard(cards.find((c) => c.isDefault) || cards[0] || null);
+      setCards(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return undefined;
+    return onSnapshot(
+      doc(db, 'riders', currentUser.uid),
+      (snap) => setDefaultCardId(snap.exists() ? snap.data().defaultPaymentMethodId || null : null),
+      () => {}
+    );
   }, [currentUser]);
 
   /* ================= FARE =================
@@ -257,7 +290,7 @@ export default function FareEstimationScreen({ route }) {
           'You need a card on file before booking a ride.',
           [
             { text: 'Not now', style: 'cancel' },
-            { text: 'Add card', onPress: () => navigation.navigate('AddPayment') },
+            { text: 'Add card', onPress: () => navigation.navigate('AddPayment', { screen: 'AddPaymentMethod' }) },
           ]
         );
         return;
@@ -394,6 +427,9 @@ export default function FareEstimationScreen({ route }) {
   const nudgeOffer = (delta) =>
     setOffer(Math.max(floor, Math.round((offerValue + delta) * 2) / 2));
   const money = (n) => `${currencySymbol()}${Number(n).toFixed(2)}`;
+  // Short trips are lifted to the minimum, so the parts above it don't add up.
+  const rawFare = (fare.baseFare + fare.distanceFare + fare.timeFare) * fare.rideMultiplier * fare.surgeMultiplier;
+  const minimumApplied = rawFare < appConfig.fares.minimumFare;
 
   // Averaging a missing coordinate gives NaN, and the map opens on 0,0.
   const initialRegion = regionCovering([origin, destination], 0.05);
@@ -432,15 +468,18 @@ export default function FareEstimationScreen({ route }) {
 
           {isCoord(origin) && isCoord(destination) ? (
           <RouteDirections
+            key={routeAttempt}
             origin={origin}
             destination={destination}
             waypoints={stops.map((s) => ({ latitude: s.latitude, longitude: s.longitude }))}
             strokeWidth={4}
             strokeColor={COLORS.primary}
+            onError={() => setRouteFailed(true)}
             onReady={(result) => {
               setDistance(result.distance);
               setDuration(result.duration);
               setRouteCalculated(true);
+              setRouteFailed(false);
               mapRef.current?.fitToCoordinates(result.coordinates, {
                 edgePadding: { top: 80, right: 60, bottom: 60, left: 60 },
                 animated: true,
@@ -612,7 +651,7 @@ export default function FareEstimationScreen({ route }) {
                     ? `${(defaultCard.brand || 'Card').toUpperCase()} ···· ${defaultCard.last4}`
                     : 'No card added'
                 }
-                onPress={() => navigation.navigate('AddPayment')}
+                onPress={() => navigation.navigate('AddPayment', defaultCard ? undefined : { screen: 'AddPaymentMethod' })}
                 last={!allowFemaleOnly}
               />
             )}
@@ -709,6 +748,9 @@ export default function FareEstimationScreen({ route }) {
               {fare.surgeMultiplier > 1 ? (
                 <Row label="Busy-time pricing" value={`× ${fare.surgeMultiplier}`} tone={COLORS.amber} />
               ) : null}
+              {minimumApplied ? (
+                <Row label="Minimum fare" value={money(appConfig.fares.minimumFare)} />
+              ) : null}
               {promoApplied ? (
                 <Row
                   label={`Promo ${promoCode}`}
@@ -726,9 +768,9 @@ export default function FareEstimationScreen({ route }) {
         </ScrollView>
 
         <TouchableOpacity
-          style={[styles.confirm, (loading || !routeCalculated) && { opacity: 0.5 }]}
-          onPress={handleConfirmRide}
-          disabled={loading || !routeCalculated}
+          style={[styles.confirm, (loading || (!routeCalculated && !routeFailed)) && { opacity: 0.5 }]}
+          onPress={routeFailed ? retryRoute : handleConfirmRide}
+          disabled={loading || (!routeCalculated && !routeFailed)}
           activeOpacity={0.9}
           accessibilityRole="button"
         >
@@ -737,7 +779,9 @@ export default function FareEstimationScreen({ route }) {
           ) : (
             <>
               <Text style={styles.confirmText}>
-                {!routeCalculated
+                {routeFailed
+                  ? "Couldn't get your route. Try again"
+                  : !routeCalculated
                   ? 'Working out your route…'
                   : bidding
                   ? `Offer for ${selectedOption.label}`

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Linking } from 'react-native';
 import { Alert } from '../../../components/ui/alert';
 import { useNavigation } from '@react-navigation/native';
 import { getFirestore, doc, onSnapshot } from 'firebase/firestore';
+import { watchMyDriverRecord } from '../../../utils/driverPrivate';
 import { getAuth } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { money, useAppConfig } from '../../../utils/appConfig';
@@ -21,6 +22,12 @@ import {
   ScreenHeader,
   Loading,
 } from '../../../components/ui/kit';
+
+const SUPPORT_EMAIL = 'support@takearoute.ltd';
+const emailSupport = () =>
+  Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Bank details')}`).catch(() =>
+    Alert.alert('No email app found', `Email us at ${SUPPORT_EMAIL}.`)
+  );
 
 export default function WithdrawScreen() {
   const navigation = useNavigation();
@@ -43,10 +50,14 @@ export default function WithdrawScreen() {
       if (snap.exists()) setWallet(snap.data());
     });
 
-    const unsubscribeDriver = onSnapshot(doc(db, 'drivers', driverId), (snap) => {
-      if (snap.exists()) setDriver(snap.data());
-      setLoading(false);
-    });
+    const unsubscribeDriver = watchMyDriverRecord(
+      driverId,
+      (record) => {
+        if (record) setDriver(record);
+        setLoading(false);
+      },
+      () => setLoading(false)
+    );
 
     return () => {
       unsubscribeWallet();
@@ -88,7 +99,11 @@ export default function WithdrawScreen() {
     if (!hasBank) {
       Alert.alert(
         'No bank details',
-        'We do not have your bank details on file. Contact support to add them.'
+        `We do not have your bank details on file. Email ${SUPPORT_EMAIL} to add them.`,
+        [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Email support', onPress: emailSupport },
+        ]
       );
       return;
     }
@@ -158,7 +173,8 @@ export default function WithdrawScreen() {
             <Banner
               tone="danger"
               title="No bank details on file"
-              body="We cannot pay you out until your bank details are added. Contact support and they will set them up for you."
+              body={`We cannot pay you out until your bank details are added. Email ${SUPPORT_EMAIL} and we will set them up for you.`}
+              action={<Button size="small" title="Email support" onPress={emailSupport} />}
             />
           </View>
         ) : (
@@ -170,8 +186,9 @@ export default function WithdrawScreen() {
               {accountHolder ? ` · ${accountHolder}` : ''}
             </Text>
             <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>
-              To change these, contact support. Bank details cannot be edited in the app for
-              security.
+              To change these, email{' '}
+              <Text style={styles.link} accessibilityRole="link" onPress={emailSupport}>{SUPPORT_EMAIL}</Text>
+              . Bank details cannot be edited in the app for security.
             </Text>
           </Card>
         )}
@@ -239,6 +256,7 @@ const styles = StyleSheet.create({
 
   gap: { marginTop: SPACE[4] },
   bankValue: { ...TYPE.figure, letterSpacing: 1, marginVertical: SPACE[1] },
+  link: { color: COLORS.midnight, fontWeight: '700', textDecorationLine: 'underline' },
 
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: SPACE[3] },
   rowValue: { ...TYPE.callout },

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import { View, StyleSheet } from "react-native";
 import { Alert } from "../../components/ui/alert";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { doc, setDoc } from "firebase/firestore";
+import { loadMyDriverRecord, privateDocRef } from "../../utils/driverPrivate";
 import { db, auth } from "../../config/firebase";
 import { Banner, Field, SPACE } from "../../components/ui/kit";
 import { DRIVER_STEPS, OnboardingFrame, StepSection } from "../../components/onboarding/kit";
@@ -94,11 +95,11 @@ export default function PersonalInformationScreen({ navigation, setOnboardingSta
       if (!driverId) return;
 
       try {
-        const snap = await getDoc(doc(db, "drivers", driverId));
-        if (!snap.exists()) return;
+        const record = await loadMyDriverRecord(driverId);
+        if (!record.exists) return;
         hasRecord.current = true;
 
-        const data = snap.data();
+        const data = record.data;
         setFirstName(data.firstName || "");
         setLastName(data.lastName || "");
         setDob(data.dob || "");
@@ -160,9 +161,6 @@ export default function PersonalInformationScreen({ navigation, setOnboardingSta
           firstName: firstName.trim(),
           lastName: lastName.trim(),
           fullName: `${firstName.trim()} ${lastName.trim()}`,
-          dob,
-          nin,
-          address: address.trim(),
           gender,
           workingCityId: workingCityId || null,
           workingCityName: cities.find((c) => c.id === workingCityId)?.name || null,
@@ -180,6 +178,7 @@ export default function PersonalInformationScreen({ navigation, setOnboardingSta
         },
         { merge: true }
       );
+      await setDoc(privateDocRef(driverId), { dob, nin, address: address.trim() }, { merge: true });
       hasRecord.current = true;
 
       setOnboardingStatus("onboarding");

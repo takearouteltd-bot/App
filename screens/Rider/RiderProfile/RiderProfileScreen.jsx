@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { View, Text, StyleSheet, Image, RefreshControl } from "react-native";
 import { Alert } from "../../../components/ui/alert";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
+import appJson from "../../../app.json";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "../../../config/firebase";
@@ -18,6 +19,7 @@ import {
   Avatar,
   StatRow,
   EmptyState,
+  Banner,
 } from '../../../components/ui/kit';
 import ModeSwitchRow from '../../../components/ModeSwitchRow';
 import { openTerms, openPrivacy } from '../../../utils/legal';
@@ -69,10 +71,11 @@ const fetchRiderData = useCallback(async () => {
     ridesSnap.forEach((docSnap) => {
       const ride = docSnap.data();
       totalRides++;
-      totalSpent += ride.fare?.total || 0;
+      // finalTotal includes waiting time; it is written once the trip is paid.
+      totalSpent += Number(ride.fare?.finalTotal ?? ride.fare?.total) || 0;
 
-      if (ride.rating?.driverToRider && typeof ride.rating.driverToRider === "number") {
-        totalRating += ride.rating.driverToRider;
+      if (typeof ride.riderRating?.stars === "number") {
+        totalRating += ride.riderRating.stars;
         ratedRides++;
       }
     });
@@ -168,6 +171,15 @@ const fetchRiderData = useCallback(async () => {
 
   const openEdit = () => navigation.navigate("EditProfile", { riderData });
 
+  // Optional details: calling needs a phone number, receipts need an email.
+  const needsPhone = riderData && !riderData.phoneNumber && !riderData.phone && !currentUser.phoneNumber;
+  const needsEmail = riderData && !currentUser.email && !riderData.email && !riderData.pendingEmail;
+  const nudge = needsPhone
+    ? { title: "Add your phone number", body: "Your driver can only call you, and you them, if we have it. Your number stays private.", button: "Add phone number" }
+    : needsEmail
+    ? { title: "Add your email", body: "We send your trip receipts by email, so we need an address for them.", button: "Add email" }
+    : null;
+
   return (
     <Screen
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.midnight} />}
@@ -193,12 +205,23 @@ const fetchRiderData = useCallback(async () => {
         ]}
       />
 
+      {nudge ? (
+        <View style={{ marginTop: SPACE[5] }}>
+          <Banner
+            title={nudge.title}
+            body={nudge.body}
+            action={<Button title={nudge.button} variant="secondary" size="small" style={{ alignSelf: "flex-start" }} onPress={openEdit} />}
+          />
+        </View>
+      ) : null}
+
       <Section title="Account">
         <RowGroup
           items={[
             { icon: "person-outline", title: "Personal details", detail: "Name, phone, email and photo", onPress: openEdit },
             { icon: "location-outline", title: "Saved places", detail: "Home, work and regular destinations", onPress: () => navigation.navigate("SavedPlaces") },
             { icon: "time-outline", title: "Trip history", detail: "Past trips and receipts", onPress: () => navigation.navigate("RideHistory") },
+            { icon: "options-outline", title: "Preferences", detail: "Ride preferences and notifications", onPress: () => navigation.navigate("Preferences") },
             { icon: "mail-outline", title: "Messages", detail: "Updates from TakeARoute", onPress: () => navigation.navigate("Inbox", { role: "rider" }) },
           ]}
         />
@@ -244,7 +267,7 @@ const fetchRiderData = useCallback(async () => {
 
       <View style={styles.footer}>
         <Image source={require("../../../assets/myicon.png")} style={styles.footerLogo} resizeMode="contain" />
-        <Text style={TYPE.small}>TakeARoute 1.0</Text>
+        <Text style={TYPE.small}>TakeARoute {appJson.expo.version}</Text>
       </View>
     </Screen>
   );

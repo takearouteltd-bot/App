@@ -242,7 +242,10 @@ export default function SavedPlacesScreen() {
 
             <Text style={styles.fieldLabel}>Place Type</Text>
             <View style={styles.typeSelector}>
-              {Object.entries(PLACE_TYPES).map(([key, config]) => (
+              {/* One Home and one Work, as when adding a place. */}
+              {Object.entries(PLACE_TYPES)
+                .filter(([key]) => key === "other" || !places.some((p) => p.id !== editingPlace?.id && p.type === key))
+                .map(([key, config]) => (
                 <Chip
                   key={key}
                   label={config.label}

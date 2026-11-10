@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { View, StyleSheet } from "react-native";
 import { Alert } from "../../components/ui/alert";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { doc, setDoc } from "firebase/firestore";
+import { filesDocRef, loadMyDriverRecord } from "../../utils/driverPrivate";
 import { db, auth } from "../../config/firebase";
 import { selectUploadAsset, uploadDriverFile } from "../../helpers/uploadPicker";
 import { VEHICLE_CLASSES } from "../../constants/vehicleClasses";
@@ -21,6 +22,7 @@ const CLASS_ICON = {
 // Upload name (drivers/{uid}/{name}.ext) → the field it is saved as.
 const DOC_FIELD = {
   motCert: "motUrl",
+  vehicleLicence: "vehicleLicenceUrl",
   phvInsurance: "insuranceUrl",
   companyAgreement: "companyAgreementUrl",
 };
@@ -46,10 +48,10 @@ export default function VehicleDetailsScreen({ navigation, setOnboardingStatus }
       if (!driverId) return;
 
       try {
-        const snap = await getDoc(doc(db, "drivers", driverId));
-        if (!snap.exists()) return;
+        const record = await loadMyDriverRecord(driverId);
+        if (!record.exists) return;
 
-        const data = snap.data();
+        const data = record.data;
         setMakeModel(data.makeModel || "");
         setYear(data.year || "");
         setRegistrationNumber(data.registrationNumber || "");
@@ -57,6 +59,7 @@ export default function VehicleDetailsScreen({ navigation, setOnboardingStatus }
         setOwnershipType(data.ownershipType || null);
         setUrls({
           motCert: data.motUrl || null,
+          vehicleLicence: data.vehicleLicenceUrl || null,
           phvInsurance: data.insuranceUrl || null,
           companyAgreement: data.companyAgreementUrl || null,
         });
@@ -83,7 +86,7 @@ export default function VehicleDetailsScreen({ navigation, setOnboardingStatus }
     setUploading(type);
     try {
       const downloadUrl = await uploadDriverFile(driverId, type, asset);
-      await setDoc(doc(db, "drivers", driverId), { [DOC_FIELD[type]]: downloadUrl }, { merge: true });
+      await setDoc(filesDocRef(driverId), { [DOC_FIELD[type]]: downloadUrl }, { merge: true });
       setUrls((u) => ({ ...u, [type]: downloadUrl }));
     } catch (error) {
       console.log("Upload error:", error);
@@ -100,6 +103,7 @@ export default function VehicleDetailsScreen({ navigation, setOnboardingStatus }
     !vehicleType && "a vehicle class",
     !ownershipType && "who owns the vehicle",
     !urls.motCert && "the MOT certificate",
+    !urls.vehicleLicence && "the vehicle licence (plate)",
     !urls.phvInsurance && "your PHV insurance",
     ownershipType === "company" && !urls.companyAgreement && "the company agreement",
   ].filter(Boolean);
@@ -219,6 +223,14 @@ export default function VehicleDetailsScreen({ navigation, setOnboardingStatus }
           url={urls.motCert}
           uploading={uploading === "motCert"}
           onPress={() => pickDocument("motCert")}
+        />
+        <UploadTile
+          title="Vehicle licence (plate)"
+          subtitle="From your licensing council, in date"
+          icon="card-account-details-outline"
+          url={urls.vehicleLicence}
+          uploading={uploading === "vehicleLicence"}
+          onPress={() => pickDocument("vehicleLicence")}
         />
         <UploadTile
           title="PHV insurance"

@@ -106,6 +106,16 @@ export async function sendCounterOffer(rideId, driver, price, config) {
   });
 }
 
+/* The driver takes their counter-offer back (they declined the job). The
+   rules only let a driver write a "pending" offer, so it is closed by ending
+   its time, which offerIsLive treats as gone on both sides. */
+export async function withdrawCounterOffer(rideId, driverId) {
+  await updateDoc(doc(db, 'rides', rideId, 'offers', driverId), {
+    sentAtMs: 0,
+    expiresAtMs: 0,
+  });
+}
+
 /* Whether a counter-offer is still open. Timed from the server's createdAt
    where it has one, so a driver's phone clock running slow or fast can't
    make every offer arrive already expired (or never expire). The driver's

@@ -39,6 +39,9 @@ export default function RiderProfileScreen({ navigation }) {
   // A photo already saved on the record, kept unless a new one uploads.
   const [savedImageURL, setSavedImageURL] = useState(null);
   const [loading, setLoading] = useState(false);
+  // Phone sign-ups have no address for receipts. Optional, like the photo.
+  const askEmail = !auth.currentUser?.email;
+  const [email, setEmail] = useState("");
 
   const isFormValid = fullName.trim().length > 0;
 
@@ -51,6 +54,7 @@ export default function RiderProfileScreen({ navigation }) {
         if (!snap.exists()) return;
         const data = snap.data();
         if (data.fullName) setFullName((current) => current || data.fullName);
+        if (data.email) setEmail((current) => current || data.email);
         if (data.profileImage) {
           setSavedImageURL(data.profileImage);
           setProfileImage((current) => current || data.profileImage);
@@ -100,6 +104,12 @@ export default function RiderProfileScreen({ navigation }) {
   const handleContinue = async () => {
     if (!isFormValid) return;
 
+    const receiptEmail = askEmail ? email.trim() : "";
+    if (receiptEmail && !/^\S+@\S+\.\S+$/.test(receiptEmail)) {
+      Alert.alert("Check your email", "That doesn't look like an email address. Fix it, or leave it blank to carry on.");
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -130,7 +140,8 @@ export default function RiderProfileScreen({ navigation }) {
       await updateDoc(doc(db, "riders", uid), {
         fullName: fullName.trim(),
         profileImage: profileImageURL || null,
-        onBoardingStep: 'location'
+        onBoardingStep: 'location',
+        ...(receiptEmail ? { email: receiptEmail } : {}),
       });
 
       console.log("✅ Rider profile updated");
@@ -202,6 +213,24 @@ export default function RiderProfileScreen({ navigation }) {
             value={fullName}
             onChangeText={setFullName}
           />
+
+          {askEmail ? (
+            <Field
+              label="Email (optional)"
+              left="mail-outline"
+              placeholder="you@example.com"
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              hint="So we can send you your trip receipts."
+            />
+          ) : (
+            <Text style={TYPE.small}>
+              You can add a phone number later from your profile, so your driver can call you.
+            </Text>
+          )}
         </ScrollView>
 
         <Footer>

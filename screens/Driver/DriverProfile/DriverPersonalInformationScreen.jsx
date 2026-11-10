@@ -11,7 +11,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import { Alert } from '../../../components/ui/alert';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { watchMyDriverRecord } from '../../../utils/driverPrivate';
 import { auth, db } from '../../../config/firebase';
 import { submitChangeRequest, useChangeRequests } from '../../../utils/changeRequests';
 import {
@@ -47,7 +47,7 @@ export default function DriverPersonalInformationScreen({ navigation }) {
 
   useEffect(() => {
     if (!driverId) return undefined;
-    return onSnapshot(doc(db, 'drivers', driverId), (snap) => setDriver(snap.exists() ? snap.data() : {}));
+    return watchMyDriverRecord(driverId, (record) => setDriver(record || {}));
   }, [driverId]);
 
   const startEdit = (field) => {
@@ -95,6 +95,11 @@ export default function DriverPersonalInformationScreen({ navigation }) {
   }
 
   const recent = items.filter((r) => r.kind === 'detail').slice(0, 5);
+  // The newest document request refused and not yet replaced. Items are newest
+  // first, so the first per document is its latest.
+  const refusedDoc = items.find(
+    (r, i) => r.kind === 'document' && r.status === 'rejected' && items.findIndex((x) => x.field === r.field) === i
+  );
 
   return (
     <Screen scroll={false}>
@@ -201,7 +206,7 @@ export default function DriverPersonalInformationScreen({ navigation }) {
               <ListRow
                 icon="folder-open-outline"
                 title="My documents"
-                detail="Check expiry dates and upload replacements"
+                detail={refusedDoc ? `${refusedDoc.fieldLabel} not accepted${refusedDoc.adminNote ? `: ${refusedDoc.adminNote}` : ''}` : 'Check expiry dates and upload replacements'}
                 onPress={() => navigation.navigate('DriverDocuments')}
                 last
               />

@@ -49,13 +49,21 @@ function sharedDetails(source) {
   const d = source || {};
   const out = {};
   if (d.fullName) out.fullName = d.fullName;
-  if (d.phoneNumber) out.phoneNumber = d.phoneNumber;
-  if (d.email) out.email = d.email;
   if (d.phoneVerifiedAt) out.phoneVerifiedAt = d.phoneVerifiedAt;
   // Drivers have no profile photo of their own; their selfie is what the
   // driver screens show, so it follows them into passenger mode.
   const photo = d.profileImage || d.selfieUrl;
   if (photo) out.profileImage = photo;
+  return out;
+}
+
+// A person's phone and email. A passenger keeps them on their own record; a
+// driver's go to driverPrivate/{id}, which only they and admins can read.
+function sharedContact(source) {
+  const d = source || {};
+  const out = {};
+  if (d.phoneNumber) out.phoneNumber = d.phoneNumber;
+  if (d.email) out.email = d.email;
   return out;
 }
 
@@ -85,6 +93,7 @@ export async function ensureRiderProfile(uid, carryOver) {
         onboardingComplete: skipSignup,
         ...(skipSignup ? { onBoardingStep: 'complete' } : {}),
         ...sharedDetails(carryOver),
+        ...sharedContact(carryOver),
       },
       { merge: true }
     );
@@ -94,7 +103,7 @@ export async function ensureRiderProfile(uid, carryOver) {
     // gaps from the driver record instead of sending them back through it.
     const current = snap.data() || {};
     const fill = {};
-    for (const [key, value] of Object.entries(sharedDetails(carryOver))) {
+    for (const [key, value] of Object.entries({ ...sharedDetails(carryOver), ...sharedContact(carryOver) })) {
       if (!current[key]) fill[key] = value;
     }
     await updateDoc(riderRef, {
@@ -135,6 +144,10 @@ export async function ensureDriverProfile(uid, carryOver) {
     },
     { merge: true }
   );
+  const contact = sharedContact(carryOver);
+  if (Object.keys(contact).length) {
+    await setDoc(doc(db, 'driverPrivate', uid), contact, { merge: true });
+  }
 }
 
 /* ================= GUARDS ================= */
@@ -189,14 +202,19 @@ export async function switchMode(uid, target) {
   if (await isSuspended(target, uid)) {
     throw new Error(
       target === 'rider'
-        ? 'Your passenger account has been suspended. Please contact support.'
-        : 'Your driver account has been suspended. Please contact support.'
+        ? 'Your passenger account has been suspended. Please contact support@takearoute.ltd.'
+        : 'Your driver account has been suspended. Please contact support@takearoute.ltd.'
     );
   }
 
   // Carry across what the mode being left already knows about this person.
   const sourceSnap = await getDoc(doc(db, RECORD[leaving], uid));
-  const carryOver = sourceSnap.exists() ? sourceSnap.data() : null;
+  let carryOver = sourceSnap.exists() ? sourceSnap.data() : null;
+  if (leaving === 'driver' && carryOver) {
+    // Their phone and email are on the private record.
+    const secrets = await getDoc(doc(db, 'driverPrivate', uid)).catch(() => null);
+    if (secrets?.exists()) carryOver = { ...carryOver, ...secrets.data() };
+  }
 
   if (target === 'rider') await ensureRiderProfile(uid, carryOver);
   else await ensureDriverProfile(uid, carryOver);

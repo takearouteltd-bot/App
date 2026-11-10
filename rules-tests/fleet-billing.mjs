@@ -125,6 +125,18 @@ const conf2 = await billing.functions.confirmFleetCheckout.run({ sessionId: 'cs_
 assert.equal(conf2.paid, true); assert.equal(conf2.billingStatus, 'ok');
 assert.equal((await fleet('f1')).billing.paymentMethodId, 'pm_new_4242');
 assert.equal((await wallet('f1')).availableBalance, 0);
+const keys = calls.filter((c) => c[0] === 'paymentIntents.create').map((c) => c[2].idempotencyKey);
+assert.ok(keys.at(-1).endsWith('-pm_new_4242'), 'the new card gets its own key');
+assert.ok(keys.some((k) => k.endsWith('-pm_0002')), 'the declined card had a different one');
+
+step('a grace setting of 0 means none, not 3 days');
+cfg.subscription.graceDays = 0;
+await db.doc('fleets/f0').set({ name: 'No Grace', status: 'active', billing: { status: 'ok' } });
+await db.doc('fleetWallets/f0').set({ availableBalance: -10 });
+assert.equal(await billing.chargeShortfall('f0'), 'no_card');
+assert.ok((await fleet('f0')).billing.graceUntil.toMillis() <= Date.now() + 1000);
+cfg.subscription.graceDays = 3;
+await db.doc('fleets/f0').delete();
 
 step('a fleet paused by an admin (not for money) is not switched back on by a payment');
 await db.doc('fleets/f2').set({ name: 'Other', status: 'suspended', billing: { status: 'ok' } });

@@ -60,7 +60,9 @@ export const STATUS_PILL = {
 
 function TripRow({ trip, role, onPress }) {
   const cancelled = trip.status === 'cancelled' || trip.status === 'canceled';
-  const amount = trip.fare?.finalTotal ?? trip.fare?.total ?? trip.fareEstimate ?? 0;
+  // A cancelled trip costs the passenger only the fee actually taken, if any.
+  const feeCharged = cancelled && role !== 'driver' ? Number(trip.cancellationFee) || 0 : 0;
+  const amount = feeCharged || (trip.fare?.finalTotal ?? trip.fare?.total ?? trip.fareEstimate ?? 0);
   return (
     <Card onPress={onPress} style={styles.card}>
       <View style={styles.top}>
@@ -82,7 +84,8 @@ function TripRow({ trip, role, onPress }) {
           {trip.route?.distanceKm ? `${Number(trip.route.distanceKm).toFixed(1)} km` : ''}
           {trip.route?.durationMinutes ? `, ${Math.ceil(trip.route.durationMinutes)} min` : ''}
         </Text>
-        <Text style={[TYPE.figure, cancelled && { color: COLORS.muted, textDecorationLine: 'line-through' }]}>
+        <Text style={[TYPE.figure, cancelled && !feeCharged && { color: COLORS.muted, textDecorationLine: 'line-through' }]}>
+          {feeCharged ? 'Fee ' : ''}
           {role === 'driver' && !cancelled ? '+' : ''}
           {money(amount, trip.currency || trip.fare?.currency)}
         </Text>
@@ -164,7 +167,7 @@ export default function TripsList({ role = 'rider' }) {
                   {completed.length} completed {completed.length === 1 ? 'trip' : 'trips'}
                 </Text>
                 <Text style={[TYPE.figure, { color: COLORS.lime, marginTop: SPACE[1] }]}>
-                  {role === 'driver' ? 'Earned' : 'Spent'} {money(total)}
+                  {role === 'driver' ? 'Fares' : 'Spent'} {money(total)}
                 </Text>
               </Card>
             ) : null}

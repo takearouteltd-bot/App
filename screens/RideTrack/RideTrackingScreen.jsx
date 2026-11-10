@@ -9,7 +9,8 @@ import {
 import { Alert } from '../../components/ui/alert';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import CarMarker from '../../components/CarMarker';
-import { remainingStops } from '../../utils/stops';
+import { remainingStops, stopsOf } from '../../utils/stops';
+import StopRows, { StopPin } from '../../components/trips/StopRows';
 import RouteDirections from '../../components/RouteDirections';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -39,7 +40,7 @@ import {
   validCoords,
   regionCovering,
 } from '../../components/ui/kit';
-import { cancellationFeeFor } from '../../utils/cancellation';
+import { cancellationFeeFor, noShowFeeFor } from '../../utils/cancellation';
 import { money } from '../../utils/appConfig';
 
 
@@ -149,9 +150,23 @@ export default function RideTrackingScreen() {
       if (data.status === 'cancelled' || data.status === 'canceled') {
         hasNavigatedToProgress.current = true;
         if (data.cancelledBy === 'driver') {
+          // The server takes a no-show fee from the card hold a moment after
+          // this update, so cancellationFee may not be here yet: the ride's
+          // own terms say the same thing, by the same rule the server uses.
+          const noShow = data.cancelReason === 'passenger_no_show';
+          const fee = !noShow
+            ? 0
+            : Number(data.cancellationFee) ||
+              (data.paymentIntentId
+                ? noShowFeeFor({ ...data, status: 'arrived' }, data.cancelledAt?.toMillis?.() || Date.now())
+                : 0);
           Alert.alert(
-            'Ride cancelled',
-            'Your driver cancelled this ride. You have not been charged.'
+            noShow ? 'Ride ended: no-show' : 'Ride cancelled',
+            !noShow
+              ? 'Your driver cancelled this ride. You have not been charged.'
+              : fee > 0
+              ? `Your driver waited at the pickup and reported a no-show. A no-show fee of ${money(fee, data.currency)} has been charged to your card.`
+              : 'Your driver waited at the pickup and reported a no-show. You have not been charged.'
           );
         }
         navigation.popToTop();
@@ -304,6 +319,12 @@ export default function RideTrackingScreen() {
             <Ionicons name="location" size={30} color={COLORS.midnight} />
           </Marker>
         ) : null}
+
+        {stopsOf(rideData).map((s, i) => (
+          <Marker key={`stop-${i}`} coordinate={{ latitude: s.latitude, longitude: s.longitude }} anchor={{ x: 0.5, y: 0.5 }}>
+            <StopPin number={i + 1} />
+          </Marker>
+        ))}
 
         {driverLocation ? (
           <CarMarker
@@ -458,6 +479,7 @@ export default function RideTrackingScreen() {
 
         <View style={styles.journey}>
           <RouteLine compact pickup={pickupLocation.address} dropoff={dropoffLocation.address} />
+          <StopRows ride={rideData} />
         </View>
 
         {/* The trip screen opens by itself when the driver starts the ride. */}

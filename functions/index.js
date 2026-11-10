@@ -5,11 +5,6 @@ const admin = require("firebase-admin");
 const {FieldValue: FV} = require("firebase-admin/firestore");
 // Helpers fleet.js hands back for use here (priceAppRide).
 const fleetShared = {};
-const express = require("express");
-const app = express();
-
-// IMPORTANT for Stripe webhooks
-app.use(express.raw({type: "application/json"}));
 
 require("dotenv").config();
 
@@ -58,8 +53,12 @@ const stripe = new Proxy({}, {
   get: (target, prop) => getStripe()[prop],
 });
 
+// Money problems an admin has to see (paymentAlerts.js).
+const paymentAlerts = require("./paymentAlerts")({functions, db});
+
 // Fleet subscriptions: plans, card payments, grace period and pause.
 // loadAppConfig and toMillis are function declarations further down.
+const privacy = require("./privacy")({functions, db});
 const fleetBilling = require("./fleetBilling")({
   functions, db, stripe, STRIPE_SECRETS,
   loadAppConfig: (...a) => loadAppConfig(...a),
@@ -257,7 +256,8 @@ function addOneMonth(date) {
  * @return {number} Fee.
  */
 function cancellationFee(before, after) {
-  if (after.endedEarly || after.paymentMethod === "cash") return 0;
+  if (after.paymentMethod === "cash") return 0;
+  // Trips already under way are charged by chargeTripEndedEarly, not here.
   if (!["accepted", "arrived"].includes(before.status)) return 0;
 
   const policy = after.cancellationPolicy || {};
@@ -336,6 +336,69 @@ function endedEarlyFare(ride, endPoint, minimumFare, now = Date.now(),
     fullTotal,
     percent: Math.round(share * 100),
   };
+}
+
+/**
+ * The fields that put an ended-early fare on a ride. VAT, subtotal and any
+ * promo discount shrink with the fare, so the lines still add up to it.
+ * @param {Object} fare The ride's fare before.
+ * @param {Object} early From endedEarlyFare.
+ * @return {Object} Firestore update, as "fare.x" paths.
+ */
+function earlyEndFields(fare, early) {
+  const r2 = (n) => Math.round(n * 100) / 100;
+  const ratio = early.fullTotal > 0 ? early.total / early.fullTotal : 1;
+  const fields = {
+    "fare.fullTotal": early.fullTotal,
+    "fare.total": early.total,
+    "fare.endedEarlyPercent": early.percent,
+  };
+  if (Number.isFinite(Number(fare.subtotal)) && fare.subtotal !== null) {
+    const subtotal = r2(Number(fare.subtotal) * ratio);
+    fields["fare.subtotal"] = subtotal;
+    if (fare.vat !== undefined) fields["fare.vat"] = r2(early.total - subtotal);
+  }
+  if (Number(fare.discountAmount) > 0) {
+    fields["fare.discountAmount"] = r2(Number(fare.discountAmount) * ratio);
+  }
+  return fields;
+}
+
+/**
+ * A driver ended the trip away from the drop-off: saves the fare so far,
+ * once. Both completion triggers call this (the one that charges an app
+ * card and the one that takes a web card hold), because either can run
+ * first and each must charge the reduced fare.
+ * @param {string} rideId Ride id.
+ * @param {Object} ride Ride data from the trigger.
+ * @return {Promise<Object>} The ride's fare afterwards.
+ */
+async function settleDriverEndedEarly(rideId, ride) {
+  const rideRef = db.collection("rides").doc(rideId);
+  let endPoint = null;
+  if (ride.driverId) {
+    const driverSnap = await db.collection("drivers").doc(ride.driverId).get();
+    endPoint = driverSnap.exists ? driverSnap.data().location : null;
+  }
+  const cfg = await loadAppConfig();
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(rideRef);
+    const fresh = snap.exists ? snap.data() : ride;
+    const fare = fresh.fare || {};
+    if (fresh.endedEarlyBy || fare.fullTotal !== undefined ||
+        !fresh.completedAwayFromDropoff) {
+      return fare;
+    }
+    const early = endedEarlyFare(fresh, endPoint, cfg.fares.minimumFare,
+        toMillis(fresh.completedAt) || Date.now(), fresh.completeDistanceKm);
+    const fields = earlyEndFields(fare, early);
+    tx.update(rideRef, Object.assign({endedEarlyBy: "driver"}, fields));
+    const merged = Object.assign({}, fare);
+    Object.keys(fields).forEach((k) => {
+      merged[k.slice("fare.".length)] = fields[k];
+    });
+    return merged;
+  });
 }
 
 /* ======================================
@@ -821,25 +884,8 @@ exports.chargeOnRideCompletion = functions
       if (after.completedAwayFromDropoff && !after.endedEarlyBy &&
           after.fare && after.fare.fullTotal === undefined) {
         try {
-          let endPoint = null;
-          if (after.driverId) {
-            const driverSnap = await db.collection("drivers")
-                .doc(after.driverId).get();
-            endPoint = driverSnap.exists ? driverSnap.data().location : null;
-          }
-          const cfg = await loadAppConfig();
-          const fare = endedEarlyFare(after, endPoint, cfg.fares.minimumFare,
-              toMillis(after.completedAt) || Date.now(),
-              after.completeDistanceKm);
-          await db.collection("rides").doc(rideId).update({
-            "endedEarlyBy": "driver",
-            "fare.fullTotal": fare.fullTotal,
-            "fare.total": fare.total,
-            "fare.endedEarlyPercent": fare.percent,
-          });
-          after.fare = {...after.fare, total: fare.total,
-            fullTotal: fare.fullTotal, endedEarlyPercent: fare.percent};
-          console.log("🛑 Ended away from drop-off:", rideId, fare);
+          after.fare = await settleDriverEndedEarly(rideId, after);
+          console.log("🛑 Ended away from drop-off:", rideId, after.fare.total);
         } catch (error) {
           // Charge the agreed fare rather than nothing.
           console.error("❌ Fare so far failed, full fare:", rideId, error);
@@ -869,6 +915,30 @@ exports.chargeOnRideCompletion = functions
       const paymentIntentId = after.paymentIntentId;
 
       if (!paymentIntentId) {
+        // A 100% promo: nothing was held because nothing is owed. That is
+        // not a failed payment. A driver's earnings are the fare the
+        // passenger pays, so this trip earns nothing and an admin decides
+        // whether to make it up.
+        const owedFare = Number((after.fare && after.fare.total) ||
+          after.fareEstimate || 0);
+        if (!(owedFare > 0)) {
+          const f = after.fare || {};
+          await db.collection("rides").doc(rideId).update({
+            "paymentStatus": "no_charge",
+            "fare.finalTotal": 0,
+          });
+          await paymentAlerts.raise("promo_free_trip", rideId, {
+            title: "Free trip on a 100% promo: driver not paid",
+            detail: "The passenger paid nothing, so the driver earned " +
+              "nothing for this trip. The amount shown is the fare the " +
+              "promo removed.",
+            amount: Math.round((Number(f.discountAmount) || 0) *
+              (1 + (Number(f.vatPercent) || 0) / 100) * 100) / 100,
+            currency: rideCurrency(after).toUpperCase(),
+            rideId, driverId: after.driverId || null,
+          });
+          return null;
+        }
         // No card hold was ever placed (no card on file, or authorisation
         // did not run). Say so on the ride instead of leaving it "pending"
         // for ever, so the passenger and support can see it.
@@ -903,7 +973,19 @@ exports.chargeOnRideCompletion = functions
         }
 
         if (finalAmount <= 0) {
-          console.log("❌ Invalid final amount");
+          // Nothing to take: free the hold and close the records.
+          console.log("Nothing to charge, releasing hold:", rideId);
+          await stripe.paymentIntents.cancel(paymentIntentId).catch((e) => {
+            console.error("Could not release hold:", rideId, e.message);
+          });
+          await db.collection("payments").doc(paymentIntentId).update({
+            status: "canceled",
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          await db.collection("rides").doc(rideId).update({
+            "paymentStatus": "no_charge",
+            "fare.finalTotal": 0,
+          });
           return null;
         }
 
@@ -990,6 +1072,7 @@ exports.chargeOnRideCompletion = functions
         // =========================
         await db.collection("payments").doc(paymentIntentId).update({
           status: "captured",
+          capturedAt: admin.firestore.FieldValue.serverTimestamp(),
           amount: finalAmount,
           transactionId: capturedIntent.id,
           extraChargeFailed,
@@ -1017,6 +1100,15 @@ exports.chargeOnRideCompletion = functions
         return null;
       } catch (error) {
         console.error("❌ PAYMENT FAILED:", error);
+
+        await paymentAlerts.raise("card_capture_failed", rideId, {
+          title: "Card payment failed after a trip",
+          detail: String(error && error.message || error).slice(0, 300),
+          amount: Number((after.fare && after.fare.total) || 0),
+          currency: rideCurrency(after).toUpperCase(),
+          rideId, driverId: after.driverId || null,
+          fleetId: after.fleetId || null, paymentIntentId,
+        });
 
         await db.collection("payments").doc(paymentIntentId).update({
           status: "failed",
@@ -1186,9 +1278,7 @@ exports.chargeTripEndedEarly = functions
           "endedAtLocation": endPoint && endPoint.latitude ?
             {latitude: endPoint.latitude, longitude: endPoint.longitude} :
             null,
-          "fare.fullTotal": fare.fullTotal,
-          "fare.total": fare.total,
-          "fare.endedEarlyPercent": fare.percent,
+          ...earlyEndFields(after.fare || {}, fare),
           "cancelledBy": FieldValue.delete(),
           "cancelReason": FieldValue.delete(),
           "cancelledAt": FieldValue.delete(),
@@ -1261,6 +1351,7 @@ exports.cancelRidePayment = functions
 
           await db.collection("payments").doc(paymentIntentId).update({
             status: "captured",
+            capturedAt: FV.serverTimestamp(),
             amount: feeMinor,
             type: "cancellation_fee",
             updatedAt: FV.serverTimestamp(),
@@ -1270,6 +1361,19 @@ exports.cancelRidePayment = functions
             cancellationFee: charged,
             cancellationFeeDriverShare: driverShare,
           });
+
+          // The receipt follows from this status. A no-show is told in
+          // notifyRideUpdates.
+          if (after.cancelledBy === "rider") {
+            await sendPush([after.riderId], {
+              channelId: "trip-updates",
+              data: {type: "trip", rideId},
+              title: "Cancellation fee charged",
+              body: "A cancellation fee of " +
+                emailMoney(charged, rideCurrency(after)) + " was charged, " +
+                "as shown when you cancelled.",
+            }).catch(() => null);
+          }
 
           const driverId = after.driverId;
           if (driverId && driverShare > 0) {
@@ -1334,6 +1438,15 @@ exports.cancelRidePayment = functions
               error: String(error && error.message || error),
               createdAt: FV.serverTimestamp(),
             }).catch(() => null);
+            await paymentAlerts.raise("cancellation_fee_records", rideId, {
+              title: "Cancellation fee taken, records not updated",
+              detail: "The fee was charged but the driver's share or the " +
+                "records may be missing. " +
+                String(error && error.message || error).slice(0, 200),
+              amount: fee, currency: rideCurrency(after).toUpperCase(),
+              rideId, driverId: after.driverId || null,
+              fleetId: after.fleetId || null, paymentIntentId,
+            });
             return null;
           }
           // Fall through and release the hold: better no fee than a stuck one.
@@ -1359,101 +1472,6 @@ exports.cancelRidePayment = functions
       }
     });
 
-exports.createStripeAccountLink = functions
-    .runWith({secrets: STRIPE_SECRETS}).https.onRequest(
-        async (req, res) => {
-          try {
-            res.set("Content-Type", "application/json");
-
-            // -----------------------------
-            // AUTH CHECK
-            // -----------------------------
-            const authHeader = req.headers.authorization;
-
-            if (!authHeader) {
-              return res.status(401).json({
-                error: "Missing Authorization header",
-              });
-            }
-
-            const idToken = authHeader.split("Bearer ")[1];
-
-            const decoded = await admin.auth().verifyIdToken(idToken);
-            const uid = decoded.uid;
-
-            // -----------------------------
-            // GET DRIVER DATA
-            // -----------------------------
-            const driverRef = admin.firestore().collection("drivers").doc(uid);
-            const driverSnap = await driverRef.get();
-
-            const data = driverSnap.data() || {};
-            let stripeAccountId = data.stripeAccountId || null;
-
-            // -----------------------------
-            // CREATE STRIPE ACCOUNT (FIXED FOR 400 ERROR)
-            // -----------------------------
-            if (!stripeAccountId) {
-              console.log("Creating Stripe account...");
-
-              const account = await stripe.accounts.create({
-                type: "express",
-                country: "GB", // REQUIRED for Stripe Connect
-                email: decoded.email || undefined,
-                capabilities: {
-                  transfers: {requested: true},
-                },
-              });
-
-              stripeAccountId = account.id;
-
-              await driverRef.set(
-                  {
-                    stripeAccountId,
-                  },
-                  {merge: true},
-              );
-
-              console.log("Stripe account created:", stripeAccountId);
-            }
-
-            // -----------------------------
-            // VALIDATE ACCOUNT ID
-            // -----------------------------
-            if (!stripeAccountId || typeof stripeAccountId !== "string") {
-              throw new Error("Invalid Stripe account ID");
-            }
-
-            // -----------------------------
-            // CREATE ONBOARDING LINK
-            // -----------------------------
-            const accountLink = await stripe.accountLinks.create({
-              account: stripeAccountId,
-              refresh_url: "https://takearoute-719df.web.app/stripe/refresh.html",
-              return_url: "https://takearoute-719df.web.app/stripe/success.html",
-              type: "account_onboarding",
-            });
-
-            if (!accountLink || !accountLink.url) {
-              throw new Error("Stripe did not return onboarding URL");
-            }
-
-            // -----------------------------
-            // SUCCESS RESPONSE
-            // -----------------------------
-            return res.status(200).json({
-              url: accountLink.url,
-            });
-          } catch (error) {
-            console.error("Stripe onboarding error:", error);
-
-            return res.status(500).json({
-              error: error.message || "Internal Server Error",
-            });
-          }
-        },
-    );
-
 exports.createWalletOnOnboardingComplete = functions.firestore
     .document("drivers/{driverId}")
     .onUpdate(async (change, context) => {
@@ -1478,7 +1496,7 @@ exports.createWalletOnOnboardingComplete = functions.firestore
             currency,
             walletStatus: "active",
             totalEarned: 0,
-            totalPaidOut: 0,
+            totalWithdrawn: 0,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
         } catch (error) {
@@ -1618,6 +1636,13 @@ exports.creditDriverWalletOnRideCompletion = functions.firestore
         } catch (logError) {
           console.error("❌ Failed to log failure:", logError);
         }
+        await paymentAlerts.raise("wallet_credit_failed", rideId, {
+          title: "Trip paid, but the earnings were not credited",
+          detail: String(error && error.message || error).slice(0, 300),
+          amount: driverEarning,
+          currency: rideCurrency(after).toUpperCase(),
+          rideId, driverId, fleetId,
+        });
 
         return null;
       }
@@ -1669,6 +1694,8 @@ exports.requestDriverPayout = functions
         const result = await db.runTransaction(async (transaction) => {
           const walletSnap = await transaction.get(walletRef);
           const driverSnap = await transaction.get(driverRef);
+          const secretSnap =
+              await transaction.get(privacy.privateRef(driverId));
 
           if (!walletSnap.exists) {
             throw new functions.https.HttpsError("not-found",
@@ -1681,7 +1708,8 @@ exports.requestDriverPayout = functions
           }
 
           const wallet = walletSnap.data();
-          const driver = driverSnap.data();
+          const driver = Object.assign({}, driverSnap.data(),
+              secretSnap.exists ? secretSnap.data() : {});
 
           // Check sufficient balance
           if (wallet.availableBalance < requestedAmount) {
@@ -1926,7 +1954,7 @@ exports.recordPayoutTermsAcceptance = functions.https.onCall(
       const req = context.rawRequest || {};
       const forwarded = String((req.headers &&
         req.headers["x-forwarded-for"]) || "").split(",")[0].trim();
-      await db.collection("drivers").doc(driverId).set({
+      await privacy.privateRef(driverId).set({
         payoutTermsAcceptance: {
           date: Math.floor(Date.now() / 1000),
           ip: forwarded || req.ip || null,
@@ -1956,7 +1984,7 @@ async function ensurePayoutAccount(driverId, driver) {
       "Account Agreement yet. They can do it on the Withdraw screen.");
   }
 
-  const driverRef = db.collection("drivers").doc(driverId);
+  const secretRef = privacy.privateRef(driverId);
   const bank = {
     object: "bank_account",
     country: "GB",
@@ -2005,7 +2033,7 @@ async function ensurePayoutAccount(driverId, driver) {
       metadata: {driverId},
     }, {idempotencyKey: "payout_account_" + driverId});
     accountId = account.id;
-    await driverRef.set({
+    await secretRef.set({
       payoutAccountId: accountId,
       payoutAccountFingerprint: fingerprint,
     }, {merge: true});
@@ -2016,7 +2044,7 @@ async function ensurePayoutAccount(driverId, driver) {
         external_account: bank,
         default_for_currency: true,
       });
-      await driverRef.set({payoutAccountFingerprint: fingerprint},
+      await secretRef.set({payoutAccountFingerprint: fingerprint},
           {merge: true});
       account = await stripe.accounts.retrieve(accountId);
     }
@@ -2064,7 +2092,8 @@ async function autoSettlePayout(payoutId, driverId, amount, currency, driver,
 
   let accountId;
   try {
-    accountId = await ensurePayoutAccount(driverId, driver);
+    accountId = await ensurePayoutAccount(driverId,
+        await privacy.withPrivate(driverId, driver));
   } catch (error) {
     console.error("Payout account setup failed:", payoutId, error);
     return leaveForAdmin(
@@ -2072,14 +2101,24 @@ async function autoSettlePayout(payoutId, driverId, amount, currency, driver,
   }
 
   const pence = Math.round(amount * 100);
+  // From here money can move, so the request must never look untouched.
+  // Staff cannot mark it paid or reject it while this says in_progress.
+  let transfer = null;
+  let payout = null;
   try {
-    const transfer = await stripe.transfers.create({
+    await payoutRef.update({
+      autoPayout: "in_progress",
+      autoPayoutStartedAt: admin.firestore.FieldValue.serverTimestamp(),
+      payoutAccountId: accountId,
+    });
+    transfer = await stripe.transfers.create({
       amount: pence,
       currency: "gbp",
       destination: accountId,
       description: "TakeARoute payout " + payoutId,
       metadata: {payoutId, driverId},
     }, {idempotencyKey: "payout_transfer_" + payoutId});
+    await payoutRef.update({transferId: transfer.id, stripeFundsHeld: true});
 
     const sendPayout = (method) => stripe.payouts.create({
       amount: pence,
@@ -2092,7 +2131,6 @@ async function autoSettlePayout(payoutId, driverId, amount, currency, driver,
       idempotencyKey: `payout_${method}_${payoutId}`,
     });
 
-    let payout;
     if (instant) {
       try {
         payout = await sendPayout("instant");
@@ -2123,6 +2161,8 @@ async function autoSettlePayout(payoutId, driverId, amount, currency, driver,
         transactionReference: transfer.id,
         stripePayoutId: payout.id,
         payoutAccountId: accountId,
+        transferId: transfer.id,
+        stripeFundsHeld: false,
         expectedArrival: payout.arrival_date ?
           new Date(payout.arrival_date * 1000).toISOString() : null,
         adminNotes: "Sent automatically to the driver's bank.",
@@ -2137,12 +2177,42 @@ async function autoSettlePayout(payoutId, driverId, amount, currency, driver,
         "Your withdrawal is on its way to your bank.",
       channelId: "general",
       data: {type: "payout"},
-    });
+    }).catch(() => null);
     return {status: "completed"};
   } catch (error) {
     console.error("Automatic payout failed:", payoutId, error);
-    return leaveForAdmin(
-        error.message || "The bank transfer could not be sent.", "failed");
+    const why = error.message || "The bank transfer could not be sent.";
+    if (!transfer) {
+      // A dropped connection can hide a transfer that did go through, so
+      // that stays in_progress and resolveHeldDriverPayout looks in Stripe.
+      if (["StripeConnectionError", "StripeAPIError"].includes(error.type)) {
+        await payoutRef.update({autoPayoutNote: `${why} Do not mark this ` +
+          "as paid until Stripe has been checked (Retry does that).",
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()})
+            .catch(() => null);
+        return {status: "pending_admin"};
+      }
+      return leaveForAdmin(why, "failed");
+    }
+    await payoutRef.update({
+      autoPayout: "failed",
+      stripeFundsHeld: true,
+      transferId: transfer.id,
+      stripePayoutId: payout ? payout.id : null,
+      autoPayoutNote: payout ?
+        "The bank payout was sent but could not be recorded. Do not mark " +
+          "this as paid: use Retry to record it." :
+        `The money is in the driver's Stripe account but did not reach ` +
+          `their bank (${why}). Do not mark this as paid: use Retry or ` +
+          "Reverse.",
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    }).catch((e) => console.error("Could not flag payout:", payoutId, e));
+    await paymentAlerts.raise("payout_stuck", payoutId, {
+      title: "Driver payout stuck in Stripe",
+      detail: why.slice(0, 300), amount, currency: "GBP",
+      driverId, payoutId,
+    });
+    return {status: "pending_admin"};
   }
 }
 
@@ -2188,15 +2258,25 @@ exports.stripePayoutWebhook = functions
         // The money did not reach the bank. It is back in the driver's
         // Stripe account; the request returns to the admin queue and the
         // wallet's paid-out total no longer counts it.
-        await db.runTransaction(async (transaction) => {
+        // Stripe can send this event twice: only the first one counts.
+        const undone = await db.runTransaction(async (transaction) => {
+          const fresh = await transaction.get(payoutRef);
+          if (!fresh.exists || fresh.data().status !== "completed") {
+            return false;
+          }
           transaction.update(payoutRef, {
             status: "pending_admin",
             autoPayout: "failed",
+            stripeFundsHeld: true,
+            transferId: record.transferId || record.transactionReference ||
+              null,
             autoPayoutNote: `The bank ${event.type === "payout.failed" ?
               "rejected" : "did not receive"} the payout` +
               (stripePayout.failure_message ?
                 `: ${stripePayout.failure_message}` : ".") +
-              " Check the bank details, then pay it manually.",
+              " The money is in the driver's Stripe account. Do not mark " +
+              "this as paid: use Retry once the bank details are right, " +
+              "or Reverse to take the money back.",
             completedAt: null,
             updatedAt: now,
           });
@@ -2206,6 +2286,15 @@ exports.stripePayoutWebhook = functions
                     .increment(-(record.amount || 0)),
                 updatedAt: now,
               });
+          return true;
+        });
+        if (!undone) return res.status(200).send("already handled");
+        await paymentAlerts.raise("payout_bounced", stripePayout.id, {
+          title: "Driver payout came back from the bank",
+          detail: String(stripePayout.failure_message ||
+            "The bank did not accept it.").slice(0, 300),
+          amount: record.amount || 0, currency: record.currency || "GBP",
+          driverId: record.driverId, payoutId: payoutRef.id,
         });
         await sendPush([record.driverId], {
           title: "Payout delayed",
@@ -2219,6 +2308,50 @@ exports.stripePayoutWebhook = functions
         return res.status(500).send("error");
       }
     });
+
+/**
+ * Why a payout request cannot be marked paid or rejected by hand, if so.
+ * Paying by hand while the money sits in the driver's Stripe account pays
+ * them twice; rejecting puts it in their wallet as well.
+ * @param {Object} payout Payout data.
+ * @return {?string} Message for the admin, or null when it is safe.
+ */
+function payoutHeldReason(payout) {
+  if (payout.stripeFundsHeld === true) {
+    return "This payout's money is in the driver's Stripe account. Retry it " +
+      "or Reverse it instead.";
+  }
+  if (payout.autoPayout === "in_progress") {
+    return "An automatic payout started for this request and has not " +
+      "finished. Wait a few minutes, then use Retry to check Stripe.";
+  }
+  return null;
+}
+
+// A position older than this is not where the driver is now (app closed, no
+// signal). Longer than the zone queues' limit because a phone in the
+// background can still answer a ring.
+const OFFER_STALE_MS = 15 * 60 * 1000;
+
+/**
+ * Whether a driver's membership has been suspended for not paying.
+ * @param {Object} driver Driver document.
+ * @return {boolean} Suspended.
+ */
+function membershipSuspended(driver) {
+  return Boolean(driver && driver.subscription &&
+    driver.subscription.status === "suspended");
+}
+
+/**
+ * Whether a driver's last reported position is too old to offer them a job.
+ * @param {Object} driver Driver document.
+ * @return {boolean} Stale.
+ */
+function positionStale(driver) {
+  const seen = toMillis(driver && driver.lastUpdated);
+  return seen !== null && Date.now() - seen > OFFER_STALE_MS;
+}
 
 /**
  * True when any of a driver's dated documents has passed its expiry.
@@ -2260,6 +2393,10 @@ exports.completeDriverPayout = functions.https.onCall(async (data, context) => {
         throw new functions.https.HttpsError("failed-precondition",
             "Payout not in pending status");
       }
+      if (payoutHeldReason(payout)) {
+        throw new functions.https.HttpsError("failed-precondition",
+            payoutHeldReason(payout));
+      }
 
       const walletTxQuery = await db
           .collection("driverWallets")
@@ -2283,6 +2420,137 @@ exports.completeDriverPayout = functions.https.onCall(async (data, context) => {
     throw error;
   }
 });
+
+/* An automatic payout got stuck with the money in the driver's Stripe
+   account (stripeFundsHeld) or stopped part way (autoPayout "in_progress").
+   retry sends it to their bank again, or records one that did go; reverse
+   takes the money back to TakeARoute, after which the request can be paid
+   by hand or rejected as usual. */
+exports.resolveHeldDriverPayout = functions
+    .runWith({secrets: STRIPE_SECRETS})
+    .https.onCall(async (data, context) => {
+      const {HttpsError} = functions.https;
+      const adminId = await assertAdmin(context);
+      const payoutId = String((data && data.payoutId) || "");
+      const action = data && data.action;
+      if (!payoutId || !["retry", "reverse"].includes(action)) {
+        throw new HttpsError("invalid-argument", "Choose retry or reverse.");
+      }
+      const payoutRef = db.collection("driverPayouts").doc(payoutId);
+      const snap = await payoutRef.get();
+      const record = snap.exists ? snap.data() : null;
+      if (!record) throw new HttpsError("not-found", "Payout not found");
+      if (record.status !== "pending_admin" || !payoutHeldReason(record)) {
+        throw new HttpsError("failed-precondition",
+            "No money is held in Stripe for this payout.");
+      }
+      if (record.stripeFundsHeld !== true && Date.now() -
+          (toMillis(record.autoPayoutStartedAt) || 0) < 15 * 60 * 1000) {
+        throw new HttpsError("failed-precondition",
+            "This payout is still running. Try again in a few minutes.");
+      }
+      const now = FV.serverTimestamp();
+      const driverSnap = await db.collection("drivers")
+          .doc(record.driverId).get();
+      const driver = driverSnap.exists ? driverSnap.data() : {};
+      let accountId = record.payoutAccountId || driver.payoutAccountId || null;
+
+      try {
+        let transferId = record.transferId || null;
+        if (!transferId && accountId) {
+          const list = await stripe.transfers.list(
+              {destination: accountId, limit: 100});
+          const found = list.data.find((t) =>
+            t.metadata && t.metadata.payoutId === payoutId);
+          transferId = found ? found.id : null;
+        }
+        if (!transferId) {
+          await payoutRef.update({autoPayout: "failed", stripeFundsHeld: false,
+            autoPayoutNote: "Stripe shows no money was moved for this " +
+              "request. It can be paid by hand or rejected.",
+            updatedAt: now});
+          return {result: "no_money_moved"};
+        }
+        const sent = record.stripePayoutId ?
+          await stripe.payouts.retrieve(record.stripePayoutId,
+              {stripeAccount: accountId}) : null;
+        const onItsWay = sent && !["failed", "canceled"].includes(sent.status);
+
+        if (action === "reverse") {
+          if (onItsWay) {
+            throw new HttpsError("failed-precondition",
+                "This money has already been sent to the driver's bank.");
+          }
+          const reversal = await stripe.transfers.createReversal(transferId,
+              {metadata: {payoutId}},
+              {idempotencyKey: `reverse_${payoutId}_${transferId}`});
+          await payoutRef.update({autoPayout: "reversed",
+            stripeFundsHeld: false, transferReversalId: reversal.id,
+            transferReversedAt: now, transferReversedBy: adminId,
+            autoPayoutNote: "The money was taken back from the driver's " +
+              "Stripe account. This request can now be paid by hand or " +
+              "rejected.",
+            updatedAt: now});
+          return {result: "reversed"};
+        }
+
+        accountId = await ensurePayoutAccount(record.driverId,
+            await privacy.withPrivate(record.driverId, driver));
+        const attempt = Number(record.payoutRetries || 0) + 1;
+        const payout = onItsWay ? sent : await stripe.payouts.create({
+          amount: Math.round(Number(record.amount) * 100),
+          currency: "gbp",
+          method: "standard",
+          statement_descriptor: "TAKEAROUTE PAYOUT",
+          metadata: {payoutId, driverId: record.driverId},
+        }, {
+          stripeAccount: accountId,
+          idempotencyKey: `payout_retry_${attempt}_${payoutId}`,
+        });
+        const walletTxQuery = await db
+            .collection("driverWallets").doc(record.driverId)
+            .collection("transactions")
+            .where("payoutId", "==", payoutId)
+            .limit(1)
+            .get();
+        await db.runTransaction(async (tx) => {
+          const fresh = await tx.get(payoutRef);
+          if (!fresh.exists || fresh.data().status !== "pending_admin") return;
+          settlePayout(tx, payoutRef, fresh.data(), {
+            method: "bank_transfer",
+            payoutSpeed: payout.method,
+            processedBy: adminId,
+            processedAt: now,
+            transactionReference: transferId,
+            transferId,
+            stripePayoutId: payout.id,
+            payoutAccountId: accountId,
+            stripeFundsHeld: false,
+            autoPayout: "completed",
+            payoutRetries: attempt,
+            adminNotes: "Sent again from the driver's Stripe account.",
+          }, walletTxQuery);
+        });
+        await sendPush([record.driverId], {
+          title: "Payout sent",
+          body: "Your withdrawal is on its way to your bank.",
+          channelId: "general",
+          data: {type: "payout"},
+        }).catch(() => null);
+        return {result: "sent"};
+      } catch (error) {
+        if (error instanceof HttpsError) throw error;
+        console.error("Resolve payout failed:", payoutId, error);
+        await payoutRef.update({
+          payoutRetries: FV.increment(1),
+          autoPayoutNote: `${action === "retry" ? "Retry" : "Reverse"} ` +
+            `failed: ${String(error.message).slice(0, 200)}`,
+          updatedAt: now,
+        }).catch(() => null);
+        throw new HttpsError("failed-precondition",
+            error.message || "Stripe could not do that.");
+      }
+    });
 
 exports.rejectDriverPayout = functions.https.onCall(async (data, context) => {
   const {payoutId, reason} = data;
@@ -2310,6 +2578,11 @@ exports.rejectDriverPayout = functions.https.onCall(async (data, context) => {
       if (payout.status !== "pending_admin") {
         throw new functions.https.HttpsError("failed-precondition",
             "Payout not in pending status");
+      }
+
+      if (payoutHeldReason(payout)) {
+        throw new functions.https.HttpsError("failed-precondition",
+            payoutHeldReason(payout));
       }
 
       const now = FV.serverTimestamp();
@@ -2613,7 +2886,10 @@ async function collectMembership(driverId, opts = {}) {
       confirm: true,
       off_session: true,
       metadata: {driverId, type: "membership"},
-    }, {idempotencyKey: `membership_${driverId}_${period}_${amount}`});
+      // Per card: Stripe replays a declined result for a reused key, which
+      // would make a new card fail too. The same card is still charged once.
+    }, {idempotencyKey: `membership_${driverId}_${period}_${amount}_` +
+      r.defaultPaymentMethodId});
     await driverRef.update(owed.paidFields);
     await walletRef.collection("transactions").doc().set({
       amount: 0,
@@ -2656,6 +2932,11 @@ async function rollMembershipMonth(driverRef, price) {
   });
 }
 
+// The daily job does not start at exactly the same second each day, so a
+// grace period that ends "about now" counts as over. Without this, 1 day of
+// grace could become 2.
+const GRACE_SLACK_MS = 2 * 60 * 60 * 1000;
+
 /* Daily: renew due memberships, and suspend when a grace period has run
    out. Runs whether or not the wallet has moved. */
 exports.renewDriverMemberships = functions
@@ -2684,6 +2965,7 @@ exports.renewDriverMemberships = functions
         const result = await collectMembership(doc.id);
         if (result.paid) {
           await sendPush([doc.id], {
+            data: {type: "membership"},
             title: "Membership renewed",
             body: result.method === "card" ?
               "Your wallet was short, so we charged your card." :
@@ -2700,6 +2982,7 @@ exports.renewDriverMemberships = functions
               admin.firestore.Timestamp.fromMillis(now + graceMs),
           });
           await sendPush([doc.id], {
+            data: {type: "membership"},
             title: "Membership payment due",
             body: "Add a card, or complete card rides, within " +
               `${cfg.subscription.graceDays} days to keep driving.`,
@@ -2716,9 +2999,26 @@ exports.renewDriverMemberships = functions
       for (const doc of overdue.docs) {
         const sub = doc.data().subscription || {};
         const graceUntil = toMillis(sub.graceUntil);
-        if (!graceUntil || graceUntil > now) continue;
-        await doc.ref.update({"subscription.status": "suspended"});
+        if (!graceUntil || graceUntil > now + GRACE_SLACK_MS) continue;
+        // Off the road now. A driver on a trip finishes it; the two-minute
+        // check in enforceDriverHours takes them offline after that.
+        const suspended = await db.runTransaction(async (tx) => {
+          const fresh = await tx.get(doc.ref);
+          if (!fresh.exists ||
+              (fresh.data().subscription || {}).status !== "past_due") {
+            return false;
+          }
+          tx.update(doc.ref, Object.assign(
+              {"subscription.status": "suspended"},
+              fresh.data().status === "online" ? {
+                status: "offline", shiftStartedAt: null,
+                lastShiftEndedAt: FV.serverTimestamp(),
+              } : {}));
+          return true;
+        });
+        if (!suspended) continue;
         await sendPush([doc.id], {
+          data: {type: "membership"},
           title: "Account paused",
           body: "Your membership is unpaid. Pay from the Membership " +
             "screen to go online again.",
@@ -2759,6 +3059,17 @@ exports.activateDriverMembership = functions
 
       const cfg = await loadAppConfig();
       const price = cfg.subscription.monthlyPrice;
+
+      // Suspended for not paying: what is owed stays owed, and they come
+      // back only when it is paid (collectMembership reactivates them).
+      if (current === "suspended") {
+        const owed = Number((snap.data().subscription || {}).debtAmount) ||
+          price;
+        const result = await collectMembership(uid);
+        return {paid: result.paid, method: result.method || null,
+          amount: result.amount || owed, stillSuspended: !result.paid};
+      }
+
       const next = addOneMonth(new Date());
       await driverRef.set({
         subscription: {
@@ -2849,7 +3160,11 @@ async function sendPush(uids, msg) {
         ttl: (msg.ttlSeconds || 3600) * 1000,
         notification: {channelId: msg.channelId || "general"},
       },
-      apns: {payload: {aps: {sound: msg.sound || "default"}}},
+      // Same limit as Android's ttl, so a ring for a job that has gone is
+      // not delivered late to an iPhone.
+      apns: Object.assign(msg.ttlSeconds ? {headers: {"apns-expiration":
+        String(Math.floor(Date.now() / 1000) + msg.ttlSeconds)}} : {},
+      {payload: {aps: {sound: msg.sound || "default"}}}),
     });
     reached += res.successCount;
 
@@ -2942,7 +3257,8 @@ async function offerRideToDrivers(rideId, ride) {
   online.forEach((snap) => {
     const d = snap.data();
     if (skip.has(snap.id) || d.blocked === true || d.approved !== true ||
-        hasExpiredDocument(d) ||
+        hasExpiredDocument(d) || membershipSuspended(d) ||
+        positionStale(d) ||
         d.isOnRide === true) {
       return;
     }
@@ -3167,6 +3483,15 @@ async function checkAppFare(rideId, ride) {
 async function checkNewRide(rideId, ride) {
   const rideRef = db.collection("rides").doc(rideId);
 
+  if (ride.riderId) {
+    const riderSnap = await db.collection("riders").doc(ride.riderId).get();
+    if (riderSnap.exists && riderSnap.data().blocked === true) {
+      await refuseNewRide(rideId, ride, "account_suspended",
+          "Your passenger account has been suspended. Please contact support.");
+      return false;
+    }
+  }
+
   const citySnap = await db.collection("cities")
       .where("active", "==", true).get();
   const cities = citySnap.docs.map((d) => ({id: d.id, ...d.data()}));
@@ -3320,9 +3645,12 @@ exports.notifyRideUpdates = functions.firestore
       // Back to searching because the card hold failed: the passenger and
       // driver were told by authorizePaymentOnRideAccept, and there is no
       // point offering it again until a card is added.
+      // paymentAttempts moves on every failed hold, so a second failure on
+      // the same job is caught too.
       if (after.status === "searching" &&
           after.paymentStatus === "auth_failed" &&
-          before.paymentStatus !== "auth_failed") {
+          (before.paymentStatus !== "auth_failed" ||
+            Number(before.paymentAttempts) !== Number(after.paymentAttempts))) {
         return null;
       }
 
@@ -3372,11 +3700,13 @@ exports.notifyRideUpdates = functions.firestore
           body: "Sit back. You can follow the route in the app."});
       }
       if (after.status === "completed") {
+        // Only promise a receipt to someone we can email it to.
+        const hasEmail = after.paymentMethod !== "cash" && after.riderId &&
+          await riderEmail(after).catch(() => null);
         return sendPush([after.riderId], {...trip,
           title: "Trip complete",
-          body: after.paymentMethod === "cash" ?
-            "Trip complete. Thanks for riding with TakeARoute." :
-            "Trip complete. Your receipt is on its way."});
+          body: hasEmail ? "Trip complete. Your receipt is on its way." :
+            "Trip complete. Thanks for travelling with TakeARoute."});
       }
       if (cancelled.includes(after.status)) {
         // Timed out with no driver: expireSearchingRides already told them.
@@ -3514,6 +3844,45 @@ function recentSpells(raw, now) {
       .map((s) => ({start: s.start, end: s.end}));
 }
 
+/**
+ * Takes an online driver off the road whose documents have run out or whose
+ * membership is suspended, and tells them (at most twice a day, in case
+ * they keep going back online).
+ * @param {FirebaseFirestore.DocumentReference} ref Driver.
+ * @param {number} now Current time in ms.
+ * @return {Promise<void>}
+ */
+async function takeOffRoad(ref, now) {
+  const reason = await db.runTransaction(async (tx) => {
+    const fresh = await tx.get(ref);
+    const d = fresh.exists ? fresh.data() : null;
+    if (!d || d.status !== "online") return null;
+    const expired = hasExpiredDocument(d);
+    if (!expired && !membershipSuspended(d)) return null;
+    tx.update(ref, {
+      status: "offline",
+      shiftStartedAt: null,
+      lastShiftEndedAt: FV.serverTimestamp(),
+      forcedOfflineAt: now,
+      forcedOfflineReason: expired ? "documents" : "membership",
+    });
+    if (now - (Number(d.forcedOfflineAt) || 0) < DAY_MS / 2) return null;
+    return expired ? "documents" : "membership";
+  }).catch((error) => {
+    console.error("Could not take driver offline:", ref.id, error.message);
+    return null;
+  });
+  if (!reason) return;
+  await sendPush([ref.id], {
+    title: "You've been taken offline",
+    body: reason === "documents" ?
+      "One of your documents has expired. Upload a new one to go online." :
+      "Your membership is unpaid. Pay from the Membership screen to go " +
+        "online again.",
+    channelId: "general",
+  }).catch(() => null);
+}
+
 exports.enforceDriverHours = functions
     .pubsub.schedule("every 2 minutes")
     .onRun(async () => {
@@ -3527,6 +3896,12 @@ exports.enforceDriverHours = functions
 
       for (const doc of working.docs) {
         const driver = doc.data();
+        // Went out of date while online. A driver on a trip finishes it.
+        if (driver.status === "online" && (hasExpiredDocument(driver) ||
+            membershipSuspended(driver))) {
+          await takeOffRoad(doc.ref, now);
+          continue;
+        }
         const log = recentSpells(driver.workLog, now);
         const last = log[log.length - 1];
         if (last && now - last.end <= HOURS_TICK_MS * 2) {
@@ -3739,6 +4114,7 @@ function escapeHtml(value) {
  * @return {string} One sentence.
  */
 function paidLine(ride) {
+  if (ride.paymentStatus === "no_charge") return "Nothing to pay on this trip.";
   if (ride.collectBy === "account") {
     return `Charged to the ${(ride.account && ride.account.company) ||
       "company"} account.`;
@@ -3746,6 +4122,43 @@ function paidLine(ride) {
   if (ride.collectBy === "card") return "Paid by card to the driver.";
   if (ride.paymentMethod === "cash") return "Paid in cash to the driver.";
   return `Paid by card ending ${ride.cardLast4 || "on file"}.`;
+}
+
+/**
+ * The fare lines of a receipt, so that they add up to what was charged.
+ * Base, distance and time are only shown when they really make up the fare;
+ * a minimum fare, an agreed price or a trip ended early gets one line.
+ * @param {Object} fare The ride's fare.
+ * @param {Function} add Adds a line (label, value).
+ * @param {string} currency Currency code.
+ */
+function addFareLines(fare, add, currency) {
+  const r2 = (n) => Math.round(n * 100) / 100;
+  const vat = Number(fare.vat) || 0;
+  const discount = Number(fare.discountAmount) || 0;
+  const net = r2((Number(fare.total) || 0) - vat + discount);
+  const scale = (Number(fare.rideMultiplier) || 1) *
+    (Number(fare.surgeMultiplier) || 1);
+  const base = r2(Number(fare.baseFare) * scale);
+  const distance = r2(Number(fare.distanceFare) * scale);
+  const time = r2(Number(fare.timeFare) * scale);
+  const adds = fare.endedEarlyPercent === undefined &&
+    Math.abs(base + distance + time - net) <= 0.03;
+  if (adds) {
+    add("Base fare", emailMoney(base, currency));
+    add("Distance", emailMoney(distance, currency));
+    // Any rounding goes on the last line.
+    add("Time", emailMoney(r2(net - base - distance), currency));
+  } else if (net > 0) {
+    add(fare.endedEarlyPercent !== undefined ?
+      "Fare for the part travelled" : "Trip fare",
+    emailMoney(net, currency));
+  }
+  if (discount > 0) add("Promo discount", "-" + emailMoney(discount, currency));
+  if (vat > 0) {
+    add(fare.vatPercent ? `VAT (${fare.vatPercent}%)` : "VAT",
+        emailMoney(vat, currency));
+  }
 }
 
 /**
@@ -3759,9 +4172,11 @@ function buildReceipt(ride, rideId, extra) {
   const currency = ride.currency ||
     (ride.fare && ride.fare.currency) || "GBP";
   const fare = ride.fare || {};
-  const total = Number(fare.finalTotal || fare.total || ride.fareEstimate || 0);
-  const when = ride.completedAt && ride.completedAt.toDate ?
-    ride.completedAt.toDate() : new Date();
+  const isFee = ride.paymentStatus === "cancellation_fee";
+  const total = isFee ? Number(ride.cancellationFee) || 0 :
+    Number(fare.finalTotal || fare.total || ride.fareEstimate || 0);
+  const stamp = ride.completedAt || ride.cancelledAt;
+  const when = stamp && stamp.toDate ? stamp.toDate() : new Date();
   const date = when.toLocaleDateString("en-GB",
       {weekday: "long", day: "numeric", month: "long", year: "numeric",
         timeZone: "Europe/London"});
@@ -3773,19 +4188,14 @@ function buildReceipt(ride, rideId, extra) {
     if (value === null || value === undefined) return;
     lines.push({label, value, muted: opts && opts.muted});
   };
-  add("Base fare", emailMoney(fare.baseFare, currency));
-  add("Distance", fare.distanceFare !== undefined ?
-    emailMoney(fare.distanceFare, currency) : null);
-  add("Time", fare.timeFare !== undefined ?
-    emailMoney(fare.timeFare, currency) : null);
-  if (Number(fare.discountAmount) > 0) {
-    add("Promo discount", "-" + emailMoney(fare.discountAmount, currency));
-  }
-  if (fare.vat !== undefined) {
-    add(`VAT (${fare.vatPercent || 20}%)`, emailMoney(fare.vat, currency));
-  }
-  if (Number(fare.waitingCharge) > 0) {
-    add("Waiting time", emailMoney(fare.waitingCharge, currency));
+  if (isFee) {
+    add("Cancellation fee", emailMoney(total, currency));
+  } else {
+    addFareLines(fare, add, currency);
+    // A waiting charge the card refused was not paid, so it is not listed.
+    if (Number(fare.waitingCharge) > 0 && !ride.extraChargeFailed) {
+      add("Waiting time", emailMoney(fare.waitingCharge, currency));
+    }
   }
 
   const rowsHtml = lines.map((l) => `
@@ -3973,8 +4383,8 @@ exports.sendReceiptOnPaymentCaptured = functions
     .onUpdate(async (change, context) => {
       const before = change.before.data();
       const after = change.after.data();
-      const captured = after.paymentStatus === "captured" ||
-        after.paymentStatus === "paid" || after.paymentStatus === "cash";
+      const captured = ["captured", "paid", "cash", "no_charge",
+        "cancellation_fee"].includes(after.paymentStatus);
       if (!captured || before.paymentStatus === after.paymentStatus) {
         return null;
       }
@@ -4090,7 +4500,9 @@ const TWILIO_SECRETS = ["TWILIO_SID", "TWILIO_TOKEN", "TWILIO_NUMBER"];
 const CALLABLE_RIDE_STATUSES = ["accepted", "arrived", "ongoing"];
 
 /**
- * Puts a number into international form. UK numbers default to +44.
+ * Puts a number into international form. UK-only for now, so a number with
+ * a leading 0 is always British, including 03 (0300, 0330, 0345). A
+ * Pakistani number needs its +92 or 0092.
  * @param {string} raw Number as stored.
  * @return {string|null} E.164 number, or null if it cannot be read.
  */
@@ -4099,9 +4511,6 @@ function toE164(raw) {
   let value = String(raw).replace(/[^\d+]/g, "");
   if (value.startsWith("+")) return value.length >= 8 ? value : null;
   if (value.startsWith("00")) value = "+" + value.slice(2);
-  // Pakistani mobiles are 03xx xxxxxxx; every UK mobile starts 07, so the
-  // two don't overlap. Before this, 0300... was dialled as +44 300...
-  else if (/^03\d{9}$/.test(value)) value = "+92" + value.slice(1);
   else if (value.startsWith("0")) value = "+44" + value.slice(1);
   else if (/^(44|92)/.test(value)) value = "+" + value;
   else return null;
@@ -4117,7 +4526,8 @@ function toE164(raw) {
 async function phoneFor(collection, uid) {
   if (!uid) return null;
   const snap = await db.collection(collection).doc(uid).get();
-  const data = snap.exists ? snap.data() : {};
+  let data = snap.exists ? snap.data() : {};
+  if (collection === "drivers") data = await privacy.withPrivate(uid, data);
   const stored = data.phoneNumber || data.phone;
   // A stored number we can't read falls back to the sign-in number.
   const fromStored = toE164(stored);
@@ -4493,6 +4903,8 @@ exports.detectDocumentExpiry = functions
    FLEETS AND PHONE BOOKINGS (fleet.js)
 ====================================== */
 Object.assign(exports, fleetBilling.functions);
+Object.assign(exports, paymentAlerts.functions);
+Object.assign(exports, privacy.functions);
 Object.assign(exports, require("./driverPenalty")({
   functions, db, sendPush, loadAppConfig, distanceKm,
 }).functions);
@@ -4500,5 +4912,6 @@ Object.assign(exports, require("./fleet")({
   functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
   hasExpiredDocument, toE164, toMillis, addOneMonth,
   TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor,
-  STRIPE_SECRETS, fleetBilling, shared: fleetShared, stripe,
+  STRIPE_SECRETS, fleetBilling, shared: fleetShared, stripe, privacy,
+  membershipSuspended, positionStale, settleDriverEndedEarly,
 }));

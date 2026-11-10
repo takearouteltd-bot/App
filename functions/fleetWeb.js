@@ -46,6 +46,8 @@ const OPEN_BOOKINGS = 3;
 // A card hold lasts 7 days, so card bookings are for the next 5.
 const CARD_DAYS_AHEAD = 5;
 const PAY_MINUTES = 30;
+// Flag a card hold to the office a day before it can lapse.
+const HOLD_WARN_MS = 6 * 86400000;
 const ALL_TYPES = ["RouteMini", "RoutePlus", "RouteXL", "RouteEco",
   "RouteExecutive"];
 const TYPE_INFO = {
@@ -64,6 +66,7 @@ module.exports = (deps) => {
     STRIPE_SECRETS} = deps;
   // Numbers the fleet has blocked can't book online either (fleetPhone.js).
   const isBlocked = deps.isBlocked || (async () => false);
+  const alerts = require("./paymentAlerts")({functions, db});
   const BLOCKED_TEXT = "Sorry, we can't take online bookings from this " +
     "number. Please call us.";
   const {HttpsError} = functions.https;
@@ -134,6 +137,18 @@ module.exports = (deps) => {
   }
 
   /**
+   * Stops new online bookings for a paused or closed fleet.
+   * @param {Object} fleet Fleet data.
+   */
+  function refuseIfClosed(fleet) {
+    if (fleet.status === "suspended" || fleet.status === "paused" ||
+        fleet.closedAt) {
+      throw new HttpsError("failed-precondition",
+          "Online booking is closed at the moment. Please call us.");
+    }
+  }
+
+  /**
    * A signed-in customer's session, checked against the page's fleet.
    * @param {*} t Session token.
    * @param {boolean=} lookup Counts as an address or fare lookup.
@@ -155,6 +170,9 @@ module.exports = (deps) => {
       throw new HttpsError("not-found",
           "This booking page is not available.");
     }
+    // Searching and quoting stop with a pause. A customer can still see
+    // their bookings and finish paying for one already made.
+    if (lookup) refuseIfClosed(fleet);
     if (lookup) {
       const n = await db.runTransaction(async (tx) => {
         const s = (await tx.get(ref)).data() || {};
@@ -451,6 +469,7 @@ module.exports = (deps) => {
         const d = data || {};
         const {session, fleetId, fleet, settings} =
           await sessionFor(d.token);
+        refuseIfClosed(fleet);
         if (await isBlocked(fleetId, fleet, session.phone)) {
           throw new HttpsError("permission-denied", BLOCKED_TEXT);
         }
@@ -542,6 +561,34 @@ module.exports = (deps) => {
       });
 
   /**
+   * A booking was cancelled while the customer was still on Stripe's page.
+   * Closes that page so they cannot pay, and if they already have, releases
+   * the hold: nothing else ever would, as the job never reached
+   * "authorised". Safe to call more than once.
+   * @param {string} rideId Ride.
+   * @param {Object} ride Ride data (cancelled).
+   * @return {Promise<void>}
+   */
+  async function releaseLateHold(rideId, ride) {
+    const wp = ride.webPayment || {};
+    if (!wp.sessionId || wp.status !== "pending") return;
+    await stripe.checkout.sessions.expire(wp.sessionId).catch(() => null);
+    const cs = await stripe.checkout.sessions.retrieve(wp.sessionId,
+        {expand: ["payment_intent"]});
+    const pi = cs.payment_intent;
+    const held = Boolean(pi && pi.status === "requires_capture");
+    if (!held && cs.status === "open") return; // The sweep tries again.
+    if (held) await stripe.paymentIntents.cancel(pi.id);
+    await db.collection("rides").doc(rideId).update(Object.assign(
+        {"webPayment.status": held ? "released" : "failed"},
+        held ? {"webPayment.intentId": pi.id} : {}));
+    if (held) {
+      await textCustomer(ride, "your booking was cancelled before your " +
+        "payment went through, so the hold on your card has been released.");
+    }
+  }
+
+  /**
    * Once the card is held, sends the job out and texts the customer. Safe
    * to call more than once.
    * @param {string} rideId Ride.
@@ -551,6 +598,10 @@ module.exports = (deps) => {
     const ref = db.collection("rides").doc(rideId);
     const ride = (await ref.get()).data();
     if (!ride || ride.status !== "payment_pending") {
+      if (ride && ride.status === "cancelled") {
+        await releaseLateHold(rideId, ride).catch((error) =>
+          console.error("Late hold release", rideId, error.message));
+      }
       return ride ? ride.status : "missing";
     }
     const sessionId = ride.webPayment && ride.webPayment.sessionId;
@@ -616,6 +667,64 @@ module.exports = (deps) => {
           await settlePayment(doc.id).catch((error) =>
             console.error("Web booking sweep", doc.id, error.message));
         }
+        // Cancelled while the customer was paying, if the update trigger
+        // could not release it.
+        const unsettled = await db.collection("rides")
+            .where("webPayment.status", "==", "pending").limit(100).get();
+        for (const doc of unsettled.docs) {
+          if (doc.data().status !== "cancelled") continue;
+          await releaseLateHold(doc.id, doc.data()).catch((error) =>
+            console.error("Late hold release", doc.id, error.message));
+        }
+        // A hold lasts about 7 days: tell the office before it lapses.
+        const held = await db.collection("rides")
+            .where("webPayment.status", "==", "authorised").limit(300).get();
+        for (const doc of held.docs) {
+          const r = doc.data();
+          const created = msOf(r.timestamps && r.timestamps.createdAt);
+          if (r.webPayment.holdExpiring === true || !created ||
+              Date.now() - created < HOLD_WARN_MS) {
+            continue;
+          }
+          await doc.ref.update({"webPayment.holdExpiring": true})
+              .catch(() => null);
+        }
+        return null;
+      });
+
+  /**
+   * Deletes everything a query finds, in batches.
+   * @param {Object} query Firestore query.
+   * @return {Promise<number>} How many were deleted.
+   */
+  async function purge(query) {
+    let deleted = 0;
+    for (;;) {
+      const snap = await query.limit(400).get();
+      if (snap.empty) return deleted;
+      const batch = db.batch();
+      snap.docs.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+      deleted += snap.size;
+      if (snap.size < 400) return deleted;
+    }
+  }
+
+  /* Daily: sign-in sessions, codes, limits and booking links that have
+     expired. Codes are kept an hour past expiry for the hourly send limit;
+     counters two days, as the longest counts per day. */
+  out.webCleanup = functions.pubsub.schedule("every day 03:30")
+      .timeZone("Europe/London").onRun(async () => {
+        const now = Date.now();
+        const counts = await Promise.all([
+          purge(db.collection("webSessions").where("expiresAt", "<", now)),
+          purge(db.collection("webCodes")
+              .where("expiresAt", "<", now - 3600 * 1000)),
+          purge(db.collection("webLimits")
+              .where("at", "<", now - 2 * 86400000)),
+          purge(db.collection("bookingLinks").where("expiresAt", "<", now)),
+        ]);
+        console.log("Web clean-up:", counts.join(", "));
         return null;
       });
 
@@ -740,6 +849,10 @@ module.exports = (deps) => {
               `${wp.status === "authorised" ? " The hold on your card " +
                 "has been released." : ""}`);
           }
+          if (before.status === "payment_pending") {
+            await releaseLateHold(rideId, after).catch((error) =>
+              console.error("Late hold release", rideId, error.message));
+          }
         }
         return null;
       });
@@ -752,8 +865,19 @@ module.exports = (deps) => {
    */
   async function takePayment(rideId, ride) {
     const wp = ride.webPayment;
-    const fare = Number((ride.fare && (ride.fare.finalTotal ||
-      ride.fare.total)) || 0);
+    // A trip the driver ended early is charged the fare so far. The update
+    // that sets it may not have run yet, so make sure of it here.
+    let rideFare = ride.fare;
+    if (deps.settleEndedEarly && ride.completedAwayFromDropoff &&
+        !ride.endedEarlyBy && rideFare && rideFare.fullTotal === undefined) {
+      try {
+        rideFare = await deps.settleEndedEarly(rideId, ride);
+      } catch (error) {
+        console.error("Web fare so far, full fare:", rideId, error.message);
+      }
+    }
+    const fare = Number((rideFare && (rideFare.finalTotal ||
+      rideFare.total)) || 0);
     const held = Math.round(Number(wp.amount || 0) * 100);
     const pence = Math.min(Math.round(fare * 100), held);
     let pi;
@@ -767,6 +891,13 @@ module.exports = (deps) => {
       await db.collection("rides").doc(rideId).update({
         "webPayment.status": "failed",
         "webPayment.error": String(error.message).slice(0, 200)});
+      await alerts.raise("web_capture_failed", rideId, {
+        title: "Online booking: card could not be charged",
+        detail: String(error.message).slice(0, 300),
+        amount: fare, currency: String(ride.currency || "GBP").toUpperCase(),
+        rideId, driverId: ride.driverId || null, fleetId: ride.fleetId,
+        paymentIntentId: wp.intentId,
+      });
       return;
     }
     const amount = (pi.amount_received || pence) / 100;

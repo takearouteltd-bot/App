@@ -30,13 +30,14 @@ import {
   arrayUnion,
 } from 'firebase/firestore';
 import { useDriverPosition, requestDriverPosition } from '../../../utils/driverLocation';
-import { db } from '../../../config/firebase';
+import { db, functions } from '../../../config/firebase';
+import { httpsCallable } from 'firebase/functions';
 import { getAuth } from 'firebase/auth';
 import { useAppConfig, currencySymbol } from '../../../utils/appConfig';
 import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocuments';
 import { canServe, classLabel } from '../../../constants/vehicleClasses';
 import { servesCity } from '../../../utils/cities';
-import { biddingEnabled, counterSteps, offerSeconds, sendCounterOffer } from '../../../utils/bidding';
+import { biddingEnabled, counterSteps, offerSeconds, sendCounterOffer, withdrawCounterOffer } from '../../../utils/bidding';
 import { clearJobAlerts, ringForNewJob, stopJobRing } from '../../../utils/notifications';
 import PaymentTypeBanner from '../../../components/PaymentTypeBanner';
 import { formatHours, formatRestEnd, restEndsAt, workedInLastDay, cancelBlockEndsAt } from '../../../utils/driverHours';
@@ -56,6 +57,9 @@ const { width } = Dimensions.get('window');
 const MISSED_SNOOZE_MS = 60000;
 // The price on the table for a job (the passenger's offer when bidding).
 const fareOf = (ride) => Number(ride?.fareEstimate) || 0;
+// A fleet's own answer time for zone-queue jobs is not on the ride or readable
+// by drivers, so the countdown uses the default (functions/fleet.js).
+const DEFAULT_QUEUE_OFFER_SECONDS = 45;
 
 // "14:30" today, or "Tue 4 Nov, 14:30" for a booking on another day.
 /* 1st, 2nd, 3rd, 4th… 11th, 12th, 13th, 21st. */
@@ -73,12 +77,12 @@ function formatPickupTime(ts) {
   return `${d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}, ${time}`;
 }
 
-// "Online 2h 10m of 12h today": time online in the last 24 hours, across
+// "Online 2h 10m of 12h, last 24h": time online in the last 24 hours, across
 // every time they went on and off, against the dashboard's limit.
 function hoursLabel(hoursDoc, maxHours, now) {
   if (!hoursDoc) return null;
   const online = formatHours(workedInLastDay(hoursDoc, now));
-  return maxHours > 0 ? `Online ${online} of ${maxHours}h today` : `Online ${online} today`;
+  return maxHours > 0 ? `Online ${online} of ${maxHours}h, last 24h` : `Online ${online}, last 24h`;
 }
 
 export default function DriverHomeScreen() {
@@ -125,6 +129,8 @@ export default function DriverHomeScreen() {
   const [vehicleType, setVehicleType] = useState(null);
   const [membershipStatus, setMembershipStatus] = useState(null);
   const [firstMonthOwed, setFirstMonthOwed] = useState(false);
+  // The penalty end this phone has already explained, so it is said once.
+  const penaltyExplained = useRef(null);
   const [workingCityId, setWorkingCityId] = useState(null);
   const [femaleVerified, setFemaleVerified] = useState(false);
   // The taxi firm this driver works for, if any (functions/fleet.js).
@@ -257,7 +263,16 @@ export default function DriverHomeScreen() {
       if (wasOnlineRef.current === true && data.status === 'offline' && resting) {
         Alert.alert(
           'Time for a rest',
-          `You've reached your ${maxShiftHoursRef.current} hours online for today, so you've been taken offline for your safety. You can go online again at ${formatRestEnd(resting)}.`
+          `You've reached your limit of ${maxShiftHoursRef.current} hours online in 24 hours, so you've been taken offline for your safety. You can go online again at ${formatRestEnd(resting)}.`
+        );
+      }
+      // Taken offline by the server as a time penalty for cancelling a job.
+      const blockedUntil = cancelBlockEndsAt(data);
+      if (data.status === 'offline' && blockedUntil && penaltyExplained.current !== blockedUntil) {
+        penaltyExplained.current = blockedUntil;
+        Alert.alert(
+          'You are offline for now',
+          `You cancelled a job you had accepted, so you can't go online or take jobs until ${formatRestEnd(blockedUntil)}.`
         );
       }
       wasOnlineRef.current = data.status === 'online' || data.status === 'on_ride';
@@ -328,7 +343,7 @@ export default function DriverHomeScreen() {
     if (newStatus === 'online' && restUntil) {
       Alert.alert(
         'You’re resting',
-        `You’ve reached your hours online for today. For your safety you can go online again at ${formatRestEnd(restUntil)}.`
+        `You’ve reached your limit of hours online in 24 hours. For your safety you can go online again at ${formatRestEnd(restUntil)}.`
       );
       return;
     }
@@ -463,11 +478,9 @@ export default function DriverHomeScreen() {
       setFleetRides([]);
       return undefined;
     }
-    const q = query(
-      collection(db, 'rides'),
-      where('status', '==', 'dispatching'),
-      where('fleetId', '==', fleetId)
-    );
+    // From fleetJobOffers, the ride without the customer's phone number
+    // (functions/privacy.js). The number comes on the ride once they take it.
+    const q = query(collection(db, 'fleetJobOffers'), where('fleetId', '==', fleetId));
     return onSnapshot(
       q,
       (snapshot) => setFleetRides(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))),
@@ -619,18 +632,6 @@ export default function DriverHomeScreen() {
   const advanceRef = useRef(advanceQueue);
   advanceRef.current = advanceQueue;
 
-  // A fleet job offered to this driver from the zone queue that runs out
-  // unanswered is passed on at once, so the next driver in line gets it
-  // without waiting for the server's own timeout.
-  const passQueueOffer = useCallback((rideId) => {
-    const ride = rideRequests.find((r) => r.id === rideId);
-    if (!ride || ride.source !== 'phone' || ride.dispatch?.mode !== 'queue') return;
-    if (ride.dispatch?.driverId !== driverId) return;
-    updateDoc(doc(db, 'rides', rideId), { declinedBy: arrayUnion(driverId) }).catch(() => {});
-  }, [rideRequests, driverId]);
-  const passQueueOfferRef = useRef(passQueueOffer);
-  passQueueOfferRef.current = passQueueOffer;
-
   useEffect(() => {
     if (isOnline) {
       const pulse = Animated.loop(
@@ -651,9 +652,21 @@ export default function DriverHomeScreen() {
   useEffect(() => {
     if (!currentRideId) return undefined;
 
+    // A zone-queue job sent to this driver is timed by the server, which moves
+    // it on after the fleet's own answer time (runFleetQueues). The phone used
+    // to pass it on at its shorter countdown, capping that time.
+    const ride = rideRequests.find((r) => r.id === currentRideId);
+    const queueJob = !waitingOnCounter && ride?.source === 'phone' &&
+      ride.dispatch?.mode === 'queue' && ride.dispatch?.driverId === driverId;
+    const offeredAt = ride?.dispatch?.offeredAt?.toMillis?.();
+    const queueSeconds = Math.max(1, Math.min(DEFAULT_QUEUE_OFFER_SECONDS,
+      offeredAt ? Math.ceil((offeredAt + DEFAULT_QUEUE_OFFER_SECONDS * 1000 - Date.now()) / 1000) : DEFAULT_QUEUE_OFFER_SECONDS));
+
     setTimer(
       waitingOnCounter
         ? offerSeconds(appConfig)
+        : queueJob
+        ? queueSeconds
         : Math.max(5, Math.round(dispatchConfig.requestTimeoutSeconds || 15))
     );
 
@@ -661,6 +674,8 @@ export default function DriverHomeScreen() {
       setTimer((prev) => {
         if (prev <= 1) {
           clearInterval(interval);
+          // Left on the card: the server takes it away when its time is up.
+          if (queueJob) return 0;
           // The counter-offer has expired: forget it, so the chips come back
           // if this job is shown again, instead of "Waiting for the
           // passenger" for ever.
@@ -671,7 +686,6 @@ export default function DriverHomeScreen() {
               return next;
             });
           }
-          passQueueOfferRef.current(currentRideId);
           advanceRef.current(MISSED_SNOOZE_MS);
           return 0;
         }
@@ -740,8 +754,17 @@ export default function DriverHomeScreen() {
   }, [driverId, navigation, isAccepting]);
 
   /* Decline: off this driver's list for the rest of the shift. A fleet's
-     phone booking also records it, so the office sees the answer at once. */
+     phone booking also records it, so the office sees the answer at once. A
+     counter-offer already sent is taken back, so the passenger can't pick it. */
   const declineCurrent = (ride) => {
+    if (ride?.id && sentOffers[ride.id] && driverId) {
+      withdrawCounterOffer(ride.id, driverId).catch(() => {});
+      setSentOffers((m) => {
+        const next = { ...m };
+        delete next[ride.id];
+        return next;
+      });
+    }
     if (ride?.source === 'phone' && driverId) {
       updateDoc(doc(db, 'rides', ride.id), { declinedBy: arrayUnion(driverId) }).catch(() => {});
     }
@@ -772,15 +795,20 @@ export default function DriverHomeScreen() {
       // match"), so accepting kept failing for a driver on the move.
       const me = (await getDoc(driverRef)).data() || {};
       if (me.isOnRide && me.currentRideId && me.currentRideId !== ride.id) {
-        const other = await getDoc(doc(db, 'rides', me.currentRideId));
-        const o = other.exists() ? other.data() : null;
+        // A ride that has gone back to the office can no longer be read: not ours.
+        const other = await getDoc(doc(db, 'rides', me.currentRideId)).catch(() => null);
+        const o = other?.exists() ? other.data() : null;
         if (o && o.driverId === driverId && ['accepted', 'arrived', 'ongoing'].includes(o.status)) {
           throw new Error('You are already on a job. Finish it before taking another.');
         }
       }
 
       await runTransaction(db, async (transaction) => {
-        const rideDoc = await transaction.get(rideRef);
+        // A phone job is read from its offer (no customer number until it is
+        // taken); firestore.rules checks the real ride when it is updated.
+        const rideDoc = await transaction.get(
+          ride.source === 'phone' ? doc(db, 'fleetJobOffers', ride.id) : rideRef
+        );
         if (!rideDoc.exists()) throw new Error('This job no longer exists.');
         // Fleet phone bookings wait in "dispatching", app jobs in "searching".
         const phoneJob = rideDoc.data().source === 'phone';
@@ -826,7 +854,14 @@ export default function DriverHomeScreen() {
     } catch (error) {
       console.log(error);
       takenOver.current = false;
-      Alert.alert('Job not taken', error?.message || 'This job is no longer available.');
+      // A refusal from the database rules: the job has gone, or something on
+      // the account is stopping new jobs.
+      Alert.alert(
+        'Job not taken',
+        error?.code === 'permission-denied' || /insufficient permissions/i.test(error?.message || '')
+          ? 'You can’t take this job right now. It may have gone to another driver, or you may be on a rest or penalty break.'
+          : error?.message || 'This job is no longer available.'
+      );
       advanceQueue();
     } finally {
       setIsAccepting(false);
@@ -1003,6 +1038,23 @@ export default function DriverHomeScreen() {
           </TouchableOpacity>
         ) : null}
 
+        {rejection ? (
+          <View style={styles.docAlert}>
+            <Banner
+              tone="danger"
+              title="Application not approved"
+              body={`${rejection} Email support@takearoute.ltd if you need help.`}
+              action={
+                <Button
+                  size="small"
+                  title="Correct and resubmit"
+                  onPress={() => httpsCallable(functions, 'resubmitDriverApplication')().catch(() => Alert.alert('Could not reopen your application', 'Please try again, or email support@takearoute.ltd.'))}
+                />
+              }
+            />
+          </View>
+        ) : null}
+
         {alert ? (
           <TouchableOpacity
             activeOpacity={0.85}
@@ -1016,7 +1068,13 @@ export default function DriverHomeScreen() {
               title={`${alert.label}: ${describeExpiry(alert).toLowerCase()}${
                 documentAlerts.length > 1 ? ` and ${documentAlerts.length - 1} more` : ''
               }`}
-              body="Tap to see your documents"
+              body={
+                alert.status === 'expired'
+                  ? isOnline
+                    ? 'Job alerts have stopped, and once you go offline you can’t come back online until you replace it. Tap to upload a new one.'
+                    : 'Tap to upload a new one so you can go online.'
+                  : 'Upload a new one before it expires to keep getting jobs. Tap to see your documents.'
+              }
             />
           </TouchableOpacity>
         ) : null}
@@ -1066,7 +1124,7 @@ export default function DriverHomeScreen() {
           >
             <View style={{ flex: 1 }}>
               <View style={styles.earningsHead}>
-                <Text style={styles.earningsLabel}>Earned today</Text>
+                <Text style={styles.earningsLabel}>Fares today</Text>
                 <TouchableOpacity
                   onPress={toggleHideEarnings}
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
@@ -1177,8 +1235,8 @@ export default function DriverHomeScreen() {
                 isAccepting
                   ? 'Accepting…'
                   : currentRide.bidding
-                  ? `Accept ${currencySymbol()}${Number(currentRide.fareEstimate || 0).toFixed(2)} · ${timer}s`
-                  : `Accept · ${timer}s`
+                  ? `Accept ${currencySymbol()}${Number(currentRide.fareEstimate || 0).toFixed(2)}${timer > 0 ? ` · ${timer}s` : ''}`
+                  : timer > 0 ? `Accept · ${timer}s` : 'Accept'
               }
               onPress={() => handleAcceptRide(currentRide)}
               disabled={isAccepting}

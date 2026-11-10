@@ -156,6 +156,13 @@ rec = await waitRecord(job);
 assert.equal(rec.penalty.applied, false); assert.equal(rec.penalty.reason, 'outside_radius');
 assert.ok(rec.distanceKm > 15); assert.equal(await walletOf(), 15);
 
+step('how the job was booked is kept on the record');
+job = await seedJob({ source: 'phone', bookedBy: { via: 'bot' } });
+await cancelJob(job.id, 'dispatching');
+rec = await waitRecord(job);
+assert.equal(rec.via, 'bot');
+await seedDriver(FAR);
+
 step('radius 0: every cancel is penalised, however far away');
 await setCancellation({ driverPenaltyMode: 1, driverPenaltyAmount: 2.5, driverPenaltyRadiusKm: 0 });
 job = await seedJob();

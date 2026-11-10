@@ -12,7 +12,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import { Alert } from '../../../components/ui/alert';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { watchMyDriverRecord } from '../../../utils/driverPrivate';
 import { auth, db } from '../../../config/firebase';
 import { selectUploadAsset } from '../../../helpers/uploadPicker';
 import { DRIVER_DOCUMENTS, expiryStatus, describeExpiry, expiryAlertsFor } from '../../../constants/driverDocuments';
@@ -38,11 +38,11 @@ export default function DriverDocumentsScreen({ navigation }) {
   const [asset, setAsset] = useState(null);
   const [expiryText, setExpiryText] = useState('');
   const [sending, setSending] = useState(false);
-  const { pendingFor } = useChangeRequests(driverId);
+  const { items, pendingFor } = useChangeRequests(driverId);
 
   useEffect(() => {
     if (!driverId) return undefined;
-    return onSnapshot(doc(db, 'drivers', driverId), (snap) => setDriver(snap.exists() ? snap.data() : {}));
+    return watchMyDriverRecord(driverId, (record) => setDriver(record || {}));
   }, [driverId]);
 
   const pickFile = async () => {
@@ -153,6 +153,9 @@ export default function DriverDocumentsScreen({ navigation }) {
             {DRIVER_DOCUMENTS.map((item) => {
               const e = item.expiryKey ? expiryStatus(driver.documentExpiry?.[item.expiryKey]) : null;
               const pending = pendingFor(item.urlField);
+              // Newest first, so this is the last request for this document.
+              const latest = items.find((r) => r.field === item.urlField);
+              const refused = latest?.status === 'rejected' ? latest : null;
               const url = driver[item.urlField] || (item.urlField.startsWith('driverLicense') ? driver.driverLicenseUrl : null);
               const isActive = active === item.id;
               return (
@@ -167,6 +170,12 @@ export default function DriverDocumentsScreen({ navigation }) {
                     </View>
                     {pending ? <StatusPill status="pending" label="In review" /> : e ? <StatusPill status={e.status} /> : null}
                   </View>
+
+                  {refused ? (
+                    <Text style={[TYPE.small, { color: COLORS.red, marginTop: SPACE[2] }]}>
+                      Your last upload was not accepted{refused.adminNote ? `: ${refused.adminNote}` : '.'} Please upload a new one.
+                    </Text>
+                  ) : null}
 
                   {isActive ? (
                     <View style={{ marginTop: SPACE[4] }}>

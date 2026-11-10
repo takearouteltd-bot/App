@@ -19,6 +19,10 @@ import {
   collection,
   addDoc,
   serverTimestamp,
+  doc,
+  getDoc,
+  setDoc,
+  arrayUnion,
 } from 'firebase/firestore';
 import {
   COLORS, TYPE, SPACE, RADIUS, SHADOW,
@@ -72,8 +76,8 @@ const DRIVER_CATEGORIES = [
   {
     id: 'safety',
     label: 'Safety',
-    icon: 'shield-alert',
-    iconSet: 'MaterialIcons',
+    icon: 'shield-outline',
+    iconSet: 'Ionicons',
     danger: true,
     subCategories: [
       { id: 'emergency', label: '🚨 EMERGENCY', severity: 'critical' },
@@ -101,6 +105,9 @@ const DRIVER_ISSUE = {
   ],
 };
 
+// Driver-only items in the shared categories; passengers do not earn or tip.
+const NOT_FOR_PASSENGERS = ['missing_earnings', 'tip_issue'];
+
 // Lost & Found sits inside support tickets so replies come back to My Reports.
 const LOST_FOUND = {
   id: 'lost_found',
@@ -118,7 +125,15 @@ export default function ReportIssueScreen() {
   const route = useRoute();
   const { trip, reporterType = 'driver' } = route.params || {};
   const CATEGORIES = reporterType === 'rider'
-    ? [DRIVER_ISSUE, ...DRIVER_CATEGORIES.slice(1), LOST_FOUND]
+    ? [
+        // Blocking needs a driver to block, so only offered from a trip.
+        { ...DRIVER_ISSUE, subCategories: DRIVER_ISSUE.subCategories.filter((s) => s.id !== 'dont_match_again' || trip?.driverId) },
+        ...DRIVER_CATEGORIES.slice(1).map((c) => ({
+          ...c,
+          subCategories: c.subCategories.filter((s) => !NOT_FOR_PASSENGERS.includes(s.id)),
+        })),
+        LOST_FOUND,
+      ]
     : [...DRIVER_CATEGORIES, LOST_FOUND];
 
   const [selectedCategory, setSelectedCategory] = useState(null);
@@ -132,6 +147,7 @@ export default function ReportIssueScreen() {
   const user = auth.currentUser;
 
   const isEmergency = selectedSubCategory?.severity === 'critical';
+  const isDontMatch = reporterType === 'rider' && selectedSubCategory?.id === 'dont_match_again';
 
   // Only the two severities that need attention get a colour; the rest are grey.
   const severityTone = (severity) => {
@@ -148,7 +164,7 @@ export default function ReportIssueScreen() {
       return;
     }
 
-    if (!description.trim()) {
+    if (!description.trim() && !isDontMatch) {
       Alert.alert('Missing Description', 'Please describe the issue.');
       return;
     }
@@ -156,6 +172,33 @@ export default function ReportIssueScreen() {
     setSubmitting(true);
 
     try {
+      // A real block, on the same list the fare screen sends with bookings
+      // and Trip Details and Profile > Safety manage. It used to only file a
+      // report, so the passenger could be matched with the driver again.
+      if (isDontMatch && user?.uid && trip?.driverId) {
+        let driver = {};
+        try {
+          const snap = await getDoc(doc(db, 'drivers', trip.driverId));
+          if (snap.exists()) driver = snap.data();
+        } catch (e) {
+          // The name is only a label for the undo list.
+        }
+        await setDoc(
+          doc(db, 'riders', user.uid),
+          {
+            blockedDrivers: arrayUnion(trip.driverId),
+            blockedDriverInfo: {
+              [trip.driverId]: {
+                name: driver.name || driver.fullName || 'Driver',
+                registration: driver.registrationNumber || '',
+                at: new Date().toISOString(),
+              },
+            },
+          },
+          { merge: true }
+        );
+      }
+
       const reportData = {
         reporterId: user?.uid || 'anonymous',
         reporterType: reporterType,
@@ -170,7 +213,7 @@ export default function ReportIssueScreen() {
         subCategory: selectedSubCategory.id,
         categoryLabel: selectedCategory.label,
         subCategoryLabel: selectedSubCategory.label,
-        description: description.trim(),
+        description: description.trim() || "Passenger asked not to be matched with this driver again.",
         severity: selectedSubCategory.severity ?? null,
 
         // Status
@@ -242,13 +285,15 @@ export default function ReportIssueScreen() {
           </View>
           <Text style={[TYPE.title, { textAlign: 'center' }]}>Report Submitted</Text>
           <Text style={styles.successText}>
-            Thank you for reporting this issue. Our team will review it and get back to you within 24 hours.
+            {isDontMatch
+              ? "You won't be offered this driver on future trips. You can undo this from Profile, Safety."
+              : 'Thank you for reporting this issue. Our team will review it and reply under My reports.'}
           </Text>
           {isEmergency && (
             <Card tone="danger" style={styles.emergencyNote}>
               <Ionicons name="warning" size={20} color={DANGER} />
               <Text style={styles.emergencyNoteText}>
-                This is marked as urgent. A support agent will contact you shortly.
+                This is marked as urgent for our support team. If you are in danger, call 999 now.
               </Text>
             </Card>
           )}

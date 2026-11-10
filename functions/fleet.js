@@ -12,13 +12,15 @@
      TakeARoute admin can change it afterwards (setFleetDriverType):
        "company"  drives the fleet's car, rented or on commission. Card
                   earnings go to the fleet's wallet (fleetWallets/{fleetId}),
-                  not their own, and the fleet pays a monthly membership per
-                  company driver (billFleets). The fleet can let them go.
-                  Members from before the two kinds existed are "company".
+                  not their own. The fleet can let them go. Members from
+                  before the two kinds existed are "company".
        "self"     self-employed, own car. Takes the fleet's jobs but keeps
-                  their own wallet and pays their own membership. The fleet
-                  can suspend them but not remove them; they leave
-                  themselves (leaveFleet) or an admin takes them out.
+                  their own wallet. The fleet can suspend them but not
+                  remove them; they leave themselves (leaveFleet) or an
+                  admin takes them out.
+     Who pays the membership goes by the fleet's plan, not the kind of
+     driver (fleetCovers): on a flat monthly plan the fleet pays for all its
+     drivers; on a per-driver plan each driver pays their own.
      Admins pay fleets by bank and record it (recordFleetPayout).
    - Fleet operators take phone bookings on the fleet dashboard
      (quoteFleetBooking, createFleetBooking). A phone job has no passenger
@@ -108,6 +110,8 @@ const DEFAULT_QUEUE_OFFER_SECONDS = 45;
 // An unanswered whole-fleet offer rings again every 2 minutes, 3 times.
 const RE_RING_MS = 2 * 60 * 1000;
 const MAX_RE_RINGS = 3;
+// A job nobody has taken after this long is flagged to the office.
+const JOB_UNANSWERED_MS = 15 * 60 * 1000;
 /* A driver whose phone has not reported a position for this long is left
    out of the queues (app closed, no signal). */
 const QUEUE_STALE_MS = 5 * 60 * 1000;
@@ -121,7 +125,8 @@ module.exports = (deps) => {
   const {functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
     hasExpiredDocument, toE164, toMillis, addOneMonth,
     TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor, STRIPE_SECRETS,
-    fleetBilling} = deps;
+    fleetBilling, privacy, membershipSuspended, positionStale} = deps;
+  const paymentAlerts = require("./paymentAlerts")({functions, db});
   const {HttpsError} = functions.https;
   // From the modular entry point: the functions emulator's stand-in for
   // admin.firestore does not carry FieldValue or Timestamp.
@@ -401,13 +406,16 @@ module.exports = (deps) => {
   }
 
   /**
-   * Approved, not blocked, documents in date and not on a forced rest.
+   * Approved, not blocked, documents in date, membership not suspended, not
+   * on a forced rest and not serving a time penalty for cancelling.
    * @param {Object} d Driver data.
    * @return {boolean} May take jobs at all.
    */
   function canWork(d) {
     return d.approved === true && d.blocked !== true &&
-      !hasExpiredDocument(d) && d.restDue !== true;
+      !hasExpiredDocument(d) && d.restDue !== true &&
+      !membershipSuspended(d) &&
+      (toMillis(d.cancelBlockedUntil) || 0) <= Date.now();
   }
 
   /**
@@ -443,7 +451,7 @@ module.exports = (deps) => {
     let best = null;
     drivers.forEach((snap) => {
       const d = snap.data();
-      if (skip.has(snap.id) || d.status !== "online" ||
+      if (skip.has(snap.id) || d.status !== "online" || positionStale(d) ||
           d.isOnRide === true || !canTakeFleetJob(d, ride)) {
         return;
       }
@@ -476,7 +484,7 @@ module.exports = (deps) => {
           .where("fleetId", "==", ride.fleetId).get();
       drivers.forEach((snap) => {
         const d = snap.data();
-        if (skip.has(snap.id) || d.status !== "online" ||
+        if (skip.has(snap.id) || d.status !== "online" || positionStale(d) ||
             d.isOnRide === true || !canTakeFleetJob(d, ride)) {
           return;
         }
@@ -866,6 +874,13 @@ module.exports = (deps) => {
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(walletRef);
       if (!snap.exists) throw new HttpsError("not-found", "No fleet wallet.");
+      // Paying out more than it holds would push the wallet below zero,
+      // and the daily billing would then charge that to the fleet's card.
+      const balance = Number(snap.data().availableBalance) || 0;
+      if (amount > balance + 0.001) {
+        throw new HttpsError("failed-precondition",
+            `The fleet's wallet only has ${balance.toFixed(2)}.`);
+      }
       tx.update(walletRef, {
         availableBalance: FieldValue.increment(-amount),
         totalPaidOut: FieldValue.increment(amount),
@@ -1070,14 +1085,16 @@ module.exports = (deps) => {
   /**
    * What the driver is told on joining.
    * @param {string} type "company" or "self".
+   * @param {Object} fleet Fleet data (its plan decides who pays).
    * @return {string} Message.
    */
-  function joinedText(type) {
-    return type === "company" ?
-      "As a company driver, your fleet receives your card earnings and " +
-        "pays your membership." :
+  function joinedText(type, fleet) {
+    const membership = fleetCovers(type, fleet) ?
+      "Your fleet pays your membership." : "You pay your own membership.";
+    return (type === "company" ?
+      "As a company driver, your fleet receives your card earnings. " :
       "You can now take their jobs. As a self-employed driver, card fares " +
-        "still go to your wallet and you keep your own membership.";
+        "still go to your wallet. ") + membership;
   }
 
   /* A driver asks to join a fleet with its join code. */
@@ -1138,7 +1155,10 @@ module.exports = (deps) => {
       }
       const fleetRef = db.collection("fleets").doc(invite.fleetId);
       const fleetSnap = await tx.get(fleetRef);
-      const phone = toE164(driver.phoneNumber || driver.phone);
+      const secretSnap = await tx.get(privacy.privateRef(context.auth.uid));
+      const contact = secretSnap.exists ? secretSnap.data() : {};
+      const phone = toE164(contact.phoneNumber || contact.phone ||
+        driver.phoneNumber || driver.phone);
       const inviteRef = phone ? db.collection("fleetInvites").doc(phone) : null;
       if (!accept || !fleetSnap.exists ||
           fleetSnap.data().status === "suspended") {
@@ -1196,7 +1216,8 @@ module.exports = (deps) => {
       title: !approve ? "Fleet request declined" : newlyApproved ?
         `${me.fleet.name} approved you` : `You joined ${me.fleet.name}`,
       body: !approve ? `${me.fleet.name} did not accept your request.` :
-        (newlyApproved ? "You can now go online. " : "") + joinedText(type),
+        (newlyApproved ? "You can now go online. " : "") +
+          joinedText(type, me.fleet),
       channelId: "general",
     }).catch(() => null);
     return {ok: true, approved: newlyApproved};
@@ -1259,7 +1280,8 @@ module.exports = (deps) => {
     });
     await sendPush([driverId], {
       title: `${me.fleet.name} reinstated you`,
-      body: "Your driver account is active again. " + joinedText("company"),
+      body: "Your driver account is active again. " +
+        joinedText("company", me.fleet),
       channelId: "general",
     }).catch(() => null);
     return {ok: true};
@@ -1294,6 +1316,24 @@ module.exports = (deps) => {
     return {existingAccount: matches.length > 0, notified};
   });
 
+  /* The fleet takes back an invitation nobody has answered yet. */
+  out.withdrawFleetInvite = functions.https.onCall(async (data, context) => {
+    const me = await assertFleetManager(context, false);
+    const phone = toE164(data && data.phone);
+    const ref = phone ? db.collection("fleetInvites").doc(phone) : null;
+    const snap = ref ? await ref.get() : null;
+    if (!snap || !snap.exists || snap.data().fleetId !== me.fleetId) {
+      throw new HttpsError("not-found", "No invitation from you to that " +
+        "number.");
+    }
+    await ref.delete();
+    const matches = await findDriversByPhone(phone);
+    await Promise.all(matches
+        .filter((d) => (d.data().fleetInvite || {}).fleetId === me.fleetId)
+        .map((d) => d.ref.update({fleetInvite: FieldValue.delete()})));
+    return {ok: true};
+  });
+
   /**
    * Driver accounts with this phone number, however it was typed.
    * @param {string} e164 Number in +44... form.
@@ -1315,31 +1355,47 @@ module.exports = (deps) => {
       const snap = await db.collection("drivers")
           .where(field, "in", forms).get();
       snap.docs.forEach((d) => seen.set(d.id, d));
+      // Numbers now live on the private record.
+      const held = await db.collection("driverPrivate")
+          .where(field, "in", forms).get();
+      for (const d of held.docs) {
+        const driver = await db.collection("drivers").doc(d.id).get();
+        if (driver.exists) seen.set(driver.id, driver);
+      }
     }
     return [...seen.values()];
   }
 
   /* A new driver account picks up an invitation waiting for its number. */
+  const applyInviteForNumber = async (change, driverId) => {
+    if (!change.after.exists) return null;
+    const after = change.after.data();
+    const before = change.before.exists ? change.before.data() : {};
+    const phone = toE164(after.phoneNumber || after.phone);
+    const beforePhone = toE164(before.phoneNumber || before.phone);
+    if (!phone || phone === beforePhone) return null;
+    const driverRef = db.collection("drivers").doc(driverId);
+    const driverSnap = await driverRef.get();
+    if (!driverSnap.exists || driverSnap.data().fleetId ||
+        driverSnap.data().fleetInvite) {
+      return null;
+    }
+    const invite = await db.collection("fleetInvites").doc(phone).get();
+    if (!invite.exists) return null;
+    const i = invite.data();
+    await driverRef.update({fleetInvite: {fleetId: i.fleetId,
+      fleetName: i.fleetName, driverType: i.driverType || "company",
+      invitedAt: i.invitedAt, invitedBy: i.invitedBy || null}});
+    return null;
+  };
   out.applyFleetInviteOnSignup = functions.firestore
       .document("drivers/{driverId}")
-      .onWrite(async (change) => {
-        if (!change.after.exists) return null;
-        const after = change.after.data();
-        const before = change.before.exists ? change.before.data() : {};
-        const phone = toE164(after.phoneNumber || after.phone);
-        const beforePhone = toE164(before.phoneNumber || before.phone);
-        if (!phone || phone === beforePhone || after.fleetId ||
-            after.fleetInvite) {
-          return null;
-        }
-        const invite = await db.collection("fleetInvites").doc(phone).get();
-        if (!invite.exists) return null;
-        const i = invite.data();
-        await change.after.ref.update({fleetInvite: {fleetId: i.fleetId,
-          fleetName: i.fleetName, driverType: i.driverType || "company",
-          invitedAt: i.invitedAt, invitedBy: i.invitedBy || null}});
-        return null;
-      });
+      .onWrite((change, context) =>
+        applyInviteForNumber(change, context.params.driverId));
+  out.applyFleetInviteOnPrivateNumber = functions.firestore
+      .document("driverPrivate/{driverId}")
+      .onWrite((change, context) =>
+        applyInviteForNumber(change, context.params.driverId));
 
   /**
    * Takes a driver out of their fleet; they drive independently from then
@@ -1503,8 +1559,13 @@ module.exports = (deps) => {
      with the same number and accept it.
      Refused while they are on a trip or have a trip booked, while money
      is in their wallet or a withdrawal is pending, and for fleet staff
-     and admins, whose logins are managed elsewhere. */
-  out.deleteMyAccount = functions.https.onCall(async (data, context) => {
+     and admins, whose logins are managed elsewhere. Owing TakeARoute money
+     (a negative wallet, unpaid membership) does not stop it: the stores and
+     UK data law expect deletion to work regardless. What was owed is left
+     for an admin in paymentAlerts. The Stripe customer and payout account
+     go too; Stripe keeps its own payment records. */
+  const callsWithStripe = functions.runWith({secrets: STRIPE_SECRETS}).https;
+  out.deleteMyAccount = callsWithStripe.onCall(async (data, context) => {
     if (!context.auth) throw new HttpsError("unauthenticated", "Sign in.");
     const uid = context.auth.uid;
     const refs = {
@@ -1563,10 +1624,30 @@ module.exports = (deps) => {
           driverDeleted: true});
       }
     }
+    const riderSnap = await refs.rider.get();
+    const debt = Number(driver && driver.subscription &&
+      driver.subscription.debtAmount) || 0;
+    if (balance < 0 || debt > 0) {
+      await paymentAlerts.raise("account_deleted_owing", uid, {
+        title: "Account deleted while owing money",
+        detail: `Negative wallet ${Math.max(0, -balance).toFixed(2)}, ` +
+          `unpaid membership ${debt.toFixed(2)}.`,
+        amount: Math.round((Math.max(0, -balance) + debt) * 100) / 100,
+        driverId: uid, fleetId: (driver && driver.fleetId) || null,
+      });
+    }
+    const stripeIds = {
+      customer: riderSnap.exists ? riderSnap.data().stripeCustomerId : null,
+      accounts: [...new Set([driver && driver.payoutAccountId,
+        driver && driver.stripeAccountId].filter(Boolean))],
+    };
+
     for (const ref of [refs.driver, refs.rider,
       db.collection("users").doc(uid),
       db.collection("pushTokens").doc(uid),
-      db.collection("driverLocations").doc(uid)]) {
+      db.collection("driverLocations").doc(uid),
+      privacy.privateRef(uid), privacy.filesRef(uid),
+      db.collection("riderPublic").doc(uid)]) {
       await db.recursiveDelete(ref);
     }
     if (walletSnap.exists) await db.recursiveDelete(refs.wallet);
@@ -1576,6 +1657,20 @@ module.exports = (deps) => {
         bucket.deleteFiles({prefix: `${p}/${uid}/`})));
     } catch (e) {
       console.error("deleteMyAccount storage", uid, e.message);
+    }
+    try {
+      const {customer, accounts} = stripeIds;
+      if (customer) await deps.stripe.customers.del(customer);
+      for (const id of accounts) await deps.stripe.accounts.del(id);
+    } catch (e) {
+      console.error("deleteMyAccount stripe", uid, e.message);
+      await paymentAlerts.raise("stripe_cleanup_failed", uid, {
+        title: "Deleted account left behind in Stripe",
+        detail: `${stripeIds.customer || "no customer"}, ` +
+          `${stripeIds.accounts.join(", ") || "no accounts"}: ` +
+          String(e.message).slice(0, 200),
+        driverId: uid,
+      });
     }
     await admin.auth().deleteUser(uid).catch((e) => {
       if (e.code !== "auth/user-not-found") throw e;
@@ -1588,8 +1683,8 @@ module.exports = (deps) => {
   /* A fleet's plan changes (the admin dashboard writes fleets/{id}
      directly): self-employed drivers' memberships follow it. Onto a flat
      monthly plan the fleet takes them over; back to per driver, each gets
-     their own membership back (or activates one). Company drivers are
-     always the fleet's and are not touched. */
+     their own membership back (or activates one). Company drivers follow
+     it the same way (fleetCovers). */
   out.syncFleetPlanMemberships = functions.firestore
       .document("fleets/{fleetId}")
       .onUpdate(async (change, context) => {
@@ -2173,7 +2268,8 @@ module.exports = (deps) => {
           {fleetId: me.fleetId, rideType})) {
         throw new HttpsError("failed-precondition",
             "That driver cannot take this job (not in your fleet, not " +
-            "approved, documents expired, resting, or the wrong vehicle).");
+            "approved, documents expired, membership unpaid, resting, or " +
+            "the wrong vehicle).");
       }
     }
 
@@ -2376,6 +2472,7 @@ module.exports = (deps) => {
         "dispatch.queueDone": false,
         "dispatch.missed": [],
         "dispatch.reRings": 0,
+        "dispatch.unansweredAt": FieldValue.delete(),
         // Sending to the whole fleet or the queue again: anyone who said no
         // before is asked again, since the operator chose to resend.
         "declinedBy": driverId ?
@@ -2660,16 +2757,17 @@ module.exports = (deps) => {
     }
     const adminSnap = await db.collection("admins").doc(context.auth.uid)
         .get();
+    const driver = await privacy.withPrivate(driverId, snap.data());
     if (adminSnap.exists && adminSnap.data().isActive === true) {
       return {isAdmin: true, by: adminSnap.data().name ||
-        adminSnap.data().email || "TakeARoute", driver: snap.data()};
+        adminSnap.data().email || "TakeARoute", driver};
     }
     const me = await assertFleetManager(context, false);
     if (snap.data().fleetId !== me.fleetId) {
       throw new HttpsError("permission-denied", "Not one of your drivers.");
     }
     return {isAdmin: false, by: `${me.manager.name || me.manager.email ||
-      "Staff"}, ${me.fleet.name || "fleet"}`, driver: snap.data()};
+      "Staff"}, ${me.fleet.name || "fleet"}`, driver};
   }
 
   /**
@@ -2694,7 +2792,7 @@ module.exports = (deps) => {
     // Email sign-ups keep it on the app account: copy it to the driver
     // record so lists and searches show it too.
     if (email && !driver.email) {
-      await db.collection("drivers").doc(driverId).update({email})
+      await privacy.privateRef(driverId).set({email}, {merge: true})
           .catch(() => null);
     }
     return {
@@ -2705,6 +2803,30 @@ module.exports = (deps) => {
         providers.includes("phone") ? "phone" : (providers[0] || ""),
       canEditEmail: isAdmin,
     };
+  });
+
+  /* The phone numbers of this fleet's drivers, its applicants and the
+     drivers it removed, for its driver pages. Numbers are private
+     (functions/privacy.js), so they come from here and not from the driver
+     records. */
+  out.fleetDriverPhones = functions.https.onCall(async (data, context) => {
+    const me = await assertFleetManager(context, false);
+    const drivers = db.collection("drivers");
+    const lists = await Promise.all([
+      drivers.where("fleetId", "==", me.fleetId).get(),
+      drivers.where("fleetRequest.fleetId", "==", me.fleetId).get(),
+      drivers.where("removedFromFleetId", "==", me.fleetId).get(),
+    ]);
+    const ids = new Set();
+    lists.forEach((l) => l.docs.forEach((d) => ids.add(d.id)));
+    const refs = [...ids].map((id) => privacy.privateRef(id));
+    const secrets = refs.length ? await db.getAll(...refs) : [];
+    const phones = {};
+    secrets.forEach((s) => {
+      const phone = s.exists && (s.data().phoneNumber || s.data().phone);
+      if (phone) phones[s.id] = phone;
+    });
+    return {phones};
   });
 
   /* Staff correct a driver's phone number (and admins their email). The
@@ -2723,9 +2845,10 @@ module.exports = (deps) => {
         throw new HttpsError("invalid-argument",
             "Enter a phone number, for example 07700 900123.");
       }
-      const others = await db.collection("drivers")
-          .where("phoneNumber", "==", phone).limit(2).get();
-      if (others.docs.some((x) => x.id !== driverId)) {
+      const [others, held] = await Promise.all(["drivers", "driverPrivate"]
+          .map((c) => db.collection(c)
+              .where("phoneNumber", "==", phone).limit(2).get()));
+      if (others.docs.concat(held.docs).some((x) => x.id !== driverId)) {
         throw new HttpsError("already-exists",
             "Another driver already has that number.");
       }
@@ -2760,7 +2883,12 @@ module.exports = (deps) => {
     }
     update.contactUpdatedAt = new Date().toISOString();
     update.contactUpdatedBy = by;
-    await db.collection("drivers").doc(driverId).update(update);
+    await privacy.privateRef(driverId).set(update, {merge: true});
+    // Who changed it shows on the fleet's driver page; the number does not.
+    await db.collection("drivers").doc(driverId).update({
+      contactUpdatedAt: update.contactUpdatedAt,
+      contactUpdatedBy: update.contactUpdatedBy,
+    });
     await db.collection("users").doc(driverId).set(userUpdate, {merge: true});
     return Object.assign({ok: true}, update);
   });
@@ -2953,14 +3081,19 @@ module.exports = (deps) => {
                 "Enter the customer's phone number.");
           }
           // Only people the fleet knows: a contact card is made as soon as
-          // a number is typed on the booking form.
-          const card = await db.collection("fleets").doc(me.fleetId)
-              .collection("customers").doc(other).get();
+          // a number is typed on the booking form, and someone who rang
+          // the office can be rung back.
+          const office = db.collection("fleets").doc(me.fleetId);
+          const card = await office.collection("customers").doc(other).get();
           if (!card.exists) {
-            throw new HttpsError("not-found",
-                "That number is not one of your customers.");
+            const called = await office.collection("phoneCalls")
+                .where("from", "==", other).limit(1).get();
+            if (called.empty) {
+              throw new HttpsError("not-found",
+                  "That number is not one of your customers.");
+            }
           }
-          label = card.data().name || "your customer";
+          label = (card.exists && card.data().name) || "your customer";
           who = {customer: other};
         }
         if (!other) {
@@ -3007,7 +3140,9 @@ module.exports = (deps) => {
       .onWrite(async (change, context) => {
         if (!change.after.exists) return null;
         const after = change.after.data();
-        if (after.source !== "phone") return null;
+        // Real phone jobs have no passenger account on them; a fake one
+        // written from the passenger app must never ring the fleet.
+        if (after.source !== "phone" || after.riderId) return null;
         const before = change.before.exists ? change.before.data() : null;
         const rideId = context.params.rideId;
 
@@ -3033,6 +3168,7 @@ module.exports = (deps) => {
             "dispatch.returnedAt": FieldValue.serverTimestamp(),
             "dispatch.autoResent": true,
             "dispatch.reRings": 0,
+            "dispatch.unansweredAt": FieldValue.delete(),
             // A queue picks the next driver itself; the whole fleet is rung
             // when offeredAt changes.
             "dispatch.offeredAt": toQueue ? null :
@@ -3069,7 +3205,12 @@ module.exports = (deps) => {
         return null;
       });
 
-  /* Every minute: pre-booked jobs whose time has come are sent out. */
+  /* Every minute: pre-booked jobs whose time has come are sent out. A pause
+     for an unpaid subscription does not touch them: the passenger was
+     promised a car and the bill is between the fleet and TakeARoute. When
+     an admin has paused a fleet its work stops, so the job is cancelled (a
+     web customer is texted and their card released) and an admin is alerted
+     to ring anyone else. A closed fleet cannot have open jobs. */
   out.dispatchScheduledRides = functions.pubsub
       .schedule("every 1 minutes")
       .onRun(async () => {
@@ -3078,18 +3219,44 @@ module.exports = (deps) => {
             .where("dispatchAt", "<=", Timestamp.now())
             .limit(100)
             .get();
+        const fleets = {};
         for (const doc of due.docs) {
-          await db.runTransaction(async (tx) => {
+          const ride = doc.data();
+          if (ride.fleetId && !(ride.fleetId in fleets)) {
+            fleets[ride.fleetId] = (await db.collection("fleets")
+                .doc(ride.fleetId).get()).data() || null;
+          }
+          const fleet = ride.fleetId ? fleets[ride.fleetId] : null;
+          const stopped = Boolean(fleet && fleet.status === "suspended" &&
+            fleet.suspendedReason !== "unpaid");
+          const moved = await db.runTransaction(async (tx) => {
             const snap = await tx.get(doc.ref);
-            if (!snap.exists || snap.data().status !== "scheduled") return;
-            tx.update(doc.ref, {
+            if (!snap.exists || snap.data().status !== "scheduled") {
+              return false;
+            }
+            tx.update(doc.ref, stopped ? {
+              status: "cancelled",
+              cancelledBy: "system",
+              cancelReason: "fleet_paused",
+              cancelledAt: FieldValue.serverTimestamp(),
+            } : {
               "status": "dispatching",
               "dispatch.offeredAt": FieldValue.serverTimestamp(),
               "dispatch.rounds": FieldValue.increment(1),
             });
+            return true;
           }).catch((error) => {
             console.error("Could not send booking:", doc.id, error.message);
+            return false;
           });
+          if (moved && stopped) {
+            await paymentAlerts.raise("fleet_paused_job_cancelled", doc.id, {
+              title: "Booked job cancelled: its fleet is paused",
+              detail: `Customer ${(ride.customer || {}).phone || "unknown"}` +
+                " may need a call.",
+              rideId: doc.id, fleetId: ride.fleetId,
+            });
+          }
         }
         if (due.size) console.log(`Sent ${due.size} booked job(s)`);
         return null;
@@ -3158,6 +3325,16 @@ module.exports = (deps) => {
         for (const doc of open.docs) {
           const ride = doc.data();
           const d = ride.dispatch || {};
+          // Nobody has taken it for a while: the office should look. The
+          // clock restarts when the job is resent or a driver gives it back.
+          const waitingSince = Math.max(toMillis(ride.dispatchAt) || 0,
+              toMillis(d.returnedAt) || 0);
+          if (!d.unansweredAt && waitingSince &&
+              Date.now() - waitingSince > JOB_UNANSWERED_MS) {
+            await doc.ref.update({
+              "dispatch.unansweredAt": FieldValue.serverTimestamp(),
+            }).catch(() => null);
+          }
           const toFleet = d.mode === "all" ||
             (d.mode === "queue" && d.queueDone === true && !d.driverId);
           const offered = toMillis(d.offeredAt);
@@ -3210,10 +3387,9 @@ module.exports = (deps) => {
         return null;
       });
 
-  /* Daily: each fleet's monthly membership, for every company driver in the
-     fleet on its billing date (self-employed drivers pay their own), taken
-     from the fleet's wallet. The wallet may go below zero; the admin
-     settles that with the fleet. */
+  /* Daily: a fleet on a flat monthly plan pays its price on its billing
+     date, from its wallet and then its saved card. A per-driver fleet is
+     billed nothing: its drivers pay their own memberships. */
   /**
    * Bills one fleet if its bill is due: the plan's price from its wallet,
    * and any shortfall from its saved card.
@@ -3929,6 +4105,7 @@ module.exports = (deps) => {
     TWILIO_SECRETS, twilioConfig, assertFleetManager, assertAdmin, lineTools,
     findRiderByPhone, findDriversByPhone, phoneFor, text, FieldValue,
     stripe: deps.stripe, STRIPE_SECRETS,
+    settleEndedEarly: deps.settleDriverEndedEarly,
     booking: {bookPhoneJob, quoteOne, quoteTypes, placeSearch, placeDetails,
       placeFromText, point, CLASS_MULTIPLIERS}}));
 

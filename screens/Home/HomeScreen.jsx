@@ -70,6 +70,8 @@ export default function HomeScreen() {
   const [address, setAddress] = useState('');
   const [loadingLocation, setLoadingLocation] = useState(true);
   const [locationDenied, setLocationDenied] = useState(false);
+  // GPS never answered (indoors, off, or the phone is slow to get a fix).
+  const [locationFailed, setLocationFailed] = useState(false);
   const [savedPlaces, setSavedPlaces] = useState([]);
   const [activeRide, setActiveRide] = useState(null);
   // A pin the passenger dropped themselves, which overrides GPS as the pickup.
@@ -173,7 +175,15 @@ export default function HomeScreen() {
       const placesRef = collection(db, 'riders', auth.currentUser.uid, 'savedPlaces');
       return onSnapshot(
         placesRef,
-        (snapshot) => setSavedPlaces(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))),
+        (snapshot) => {
+          // Home and Work first: only the first three are shown.
+          const order = { home: 0, work: 1 };
+          setSavedPlaces(
+            snapshot.docs
+              .map((d) => ({ id: d.id, ...d.data() }))
+              .sort((a, b) => (order[a.type] ?? 2) - (order[b.type] ?? 2))
+          );
+        },
         (error) => {
           if (error.code === 'permission-denied') return;
         }
@@ -207,6 +217,7 @@ export default function HomeScreen() {
   );
 
   const getCurrentLocation = async () => {
+    let gpsTimer = null;
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
@@ -215,17 +226,28 @@ export default function HomeScreen() {
         return;
       }
 
+      // Stop saying "Finding you…" after a while; a late fix still applies.
+      gpsTimer = setTimeout(() => {
+        setLocationFailed(true);
+        setLoadingLocation(false);
+      }, 12000);
+
       const loc = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
       });
+      clearTimeout(gpsTimer);
 
       const coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
       setLocation(coords);
+      setLocationFailed(false);
       setRegion({ ...coords, latitudeDelta: 0.005, longitudeDelta: 0.005 });
+      setLoadingLocation(false);
       await getFullAddress(coords.latitude, coords.longitude);
     } catch (error) {
       console.error('Location error:', error);
+      setLocationFailed(true);
     } finally {
+      clearTimeout(gpsTimer);
       setLoadingLocation(false);
     }
   };
@@ -356,7 +378,7 @@ export default function HomeScreen() {
         </MapView>
       ) : (
         <View style={[StyleSheet.absoluteFill, styles.mapLoading]}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
+          {loadingLocation ? <ActivityIndicator size="large" color={COLORS.primary} /> : null}
         </View>
       )}
 
@@ -378,6 +400,8 @@ export default function HomeScreen() {
               ? pinnedPickup.address
               : locationDenied
               ? 'Location off'
+              : locationFailed && !location
+              ? 'Location not found'
               : address || 'Current location'}
           </Text>
           <Ionicons name="chevron-down" size={15} color={COLORS.muted} />
@@ -455,6 +479,12 @@ export default function HomeScreen() {
           {locationDenied && !pinnedPickup ? (
             <Text style={styles.denied}>
               Location is off. Turn it on in Settings, or set your pickup on the map.
+            </Text>
+          ) : null}
+
+          {locationFailed && !location && !pinnedPickup ? (
+            <Text style={styles.denied}>
+              We could not find your location. Set your pickup on the map.
             </Text>
           ) : null}
 

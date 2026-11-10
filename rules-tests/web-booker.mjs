@@ -246,6 +246,22 @@ await assert.rejects(C.call('webSendCode', { slug: 'time-taxis', phone: '0770090
 await O.call('unblockFleetNumber', { phone: '+447700900555' });
 await C.call('webBook', { token, pickup: PICK, dropoff: DROP, passengers: 1, rideType: 'RouteMini', pay: 'driver' }).catch((e) => assert.doesNotMatch(e.message, /this number/));
 
+step('cancelled by the office while the customer is still on Stripe: paying afterwards releases the hold');
+const b5 = await C.call('webBook', { token, pickup: PICK, dropoff: DROP, passengers: 1, rideType: 'RouteMini', pay: 'card' });
+const cs5 = b5.checkoutUrl.split('/').pop();
+await O.call('cancelFleetBooking', { rideId: b5.rideId });
+sessions[cs5].paid = true;
+await C.call('webConfirmPayment', { token, rideId: b5.rideId });
+await until(async () => (await adminGet(`rides/${b5.rideId}`)).webPayment.status === 'released', 'late hold released');
+assert.ok(stripeCalls.find((c) => c.p.endsWith(`pi_${cs5}/cancel`)));
+
+step('a paused fleet: signed-in customers cannot search or book, but still see their bookings');
+await adminSet(`fleets/${f.fleetId}`, { status: 'suspended' }, true);
+await assert.rejects(C.call('webBook', { token, pickup: PICK, dropoff: DROP, passengers: 1, rideType: 'RouteMini', pay: 'driver' }), /booking is closed/);
+await assert.rejects(C.call('webQuote', { token, pickup: PICK, dropoff: DROP }), /booking is closed/);
+assert.equal((await C.call('webSession', { token })).phoneEnding, '555');
+await adminSet(`fleets/${f.fleetId}`, { status: 'active' }, true);
+
 step('switched off: the page closes');
 await O.call('saveFleetWebBooking', { enabled: false });
 await assert.rejects(C.call('webBookerInfo', { slug: 'time-taxis' }), /not available/);

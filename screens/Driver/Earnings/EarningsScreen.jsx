@@ -126,7 +126,10 @@ export default function EarningsScreen() {
 
   // Subscription deductions are written as "subscription_deduction" by the
   // payment function; the old filter looked for "subscription" and found none.
-  const isSubscription = (t) => t.type === 'subscription_deduction' || t.type === 'subscription';
+  // subscription_card_payment: paid by card, so amount is 0 and cardAmount says
+  // what was charged.
+  const isSubscription = (t) => ['subscription_deduction', 'subscription', 'subscription_card_payment'].includes(t.type);
+  const isPenalty = (t) => t.type === 'cancel_penalty';
   const filteredTransactions =
     selectedFilter === 'All'
       ? transactions
@@ -134,6 +137,7 @@ export default function EarningsScreen() {
           if (selectedFilter === 'Trips') return t.type === 'ride_earning';
           if (selectedFilter === 'Payouts') return t.type === 'payout_request' || t.type === 'payout';
           if (selectedFilter === 'Subscription') return isSubscription(t);
+          if (selectedFilter === 'Penalties') return isPenalty(t);
           return true;
         });
 
@@ -176,6 +180,8 @@ export default function EarningsScreen() {
   const renderTransaction = ({ item, index }) => {
     const amount = Number(item.amount) || 0;
     const isPositive = amount > 0;
+    // Charged to a card, so it did not come out of this balance.
+    const paidByCard = item.type === 'subscription_card_payment';
     let icon = 'car-outline';
     let title = item.description || item.type;
     if (item.type === 'ride_earning') title = 'Trip earnings';
@@ -184,6 +190,7 @@ export default function EarningsScreen() {
       title = 'Withdrawal';
     }
     if (isSubscription(item)) icon = 'calendar-outline';
+    if (isPenalty(item)) icon = 'alert-circle-outline';
     const state = payoutState(item);
 
     return (
@@ -196,7 +203,7 @@ export default function EarningsScreen() {
           last={index === filteredTransactions.length - 1}
           right={
             <Text style={[styles.txAmount, { color: isPositive ? COLORS.success : state?.status === 'rejected' ? COLORS.muted : COLORS.ink }]}>
-              {isPositive ? '+' : '-'}{money(Math.abs(amount))}
+              {isPositive ? '+' : paidByCard ? '' : '-'}{money(paidByCard ? Number(item.cardAmount) || 0 : Math.abs(amount))}
             </Text>
           }
         />
@@ -259,7 +266,7 @@ export default function EarningsScreen() {
             tone="info"
             icon="people-outline"
             title={`You drive for ${fleetName}`}
-            body={`Your fares go to ${fleetName}, who pay you, and they pay your membership. Withdrawals are not available while you drive for a fleet. See what they owe you under Account > Fleet > My statement.`}
+            body={`Your card fares go to ${fleetName}, who pay you. ${subscription?.paymentMethod === 'fleet' ? 'They also pay your membership.' : 'You pay your own membership.'} Withdrawals are not available while you drive for a fleet. See what they owe you under Account > Fleet > My statement.`}
           />
         </View>
       ) : null}
@@ -272,7 +279,7 @@ export default function EarningsScreen() {
             {subscription.nextBillingDate?.toDate
               ? subscription.nextBillingDate.toDate().toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })
               : 'date not set'}
-            , taken from your wallet.
+            {fleetName ? ', charged to your card.' : ', taken from your wallet.'}
           </Text>
         </Card>
       ) : null}
@@ -280,7 +287,7 @@ export default function EarningsScreen() {
       {subscription && subscription.status === 'suspended' ? (
         <Card tone="danger" style={{ marginTop: SPACE[3] }}>
           <Text style={[styles.txTitle, { color: COLORS.red }]}>Subscription suspended</Text>
-          <Text style={TYPE.small}>Pay by card under Membership to start again, or complete card rides to top up your wallet.</Text>
+          <Text style={TYPE.small}>{fleetName ? 'Pay by card under Membership to start again.' : 'Pay by card under Membership to start again, or complete card rides to top up your wallet.'}</Text>
         </Card>
       ) : null}
 
@@ -296,7 +303,7 @@ export default function EarningsScreen() {
 
       <Section title="Activity">
         <View style={styles.filters}>
-          {['All', 'Trips', 'Payouts', 'Subscription'].map((f) => (
+          {['All', 'Trips', 'Payouts', 'Subscription', 'Penalties'].map((f) => (
             <Chip
               key={f}
               label={f}

@@ -18,14 +18,17 @@ service firebase.storage {
          request.resource.contentType == 'application/pdf');
     }
 
+    /* Only the owner and admins can read or list these files. Photos and
+       documents are shown through the download link saved with them, so
+       passengers and fleet staff still see what they are given a link to. */
     match /riders/{userId}/{allPaths=**} {
-      allow read: if signedIn();
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
       allow write: if isAdmin() ||
         (signedIn() && request.auth.uid == userId && sensibleFile());
     }
 
     match /drivers/{userId}/{allPaths=**} {
-      allow read: if signedIn();
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
       allow write: if isAdmin() ||
         (signedIn() && request.auth.uid == userId && sensibleFile());
     }

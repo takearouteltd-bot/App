@@ -16,7 +16,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { collection, doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import { getAuth } from 'firebase/auth';
-import { currencySymbol, useAppConfig, money } from '../../utils/appConfig';
+import { useAppConfig, money } from '../../utils/appConfig';
+import { stopsOf } from '../../utils/stops';
+import StopRows, { StopPin } from '../../components/trips/StopRows';
 import { acceptCounterOffer, offerIsLive, raiseOffer } from '../../utils/bidding';
 import {
   COLORS, TYPE, SPACE, RADIUS, Screen, Sheet, Card, Button, Banner, Avatar, IconButton,
@@ -230,7 +232,7 @@ export default function RideRequestScreen() {
 
   const fitMap = () => {
     if (!mapRef.current || !rideData) return;
-    const coords = validCoords(rideData.pickupLocation, rideData.dropoffLocation);
+    const coords = validCoords(rideData.pickupLocation, ...stopsOf(rideData), rideData.dropoffLocation);
     if (!coords.length) return;
     mapRef.current.fitToCoordinates(coords, {
       edgePadding: { top: 120, right: 60, bottom: (sheetHeight || 400) + 40, left: 60 },
@@ -318,10 +320,16 @@ export default function RideRequestScreen() {
               <Ionicons name="location" size={30} color={COLORS.midnight} />
             </Marker>
           ) : null}
+          {stopsOf(rideData).map((s, i) => (
+            <Marker key={`stop-${i}`} coordinate={{ latitude: s.latitude, longitude: s.longitude }} anchor={{ x: 0.5, y: 0.5 }}>
+              <StopPin number={i + 1} />
+            </Marker>
+          ))}
           {isCoord(pickupLocation) && isCoord(dropoffLocation) ? (
             <RouteDirections
               origin={pickupLocation}
               destination={dropoffLocation}
+              waypoints={stopsOf(rideData)}
               strokeWidth={4}
               strokeColor={COLORS.primary}
             />
@@ -352,7 +360,7 @@ export default function RideRequestScreen() {
                 {rideData.femaleDriverOnly ? 'Finding a female driver' : 'Finding your driver'}
               </Text>
               <Text style={TYPE.small} numberOfLines={1}>
-                Looking for {clock} · {currencySymbol()}{fareEstimate}
+                Looking for {clock} · {money(fareEstimate, rideData.currency)}
               </Text>
             </View>
             <IconButton
@@ -459,7 +467,11 @@ export default function RideRequestScreen() {
                   </Text>
                 )}
                 {liveOffers.map((o) => {
-                  const left = Math.max(0, Math.round((Number(o.expiresAtMs) - Date.now()) / 1000));
+                  // Timed from when this phone first saw the offer, the same
+                  // as offerIsLive: the driver's clock can be minutes out.
+                  const offerLength = Number(o.expiresAtMs) - Number(o.sentAtMs);
+                  const endsAt = o.seenAtMs && offerLength > 0 ? o.seenAtMs + offerLength : Number(o.expiresAtMs);
+                  const left = Math.max(0, Math.round((endsAt - Date.now()) / 1000));
                   return (
                     <Card key={o.id} style={styles.driverOffer}>
                       <Avatar name={o.driverName || 'D'} size={44} />
@@ -495,7 +507,7 @@ export default function RideRequestScreen() {
             ) : null}
 
             <View style={styles.facts}>
-              <Fact icon="card-outline" text={`${currencySymbol()}${fareEstimate}`} />
+              <Fact icon="card-outline" text={money(fareEstimate, rideData.currency)} />
               <Fact icon="navigate-outline" text={`${distanceKm} km`} />
               <Fact icon="time-outline" text={`${Math.ceil(durationMinutes)} min`} />
             </View>
@@ -532,6 +544,7 @@ export default function RideRequestScreen() {
                 pickup={pickupLocation.address}
                 dropoff={dropoffLocation.address}
               />
+              <StopRows ride={rideData} />
             </View>
 
             <View style={styles.fareRow}>
@@ -539,10 +552,7 @@ export default function RideRequestScreen() {
                 <Text style={TYPE.label}>Trip fare</Text>
                 <Text style={styles.fareSub}>Includes VAT</Text>
               </View>
-              <Text style={styles.fareValue}>
-                {currencySymbol()}
-                {fareEstimate}
-              </Text>
+              <Text style={styles.fareValue}>{money(fareEstimate, rideData.currency)}</Text>
             </View>
 
             <Text style={styles.handover}>Opening live tracking…</Text>

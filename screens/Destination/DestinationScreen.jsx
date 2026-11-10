@@ -45,7 +45,7 @@ export default function DestinationSearchScreen({ navigation, route }) {
   const [currentAddress, setCurrentAddress] = useState('');
   const [recentSearches, setRecentSearches] = useState([]);
   const [picking, setPicking] = useState(false);
-  const search = usePlaceSearch({ near: origin });
+  const search = usePlaceSearch({ near: origin, regionCodes: ['gb'] });
   const searching = search.text.trim().length >= 2;
 
   useEffect(() => {
@@ -161,7 +161,8 @@ export default function DestinationSearchScreen({ navigation, route }) {
     goToFare(destination);
   };
 
-  const pickup = PICKUP[pickupType] || PICKUP.current;
+  // The fare screen knows the pickup address, not how it was chosen.
+  const pickup = addingStop ? { label: 'Pickup', icon: 'locate' } : PICKUP[pickupType] || PICKUP.current;
 
   return (
     <SafeAreaView style={styles.container}>

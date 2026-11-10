@@ -71,7 +71,7 @@ const FRIENDLY = {
   'too-many-requests': 'Too many attempts. Please wait a few minutes and try again.',
   'quota-exceeded': "We can't send codes right now. Please try again later.",
   'network-request-failed': 'No internet connection. Check your connection and try again.',
-  'user-disabled': 'This account has been disabled. Please contact support.',
+  'user-disabled': 'This account has been disabled. Please contact support@takearoute.ltd.',
   'email-already-in-use': 'An account already uses this email. Try signing in instead.',
   'invalid-email': "That email address doesn't look right.",
   'wrong-password': 'The email or password is incorrect.',

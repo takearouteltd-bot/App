@@ -244,9 +244,15 @@ assert.match(r.body, /Only your own customers and drivers/); assert.doesNotMatch
 r = await twilio({ step: 'outgoing' }, { CallSid: 'CA9', From: 'client:fm_nobody', To: '+447700900123' });
 assert.match(r.body, /can&apos;t call from here/);
 
+step('someone who rang in can be rung back before they have a contact card');
+await adminSet(`fleets/${f.fleetId}/phoneCalls/CAmiss`, { direction: 'in', from: '+447700900444', status: 'missed' });
+r = await twilio({ step: 'outgoing' }, { CallSid: 'CA10', From: `client:fm_${opUid}`, To: '+447700900444' });
+assert.match(r.body, /\+447700900444<\/Dial>/);
+await twilio({ step: 'outDone', fleet: f.fleetId, uid: opUid }, { CallSid: 'CA10', DialCallStatus: 'completed', DialCallDuration: '5' });
+
 step('call log for the office, newest first');
 const log = await OP.call('listFleetPhoneCalls', {});
-assert.equal(log.calls.length, 5, "CA1, CA1b, CA2, CA3 in and CA7 out; refused and test calls are not logged"); assert.ok(log.calls[0].startedAt >= log.calls[log.calls.length - 1].startedAt);
+assert.equal(log.calls.length, 6, "CA1, CA1b, CA2, CA3 in, CA7 and CA10 out; refused and test calls are not logged"); assert.ok(log.calls[0].startedAt >= log.calls[log.calls.length - 1].startedAt);
 
 step('monthly phone totals per fleet: minutes rounded up per call, hold included, missed counted, never twice');
 await twilio({ step: 'status' }, { CallSid: 'CA1', To: APP_NUMBER, CallStatus: 'completed', CallDuration: '120' });
@@ -254,7 +260,7 @@ await twilio({ step: 'status' }, { CallSid: 'CA1', To: APP_NUMBER, CallStatus: '
 await twilio({ step: 'status' }, { CallSid: 'CA2', To: APP_NUMBER, CallStatus: 'completed', CallDuration: '130' });
 const month = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit' }).format(new Date()).slice(0, 7);
 const usage = (await adminGet(`fleets/${f.fleetId}`)).phoneUsage[month];
-assert.deepEqual({ calls: usage.calls, inMinutes: usage.inMinutes, outMinutes: usage.outMinutes, missed: usage.missed }, { calls: 5, inMinutes: 5, outMinutes: 1, missed: 3 });
+assert.deepEqual({ calls: usage.calls, inMinutes: usage.inMinutes, outMinutes: usage.outMinutes, missed: usage.missed }, { calls: 6, inMinutes: 5, outMinutes: 2, missed: 3 });
 
 step('a second fleet cannot borrow the app number; admin searches and buys it a number; release returns it');
 const f2 = await A.call('createFleet', { name: 'Time Taxis', ownerName: 'T', email: 'owner2@test.dev', phone: '07700900002' });

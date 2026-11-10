@@ -26,6 +26,8 @@ import {
 
 export default function AddCardScreen({ navigation }) {
   const { confirmSetupIntent } = useStripe();
+  // The driver's Membership stack shares this screen with passengers.
+  const forMembership = navigation.getState?.()?.routes?.some((r) => r.name === 'SubscriptionScreen');
 
   const [cardDetails, setCardDetails] = useState(null);
   const [cardholderName, setCardholderName] = useState('');
@@ -78,7 +80,7 @@ export default function AddCardScreen({ navigation }) {
       const saveCard = httpsCallable(functions, 'saveCard');
       await saveCard({ paymentMethodId, cardholderName: cardholderName.trim() });
 
-      Alert.alert('Card added', 'This card will be used for your rides.', [
+      Alert.alert('Card added', forMembership ? 'This card will be used for your membership.' : 'This card will be used for your rides.', [
         { text: 'Done', onPress: () => navigation.goBack() },
       ]);
     } catch (err) {
@@ -102,7 +104,7 @@ export default function AddCardScreen({ navigation }) {
         >
           <ScreenHeader
             title="Add a card"
-            subtitle="Used for your rides. You can change it any time."
+            subtitle={forMembership ? 'Used for your membership. You can change it any time.' : 'Used for your rides. You can change it any time.'}
             onBack={() => navigation.goBack()}
           />
 

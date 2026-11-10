@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Alert } from "../../components/ui/alert";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { doc, setDoc } from "firebase/firestore";
+import { filesDocRef, loadMyDriverRecord } from "../../utils/driverPrivate";
 import { db, auth } from "../../config/firebase";
 import { captureSelfie, selectUploadAsset, uploadDriverFile } from "../../helpers/uploadPicker";
 import { Banner, Field } from "../../components/ui/kit";
@@ -31,10 +32,10 @@ export default function IdentityVerificationScreen({ navigation, setOnboardingSt
       if (!driverId) return;
 
       try {
-        const snap = await getDoc(doc(db, "drivers", driverId));
-        if (!snap.exists()) return;
+        const record = await loadMyDriverRecord(driverId);
+        if (!record.exists) return;
 
-        const data = snap.data();
+        const data = record.data;
         // Older accounts stored a single licence image.
         const legacy = data.driverLicenseUrl || null;
         setUrls({
@@ -70,7 +71,12 @@ export default function IdentityVerificationScreen({ navigation, setOnboardingSt
     setUploading(type);
     try {
       const downloadUrl = await uploadDriverFile(driverId, type, asset);
-      await setDoc(doc(db, "drivers", driverId), { [`${type}Url`]: downloadUrl }, { merge: true });
+      // The selfie is the photo passengers see; the rest are private documents.
+      await setDoc(
+        type === "selfie" ? doc(db, "drivers", driverId) : filesDocRef(driverId),
+        { [`${type}Url`]: downloadUrl },
+        { merge: true }
+      );
       setUrls((u) => ({ ...u, [type]: downloadUrl }));
     } catch (error) {
       console.log("Upload error:", error);
@@ -101,9 +107,13 @@ export default function IdentityVerificationScreen({ navigation, setOnboardingSt
         {
           onboardingStep: 3,
           onboardingComplete: false,
-          rightToWorkShareCode: shareCode.trim().toUpperCase(),
           updatedAt: new Date(),
         },
+        { merge: true }
+      );
+      await setDoc(
+        filesDocRef(driverId),
+        { rightToWorkShareCode: shareCode.trim().toUpperCase() },
         { merge: true }
       );
 

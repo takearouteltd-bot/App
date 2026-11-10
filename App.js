@@ -57,6 +57,7 @@ function routeForNotification(data, role) {
     if (type === "fleet_chat" || type === "fleet_message") return tab("Account", { screen: "OfficeChat" });
     if (type === "change_request") return tab("Account", { screen: "DriverPersonalInformation" });
     if (type === "membership") return tab("Membership");
+    if (type === "payout") return tab("Earnings", { screen: "EarningsScreen" });
     // job_offer, trip, chat and anything else: the driver home resumes the
     // current job and shows new offers.
     return tab("Home", { screen: "DriverHome" });
@@ -340,7 +341,7 @@ export default function App() {
               {blockInfo?.reason ? ` Reason: ${blockInfo.reason}.` : ''}
               {blockInfo?.byFleet
                 ? ' Please speak to your fleet.'
-                : ' Please contact support if you think this is a mistake.'}
+                : ' Please email support@takearoute.ltd if you think this is a mistake.'}
             </>}
         </Text>
         <Button title="Sign out" variant="dark" onPress={() => signOutEverywhere().catch(() => {})} />

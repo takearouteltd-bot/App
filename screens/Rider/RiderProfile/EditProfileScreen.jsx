@@ -336,7 +336,7 @@ export default function EditProfileScreen() {
   const cancelPendingEmail = async () => {
     Alert.alert(
       "Cancel Email Change",
-      "Are you sure? The verification link sent to your new email will no longer work.",
+      "We will stop waiting for this change. The link we sent still works until it expires, so please don't open it if you no longer want the change.",
       [
         { text: "Keep Pending", style: "cancel" },
         {
@@ -470,7 +470,7 @@ export default function EditProfileScreen() {
       setVerificationId(null);
       setPendingPhone(null);
       setSmsCode("");
-      Alert.alert("Success", "Phone number verified and saved");
+      Alert.alert("Phone number saved", "Your driver can reach you on this number. If you sign in with a phone number, that stays the same.");
     } catch (error) {
       console.log("Phone verify error:", error);
       Alert.alert("Verification Failed", error?.message || "That code isn't right. Check the SMS and try again.");
@@ -497,6 +497,8 @@ export default function EditProfileScreen() {
   }
 
   const displayName = fullName || user.displayName || "Passenger";
+  // A contact number only: the number on a phone sign-in is not changed here.
+  const signsInWithPhone = (user.providerData || []).some((p) => p.providerId === "phone");
 
   return (
     <KeyboardAvoidingView
@@ -595,6 +597,7 @@ export default function EditProfileScreen() {
           onChangeText={setPhoneNumber}
           placeholder="+44 312 3456789"
           keyboardType="phone-pad"
+          hint={signsInWithPhone ? "This is the number your driver reaches you on. You still sign in with the number you signed up with." : undefined}
           style={phoneNumber !== originalData.phoneNumber && { marginBottom: SPACE[2] }}
         />
         {phoneNumber !== originalData.phoneNumber && (
@@ -613,7 +616,7 @@ export default function EditProfileScreen() {
           <Banner
             tone="success"
             icon="shield-checkmark-outline"
-            body="For your security, email changes are confirmed by a link to the new address and phone changes by an SMS code. Your data is encrypted and never shared."
+            body="For your security, email changes are confirmed by a link to the new address and phone changes by an SMS code."
           />
         </View>
       </Screen>

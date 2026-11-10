@@ -11,6 +11,7 @@ import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import CarMarker from '../../components/CarMarker';
 import { remainingStops } from '../../utils/stops';
 import RouteDirections from '../../components/RouteDirections';
+import StopRows, { StopPin } from '../../components/trips/StopRows';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
@@ -61,11 +62,34 @@ export default function RideInProgressScreen() {
 
     let hasFinished = false;
     let finishTimer = null;
+    let endTimer = null;
 
     const unsubscribe = onSnapshot(doc(db, 'rides', rideId), (snap) => {
       if (!snap.exists()) return;
       const data = snap.data();
       setRide(data);
+
+      /* Ended early by the passenger: the server is about to complete this at
+         the fare so far. Wait for that, so they land on the summary, which
+         shows what to pay (in cash too) and lets them rate the driver. If it
+         never comes, don't leave them on a live-trip screen. */
+      if (data.status === 'ongoing' && endTimer) {
+        clearTimeout(endTimer);
+        endTimer = null;
+      }
+      if (
+        (data.status === 'cancelled' || data.status === 'canceled') &&
+        data.endedEarly === true && data.cancelledBy === 'rider' && !hasFinished
+      ) {
+        if (!endTimer) {
+          endTimer = setTimeout(() => {
+            hasFinished = true;
+            Alert.alert('Trip ended', 'We are still working out the fare so far. You will find it in Your trips.');
+            navigation.popToTop();
+          }, 30000);
+        }
+        return;
+      }
 
       // The driver can abandon a trip that cannot be finished.
       if ((data.status === 'cancelled' || data.status === 'canceled') && !hasFinished) {
@@ -82,6 +106,7 @@ export default function RideInProgressScreen() {
 
       if (data.status === 'completed' && !hasFinished) {
         hasFinished = true;
+        if (endTimer) clearTimeout(endTimer);
         // A short beat so the sheet does not vanish mid-sentence.
         finishTimer = setTimeout(() => {
           navigation.reset({
@@ -95,6 +120,7 @@ export default function RideInProgressScreen() {
     return () => {
       unsubscribe();
       if (finishTimer) clearTimeout(finishTimer);
+      if (endTimer) clearTimeout(endTimer);
     };
   }, [rideId, navigation]);
 
@@ -188,7 +214,7 @@ export default function RideInProgressScreen() {
               if (uid) {
                 updateDoc(doc(db, 'riders', uid), { currentRideId: null }).catch(() => null);
               }
-              navigation.popToTop();
+              // The ride listener above takes them to the trip summary.
             } catch (error) {
               console.log('Error ending trip:', error);
               Alert.alert('Could not end the trip', 'Please try again, or speak to your driver.');
@@ -239,6 +265,12 @@ export default function RideInProgressScreen() {
             <Ionicons name="location" size={30} color={COLORS.midnight} />
           </Marker>
         ) : null}
+
+        {remainingStops(ride).map((s, i) => (
+          <Marker key={`stop-${i}`} coordinate={{ latitude: s.latitude, longitude: s.longitude }} anchor={{ x: 0.5, y: 0.5 }}>
+            <StopPin number={(Number(ride.stopsCompleted) || 0) + i + 1} />
+          </Marker>
+        ))}
 
         {driverLocation ? (
           <CarMarker
@@ -374,6 +406,7 @@ export default function RideInProgressScreen() {
             pickup={pickupLocation?.address}
             dropoff={dropoffLocation?.address}
           />
+          <StopRows ride={ride} />
         </View>
 
         {driverLocation ? (

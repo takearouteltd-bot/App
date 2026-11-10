@@ -79,7 +79,7 @@ export default function DriverFleetScreen({ navigation }) {
             ) : (
               <>
                 <Text style={[TYPE.body, { marginTop: SPACE[2] }]}>
-                  Your card fares go to {fleetName}, who pay you. {fleetPaysMembership ? 'They also pay your TakeARoute membership.' : 'You pay your own TakeARoute membership.'}
+                  Your card fares go to {fleetName}, who pay you. {fleetPaysMembership ? 'They also pay your TakeARoute membership.' : 'You pay your own TakeARoute membership.'}{' '}
                   You get their phone bookings as well as normal app jobs.
                 </Text>
                 <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>

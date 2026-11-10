@@ -31,7 +31,7 @@ export default function DriverTripDetailsScreen() {
       }
 
       try {
-        const riderDoc = await getDoc(doc(db, 'riders', trip.riderId));
+        const riderDoc = await getDoc(doc(db, 'riderPublic', trip.riderId));
         if (riderDoc.exists()) {
           const riderData = riderDoc.data();
           setRider({
@@ -165,7 +165,7 @@ export default function DriverTripDetailsScreen() {
           items={[
             { value: durationMinutes ? `${Math.ceil(durationMinutes)} min` : 'N/A', label: 'Duration' },
             { value: distanceKm ? `${distanceKm.toFixed(1)} km` : 'N/A', label: 'Distance' },
-            { value: trip.collectBy === 'online' ? 'Paid online' : trip.collectBy === 'account' ? 'Account' : trip.collectBy === 'card' ? 'Card terminal' : paymentMethod === 'cash' ? 'Cash' : 'Card', label: 'Paid by' },
+            { value: trip.paymentStatus === 'no_charge' ? 'No charge' : trip.collectBy === 'online' ? 'Paid online' : trip.collectBy === 'account' ? 'Account' : trip.collectBy === 'card' ? 'Card terminal' : paymentMethod === 'cash' ? 'Cash' : 'Card', label: 'Paid by' },
           ]}
         />
       </Card>
@@ -179,7 +179,7 @@ export default function DriverTripDetailsScreen() {
               <Avatar uri={rider?.image} name={passengerName} size={52} />
               <View style={{ flex: 1 }}>
                 <Text style={TYPE.subhead}>{passengerName}</Text>
-                <Text style={TYPE.small}>{phoneCustomer?.phone || 'Passenger'}</Text>
+                {phoneCustomer?.phone ? <Text style={TYPE.small}>{phoneCustomer.phone}</Text> : null}
               </View>
               {phoneCustomer ? null : (
                 <View style={styles.rating}>
@@ -203,7 +203,7 @@ export default function DriverTripDetailsScreen() {
             </View>
           ))}
           <View style={styles.totalRow}>
-            <Text style={styles.totalLabel}>Total Paid</Text>
+            <Text style={styles.totalLabel}>{status === 'completed' ? 'Total Paid' : status === 'cancelled' || status === 'canceled' ? 'Booked fare' : 'Fare'}</Text>
             <Text style={styles.totalLabel}>
               {currency}{fareTotal.toFixed(2)}
             </Text>

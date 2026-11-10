@@ -62,6 +62,8 @@ module.exports = (deps) => {
   // An operator marked on a call longer than this is treated as free (a
   // flag left behind by a closed browser).
   const ON_CALL_STALE_MS = 2 * 3600 * 1000;
+  // Background tabs may only tick once a minute, so allow for a few misses.
+  const PHONE_SEEN_STALE_MS = 3 * 60 * 1000;
   const LIVE_TRIP = ["accepted", "arrived", "ongoing"];
 
   /* ------------------------------ helpers ---------------------------- */
@@ -241,6 +243,18 @@ module.exports = (deps) => {
   }
 
   /**
+   * Whether the operator's browser is still there. A closed tab says
+   * nothing, so a dashboard that sends fleetPhoneHeartbeat is counted gone
+   * once it stops; an operator with no heartbeat yet is left as they are.
+   * @param {Object} m fleetManagers data.
+   * @return {boolean} Still there.
+   */
+  function browserAlive(m) {
+    const seen = Date.parse(m.phoneSeenAt || "");
+    return !Number.isFinite(seen) || Date.now() - seen < PHONE_SEEN_STALE_MS;
+  }
+
+  /**
    * Whether an operator is free to ring: not on a call (or the flag is
    * stale).
    * @param {Object} m fleetManagers data.
@@ -355,7 +369,7 @@ module.exports = (deps) => {
         .where("fleetId", "==", fleetId)
         .where("phoneAvailable", "==", true).get();
     return ops.docs.filter((d) => d.data().isActive === true &&
-      freeToRing(d.data()))
+      freeToRing(d.data()) && browserAlive(d.data()))
         .sort((a, b) => String(a.data().phoneLastCallAt || "")
             .localeCompare(String(b.data().phoneLastCallAt || "")))
         .slice(0, MAX_OPERATORS);
@@ -374,6 +388,7 @@ module.exports = (deps) => {
     toE164, booking: deps.booking, sendText: bot.sendText,
     customerCard: bot.customerCard, assertFleetManager, TWILIO_SECRETS,
     stripe: deps.stripe, STRIPE_SECRETS: deps.STRIPE_SECRETS,
+    settleEndedEarly: deps.settleEndedEarly,
     isBlocked: async (fleetId, fleet, phone) =>
       (await blockedFor(fleetId, fleet, phone)) === "number"}));
 
@@ -584,7 +599,7 @@ module.exports = (deps) => {
    */
   function botCanTake(fleet, call, req, from) {
     return bot.enabled(fleet) && !req.query.nobot && !call.bot &&
-      /^\+\d{8,15}$/.test(String(from || ""));
+      !isWithheld(from);
   }
 
   /**
@@ -678,8 +693,11 @@ module.exports = (deps) => {
     const botEnd = bot.onCallEnded(c);
     if (botEnd.patch && c.status === "bot") await ref.update(botEnd.patch);
     if (!c.counted) {
-      await ref.update({counted: true, callSeconds: Number(p.CallDuration) ||
-        0});
+      // seconds is what the call log shows; a call nobody took has none.
+      const talked = !["ringing", "missed", "blocked"].includes(c.status);
+      await ref.update(Object.assign({counted: true,
+        callSeconds: Number(p.CallDuration) || 0},
+      talked && !c.seconds ? {seconds: Number(p.CallDuration) || 0} : {}));
       await addUsage(found.id, {direction: "in",
         seconds: Number(p.CallDuration) || 0,
         missed: c.status === "ringing" || c.status === "missed" ||
@@ -724,6 +742,12 @@ module.exports = (deps) => {
     if (!allowed) {
       const drivers = await findDriversByPhone(to).catch(() => []);
       allowed = drivers.some((d) => d.data().fleetId === manager.fleetId);
+    }
+    // A new caller has no contact card yet, but can be rung back.
+    if (!allowed && !isWithheld(to)) {
+      const called = await fleetSnap.ref.collection("phoneCalls")
+          .where("from", "==", to).limit(1).get();
+      allowed = !called.empty;
     }
     if (!allowed) {
       return say("Only your own customers and drivers can be called from " +
@@ -804,6 +828,15 @@ module.exports = (deps) => {
       phoneOnCall: FieldValue.delete(),
     });
     return {ok: true, available};
+  });
+
+  /* The dashboard calls this every minute while the phone panel is open, so
+     a closed browser stops being rung. */
+  out.fleetPhoneHeartbeat = functions.https.onCall(async (data, context) => {
+    const me = await assertFleetManager(context, false);
+    await db.collection("fleetManagers").doc(me.uid)
+        .update({phoneSeenAt: new Date().toISOString()});
+    return {ok: true};
   });
 
   /* The office's recent calls, newest first. */

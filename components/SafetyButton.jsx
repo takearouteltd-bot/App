@@ -17,7 +17,7 @@ export default function SafetyButton({ role = 'rider', rideId, style }) {
   useEffect(() => {
     const uid = auth.currentUser?.uid;
     if (!uid) return;
-    getDoc(doc(db, role === 'driver' ? 'drivers' : 'riders', uid))
+    getDoc(doc(db, role === 'driver' ? 'driverPrivate' : 'riders', uid))
       .then((snap) => setContact(snap.exists() ? snap.data().emergencyContact || null : null))
       .catch(() => {});
   }, [role]);

@@ -18,7 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { doc, onSnapshot, updateDoc, serverTimestamp, arrayUnion } from 'firebase/firestore';
 import { auth, db } from '../../../config/firebase';
-import { useDriverPosition } from '../../../utils/driverLocation';
+import { useDriverPosition, retryJobSharing } from '../../../utils/driverLocation';
 
 import { currencySymbol, money } from '../../../utils/appConfig';
 import { driverCancelPenalty, noShowFeeFor, noShowWaitMs } from '../../../utils/cancellation';
@@ -30,7 +30,7 @@ import { confirmMaskedCall } from '../../../utils/calling';
 import { useWaitingClock } from '../../../utils/useWaitingClock';
 import {
   COLORS, TYPE, SPACE, RADIUS, SHADOW,
-  Avatar, Button, IconButton, RouteLine, Loading, StatRow, isCoord, validCoords,
+  Avatar, Banner, Button, RouteLine, Loading, StatRow, isCoord, validCoords,
 } from '../../../components/ui/kit';
 
 const { height } = Dimensions.get('window');
@@ -170,6 +170,13 @@ export default function DriverRideInProgressScreen() {
           [{ text: 'OK', onPress: goHome }]
         );
       }
+    }, (error) => {
+      // A phone job handed back to the office is no longer readable by
+      // this driver (firestore.rules): the same as being taken away.
+      if (error?.code !== 'permission-denied' || hasLeftScreen.current) return;
+      hasLeftScreen.current = true;
+      releaseDriver();
+      Alert.alert('Job cancelled', 'This job is no longer assigned to you.', [{ text: 'OK', onPress: goHome }]);
     });
     return () => unsubscribe();
   }, [rideId, navigation, releaseDriver, goHome]);
@@ -190,7 +197,7 @@ export default function DriverRideInProgressScreen() {
 
   useEffect(() => {
     if (!ride?.riderId) return undefined;
-    return onSnapshot(doc(db, 'riders', ride.riderId), (snap) => {
+    return onSnapshot(doc(db, 'riderPublic', ride.riderId), (snap) => {
       if (snap.exists()) setRiderData(snap.data());
     });
   }, [ride?.riderId]);
@@ -445,10 +452,23 @@ export default function DriverRideInProgressScreen() {
       </MapView>
 
       <SafeAreaView style={styles.topBar} pointerEvents="box-none">
-        <IconButton icon="chevron-back" onPress={goHome} accessibilityLabel="Back to home" />
+        {/* No back button: the home screen resumes a live job, so it only
+            brought the driver straight back here. */}
+        <View />
         <View />
         <SafetyButton role="driver" rideId={rideId} />
       </SafeAreaView>
+
+      {position.jobSharing === 'failed' ? (
+        <View style={styles.shareWarning}>
+          <Banner
+            tone="warning"
+            title="Your passenger can’t follow you"
+            body="Your location only updates while TakeARoute is open. Allow location for the app and keep it on screen, or tap Try again."
+            action={<Button size="small" title="Try again" onPress={() => retryJobSharing(ride.driverId)} />}
+          />
+        </View>
+      ) : null}
 
       <Animated.View style={[styles.sheet, { height: sheetHeight }]}>
         <TouchableOpacity
@@ -617,6 +637,7 @@ const styles = StyleSheet.create({
     borderWidth: 2, borderColor: COLORS.white,
   },
 
+  shareWarning: { position: 'absolute', top: 120, left: SPACE[5], right: SPACE[5] },
   topBar: {
     position: 'absolute', top: 0, left: SPACE[5], right: SPACE[5],
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

@@ -52,9 +52,11 @@ export default function OfficeChatScreen() {
     if (!uid || !fleet?.id) return undefined;
     call('markFleetChatRead', {}).catch(() => {});
     return onSnapshot(
-      query(collection(db, 'fleets', fleet.id, 'driverChats', uid, 'messages'), orderBy('createdAt', 'asc'), limit(300)),
+      // The newest 300, shown oldest first. Ascending with a limit stopped
+      // loading new messages after the 300th.
+      query(collection(db, 'fleets', fleet.id, 'driverChats', uid, 'messages'), orderBy('createdAt', 'desc'), limit(300)),
       (s) => {
-        setMessages(s.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setMessages(s.docs.map((d) => ({ id: d.id, ...d.data() })).reverse());
         call('markFleetChatRead', {}).catch(() => {});
       },
       () => setMessages([])

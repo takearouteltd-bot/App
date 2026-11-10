@@ -8,6 +8,7 @@ import { db } from '../../config/firebase';
 import { money } from '../../utils/appConfig';
 import EmailReceiptButton from '../../components/EmailReceiptButton';
 import StarRating from '../../components/StarRating';
+import StopRows from '../../components/trips/StopRows';
 import { COLORS, TYPE, SPACE, Screen, Card, Button, Loading, RouteLine } from '../../components/ui/kit';
 
 export default function RiderRideCompletedScreen() {
@@ -59,7 +60,8 @@ export default function RiderRideCompletedScreen() {
   // object is only kept up to date by the Stripe webhook.
   const paymentStatus = ride.paymentStatus || ride.payment?.status || 'pending';
   // 'authorized' is only the hold: the charge itself comes a moment later.
-  const isPaid = ['captured', 'paid', 'succeeded'].includes(paymentStatus);
+  const isPaid = ['captured', 'paid', 'succeeded', 'no_charge'].includes(paymentStatus);
+  const isNoCharge = paymentStatus === 'no_charge';
   const isFailed = paymentStatus === 'failed';
   const isPending = !isPaid && !isFailed;
   const isCash = ride.paymentMethod === 'cash';
@@ -70,11 +72,18 @@ export default function RiderRideCompletedScreen() {
   const distance = ride.route?.distanceKm ? `${ride.route.distanceKm} km` : null;
   const duration = ride.route?.durationMinutes ? `${Math.ceil(ride.route.durationMinutes)} min` : null;
 
+  // fare.subtotal is already after the promo, so the promo is added back to
+  // show the fare it came off. An agreed (bidding) price has no promo line:
+  // the price itself is the deal.
+  const promo = fare.agreedPrice == null ? Number(fare.discountAmount) || 0 : 0;
+  const endedEarlyOff = Number(fare.fullTotal) > Number(fare.total) ? Number(fare.fullTotal) - Number(fare.total) : 0;
   const lines = [
-    ['Fare', fare.subtotal],
-    fare.discountAmount > 0 ? ['Promo discount', -fare.discountAmount] : null,
+    ['Fare', (Number(fare.subtotal) || 0) + promo],
+    promo > 0 ? ['Promo discount', -promo] : null,
     fare.vat !== undefined ? [`VAT (${fare.vatPercent || 20}%)`, fare.vat] : null,
-    fare.waitingCharge > 0 ? ['Waiting time', fare.waitingCharge] : null,
+    endedEarlyOff > 0 ? ['Trip ended early', -endedEarlyOff] : null,
+    // If the waiting charge could not be taken it is not part of the total.
+    fare.waitingCharge > 0 && !ride.extraChargeFailed ? ['Waiting time', fare.waitingCharge] : null,
   ].filter(Boolean);
 
   const driverName = driver?.fullName || driver?.firstName || 'your driver';
@@ -88,14 +97,16 @@ export default function RiderRideCompletedScreen() {
           </Text>
           <Text style={styles.heroAmount}>{money(total, currency)}</Text>
           <Text style={styles.heroSub}>
-            {isCash
+            {isNoCharge
+              ? 'Nothing to pay on this trip.'
+              : isCash
               ? ride.cashCollected
                 ? 'Paid in cash'
                 : `Please pay ${driverName} in cash`
               : isPaid
               ? `Charged to your card${ride.cardLast4 ? ` ending ${ride.cardLast4}` : ''}`
               : isFailed
-              ? "Please contact support and we'll sort it out."
+              ? "Please email support@takearoute.ltd and we'll sort it out."
               : slow
               ? 'This is taking longer than usual. Your receipt is emailed once the payment goes through.'
               : 'Confirming your payment. You can book your next ride while we finish.'}
@@ -110,6 +121,7 @@ export default function RiderRideCompletedScreen() {
       {/* Journey */}
       <Card style={{ marginTop: SPACE[4] }}>
         <RouteLine pickup={ride.pickupLocation?.address || 'Pickup'} dropoff={ride.dropoffLocation?.address || 'Drop-off'} />
+        <StopRows ride={ride} />
         {distance || duration ? (
           <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>{[distance, duration].filter(Boolean).join(', ')}</Text>
         ) : null}

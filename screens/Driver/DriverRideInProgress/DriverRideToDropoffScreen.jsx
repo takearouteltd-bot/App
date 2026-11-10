@@ -16,7 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { doc, getDoc, onSnapshot, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
-import { useDriverPosition } from '../../../utils/driverLocation';
+import { useDriverPosition, retryJobSharing } from '../../../utils/driverLocation';
 
 import { currencySymbol, getAppConfig, money, waitingCharge } from '../../../utils/appConfig';
 import { fareSoFar } from '../../../utils/fareSoFar';
@@ -27,7 +27,7 @@ import PhoneCustomerCard from '../../../components/PhoneCustomerCard';
 import { confirmMaskedCall } from '../../../utils/calling';
 import {
   COLORS, TYPE, SPACE, RADIUS, SHADOW,
-  Avatar, Button, Chip, IconButton, Loading, StatRow, isCoord,
+  Avatar, Banner, Button, Chip, IconButton, Loading, StatRow, isCoord,
 } from '../../../components/ui/kit';
 
 const { height } = Dimensions.get('window');
@@ -105,10 +105,14 @@ export default function DriverRideToDropoffScreen() {
       setRide(data);
 
       // The passenger can end a trip early. Without this the driver's screen
-      // sat on a journey that had already been called off.
-      if ((data.status === 'cancelled' || data.status === 'canceled') && !leftScreen.current) {
+      // sat on a journey that had already been called off. The server then
+      // turns it into a completed trip at the fare so far (chargeTripEndedEarly),
+      // so a phone that missed the cancelled moment sees "completed" instead.
+      const endedByPassenger = data.status === 'completed' &&
+        (data.endedEarly === true || data.endedEarlyBy === 'rider');
+      if ((data.status === 'cancelled' || data.status === 'canceled' || endedByPassenger) && !leftScreen.current) {
         leftScreen.current = true;
-        if (data.cancelledBy === 'rider') {
+        if (data.cancelledBy === 'rider' || endedByPassenger) {
           Alert.alert(
             'Trip ended',
             data.endedEarly
@@ -153,7 +157,7 @@ export default function DriverRideToDropoffScreen() {
 
   useEffect(() => {
     if (!ride?.riderId) return undefined;
-    return onSnapshot(doc(db, 'riders', ride.riderId), (snap) => {
+    return onSnapshot(doc(db, 'riderPublic', ride.riderId), (snap) => {
       if (snap.exists()) setRiderData(snap.data());
     });
   }, [ride?.riderId]);
@@ -453,6 +457,17 @@ export default function DriverRideToDropoffScreen() {
         <SafetyButton role="driver" rideId={rideId} />
       </SafeAreaView>
 
+      {position.jobSharing === 'failed' ? (
+        <View style={styles.shareWarning}>
+          <Banner
+            tone="warning"
+            title="Your passenger can’t follow you"
+            body="Your location only updates while TakeARoute is open. Allow location for the app and keep it on screen, or tap Try again."
+            action={<Button size="small" title="Try again" onPress={() => retryJobSharing(ride.driverId)} />}
+          />
+        </View>
+      ) : null}
+
       <View style={styles.mapControls}>
         <IconButton
           icon={followDriver ? 'navigate' : 'locate'}
@@ -618,6 +633,7 @@ const styles = StyleSheet.create({
     borderWidth: 2, borderColor: COLORS.white,
   },
 
+  shareWarning: { position: 'absolute', top: 120, left: SPACE[5], right: SPACE[5] },
   topBar: {
     position: 'absolute', top: 0, left: SPACE[5], right: SPACE[5],
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

@@ -2,7 +2,7 @@
 // (auth 9099, firestore 8080, functions 5001), project demo-tar.
 import { initializeApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
-import { getFirestore, connectFirestoreEmulator, doc, getDoc, getDocs, collection, updateDoc, setDoc, arrayUnion, query, where, addDoc } from 'firebase/firestore';
+import { getFirestore, connectFirestoreEmulator, doc, getDoc, getDocs, collection, updateDoc, setDoc, arrayUnion, query, where, addDoc, serverTimestamp } from 'firebase/firestore';
 import { getFunctions, connectFunctionsEmulator, httpsCallable } from 'firebase/functions';
 import assert from 'node:assert/strict';
 
@@ -85,24 +85,27 @@ console.log('   ', places.results[0].main, '→', placeDetail.address);
 step('phone booking sent to driver 1 by name');
 const b1 = await O.call('createFleetBooking', { customer: { phone: '07700 900999', name: 'Ann Smith' }, pickup: T5, dropoff: PAD, rideType: 'RouteMini', driverId: d1.user.uid, notes: 'Flight BA123' });
 assert.equal(b1.status, 'dispatching');
-let r1 = (await getDoc(doc(D.db, 'rides', b1.rideId))).data();
+await assert.rejects(getDoc(doc(D.db, 'rides', b1.rideId)), 'a driver not on the job cannot read the ride (customer number)');
+const offer = await until(async () => { const o = await getDoc(doc(D.db, 'fleetJobOffers', b1.rideId)); return o.exists() ? o.data() : null; }, 'job offer mirrored');
+assert.equal(offer.customer.name, 'Ann Smith'); assert.equal(offer.customer.phone, undefined); assert.equal(offer.dispatch.driverId, d1.user.uid);
+let r1 = (await getDoc(doc(O.db, 'rides', b1.rideId))).data();
 assert.equal(r1.source, 'phone'); assert.equal(r1.riderId, null); assert.equal(r1.dispatch.driverId, d1.user.uid);
 assert.equal(r1.customer.phone, '+447700900999');
 const cust = (await getDoc(doc(O.db, 'fleets', created.fleetId, 'customers', '+447700900999'))).data();
 assert.equal(cust.name, 'Ann Smith'); assert.equal(cust.bookings, 1); assert.ok(cust.addresses.length >= 2);
 
 step('driver 2 cannot take it; driver 1 declines; office resends to the fleet; driver 2 takes it');
-const claim = (uid) => ({ status: 'accepted', driverId: uid, acceptedAt: new Date(), walletProcessed: false });
+const claim = (uid) => ({ status: 'accepted', driverId: uid, acceptedAt: serverTimestamp(), walletProcessed: false });
 await assert.rejects(updateDoc(doc(D2.db, 'rides', b1.rideId), claim(d2.user.uid)));
 await updateDoc(doc(D.db, 'rides', b1.rideId), { declinedBy: arrayUnion(d1.user.uid) });
 await O.call('redispatchFleetBooking', { rideId: b1.rideId, driverId: null });
-r1 = (await getDoc(doc(D.db, 'rides', b1.rideId))).data();
+r1 = (await getDoc(doc(O.db, 'rides', b1.rideId))).data();
 assert.equal(r1.dispatch.driverId, null); assert.deepEqual(r1.declinedBy, []); assert.equal(r1.dispatch.rounds, 2);
 await updateDoc(doc(D2.db, 'rides', b1.rideId), claim(d2.user.uid));
 
 step('driver 2 gives it back: sent on to the fleet by itself, without driver 2; office still sees who returned it');
 await updateDoc(doc(D2.db, 'rides', b1.rideId), { status: 'dispatching', driverId: null, acceptedAt: null, declinedBy: arrayUnion(d2.user.uid) });
-r1 = await until(async () => { const r = (await getDoc(doc(D.db, 'rides', b1.rideId))).data(); return r.dispatch.returnedBy ? r : null; }, 'returnedBy');
+r1 = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', b1.rideId))).data(); return r.dispatch.returnedBy ? r : null; }, 'returnedBy');
 assert.equal(r1.dispatch.returnedBy, d2.user.uid);
 assert.equal(r1.dispatch.autoResent, true); assert.equal(r1.dispatch.mode, 'all');
 assert.ok(r1.dispatch.offeredAt, 'rung again'); assert.ok(r1.declinedBy.includes(d2.user.uid));
@@ -110,9 +113,9 @@ assert.ok(r1.dispatch.offeredAt, 'rung again'); assert.ok(r1.declinedBy.includes
 step('driver 1 takes it from the fleet broadcast, does the trip, completes in cash');
 await O.call('redispatchFleetBooking', { rideId: b1.rideId, driverId: d1.user.uid });
 await updateDoc(doc(D.db, 'rides', b1.rideId), claim(d1.user.uid));
-await updateDoc(doc(D.db, 'rides', b1.rideId), { status: 'arrived', arrivedAt: new Date() });
-await updateDoc(doc(D.db, 'rides', b1.rideId), { status: 'ongoing', startedAt: new Date() });
-await updateDoc(doc(D.db, 'rides', b1.rideId), { status: 'completed', completedAt: new Date(), cashCollected: true });
+await updateDoc(doc(D.db, 'rides', b1.rideId), { status: 'arrived', arrivedAt: serverTimestamp() });
+await updateDoc(doc(D.db, 'rides', b1.rideId), { status: 'ongoing', startedAt: serverTimestamp() });
+await updateDoc(doc(D.db, 'rides', b1.rideId), { status: 'completed', completedAt: serverTimestamp(), cashCollected: true });
 
 step('pre-booking 2 hours ahead, then "send now", then office cancels');
 const later = new Date(Date.now() + 2 * 3600 * 1000).toISOString();
@@ -213,6 +216,12 @@ await adminSet(`fleetWallets/${created.fleetId}`, { availableBalance: 20, totalE
 step('admin records a payment to the fleet');
 await A.call('recordFleetPayout', { fleetId: created.fleetId, amount: 15, reference: 'TX1' });
 assert.equal((await getDoc(doc(O.db, 'fleetWallets', created.fleetId))).data().availableBalance, 5);
+await assert.rejects(A.call('recordFleetPayout', { fleetId: created.fleetId, amount: 6, reference: 'TX2' }), /only has 5\.00/);
+
+step('the fleet can withdraw an invitation of its own, once');
+await O.call('inviteFleetDriver', { phone: '07700900777', driverType: 'company' });
+await O.call('withdrawFleetInvite', { phone: '07700900777' });
+await assert.rejects(O.call('withdrawFleetInvite', { phone: '07700900777' }), /No invitation/);
 
 step('fleet cannot remove driver 2 mid-job; afterwards driver 2 is suspended (company car), membership back, waiting offers return to the office; admin lifts it');
 const bOn = await O.call('createFleetBooking', { customer: { phone: '07700900888', name: 'Bob' }, pickup: T5, dropoff: PAD, driverId: d2.user.uid });
@@ -555,12 +564,13 @@ step('driver contact: the email from their sign-in shows; staff fix the phone; o
 await adminSet(`drivers/${d1.user.uid}`, { phoneNumber: null, email: null }, true);
 let contact = await O.call('driverContact', { driverId: d1.user.uid });
 assert.equal(contact.email, 'd1@test.dev'); assert.equal(contact.phone, ''); assert.equal(contact.signsInWith, 'email'); assert.equal(contact.canEditEmail, false);
-assert.equal((await getDoc(doc(D.db, 'drivers', d1.user.uid))).data().email, 'd1@test.dev', 'copied to the driver record');
+assert.equal((await getDoc(doc(D.db, 'driverPrivate', d1.user.uid))).data().email, 'd1@test.dev', 'copied to the private record');
 await O.call('saveDriverContact', { driverId: d1.user.uid, phone: '07123 456789' });
 contact = await O.call('driverContact', { driverId: d1.user.uid });
 assert.equal(contact.phone, '+447123456789');
 const d1rec = (await getDoc(doc(D.db, 'drivers', d1.user.uid))).data();
-assert.equal(d1rec.phoneNumber, '+447123456789'); assert.match(d1rec.contactUpdatedBy, /Star Cars/);
+assert.match(d1rec.contactUpdatedBy, /Star Cars/);
+assert.equal((await getDoc(doc(D.db, 'driverPrivate', d1.user.uid))).data().phoneNumber, '+447123456789');
 await assert.rejects(O.call('saveDriverContact', { driverId: d1.user.uid, email: 'new@test.dev' }), /Only TakeARoute/);
 await assert.rejects(O.call('saveDriverContact', { driverId: d1.user.uid, phone: '12' }), /phone number/);
 await A.call('saveDriverContact', { driverId: d1.user.uid, email: 'D1new@test.dev' });

@@ -17,7 +17,8 @@ import { COLORS, TYPE, SPACE, ScreenHeader, Section, Card, RowGroup, Button, Fie
 
 export default function EmergencyContactScreen({ navigation, route }) {
   const role = route?.params?.role || 'rider';
-  const collectionName = role === 'driver' ? 'drivers' : 'riders';
+  // A driver's record is readable by passengers, so theirs is kept privately.
+  const collectionName = role === 'driver' ? 'driverPrivate' : 'riders';
   const uid = auth.currentUser?.uid;
 
   const [loaded, setLoaded] = useState(false);
