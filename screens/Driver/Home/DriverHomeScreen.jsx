@@ -47,6 +47,7 @@ import {
 } from '../../../components/ui/kit';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { distanceText } from '../../../utils/routes';
+import { DRIVER_MAP_STYLE } from '../../../utils/driverMapStyle';
 
 // Remembered between launches, so a driver who hides their earnings from
 // passengers does not have to do it again every shift.
@@ -976,7 +977,7 @@ export default function DriverHomeScreen() {
             ? { latitude: location.latitude, longitude: location.longitude, latitudeDelta: 0.01, longitudeDelta: 0.01 }
             : FALLBACK_REGION
         }
-        customMapStyle={mapStyle}
+        customMapStyle={DRIVER_MAP_STYLE}
         showsCompass={false}
         toolbarEnabled={false}
       >
@@ -1200,6 +1201,7 @@ export default function DriverHomeScreen() {
                   />
                 ) : null}
                 {currentRide.femaleDriverOnly ? <Chip label="Female driver" icon="female-outline" /> : null}
+                {currentRide.riderId ? <RiderRatingChip riderId={currentRide.riderId} /> : null}
                 {Number(currentRide.fare?.surgeMultiplier) > 1 ? (
                   <Chip label={`${currentRide.fare.surgeMultiplier}× busy`} icon="flash" />
                 ) : null}
@@ -1221,12 +1223,14 @@ export default function DriverHomeScreen() {
             <View style={styles.facts}>
               <View style={styles.fact}>
                 <Ionicons name="navigate-outline" size={16} color={COLORS.muted} />
-                <Text style={styles.factText}>{distanceText(currentRide.pickupDistanceKm)} away</Text>
+                <Text style={styles.factText}>
+                  {pickupMinutes(currentRide.pickupDistanceKm)} min ({distanceText(currentRide.pickupDistanceKm)}) to pickup
+                </Text>
               </View>
               <View style={styles.fact}>
                 <Ionicons name="time-outline" size={16} color={COLORS.muted} />
                 <Text style={styles.factText}>
-                  {distanceText(currentRide.route?.distanceKm || 0)} · {Math.ceil(currentRide.route?.durationMinutes || 0)} min trip
+                  {Math.ceil(currentRide.route?.durationMinutes || 0)} min ({distanceText(currentRide.route?.distanceKm || 0)}) trip
                 </Text>
               </View>
             </View>
@@ -1280,15 +1284,32 @@ export default function DriverHomeScreen() {
 // Somewhere sensible to draw the map while there is no fix yet.
 const FALLBACK_REGION = { latitude: 51.5074, longitude: -0.1278, latitudeDelta: 0.2, longitudeDelta: 0.2 };
 
-const mapStyle = [
-  { elementType: 'geometry', stylers: [{ color: COLORS.surface }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: COLORS.muted }] },
-  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: COLORS.white }] },
-  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: COLORS.line }] },
-  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: COLORS.fill }] },
-];
+
+/* Rough drive time to the pickup from the straight-line distance (roads
+   are about a third longer; about 30 km/h in town), as offers don't carry
+   a route to the pickup. At least 1 minute. */
+function pickupMinutes(km) {
+  return Math.max(1, Math.ceil((Number(km) || 0) * 1.35 * 2));
+}
+
+/* The passenger's rating on a job offer, from riderPublic (drivers may read
+   it). Nothing until they have been rated. */
+function RiderRatingChip({ riderId }) {
+  const [rating, setRating] = useState(null);
+  useEffect(() => {
+    let live = true;
+    setRating(null);
+    getDoc(doc(db, 'riderPublic', riderId))
+      .then((snap) => {
+        const r = snap.exists() ? Number(snap.data().rating) : NaN;
+        if (live && r > 0) setRating(r);
+      })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [riderId]);
+  if (!rating) return null;
+  return <Chip label={rating.toFixed(2)} icon="star" />;
+}
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.surface },

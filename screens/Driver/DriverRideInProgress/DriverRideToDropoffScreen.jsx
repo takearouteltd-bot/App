@@ -30,6 +30,7 @@ import {
   Avatar, Banner, Button, Chip, IconButton, Loading, StatRow, isCoord,
 } from '../../../components/ui/kit';
 import { whenSaved } from '../../../utils/slowSave';
+import { DRIVER_MAP_STYLE } from '../../../utils/driverMapStyle';
 
 const { height } = Dimensions.get('window');
 
@@ -411,7 +412,7 @@ export default function DriverRideToDropoffScreen() {
         ref={mapRef}
         provider={PROVIDER_GOOGLE}
         style={StyleSheet.absoluteFill}
-        customMapStyle={customMapStyle}
+        customMapStyle={DRIVER_MAP_STYLE}
         initialRegion={{
           latitude: driverLocation.latitude,
           longitude: driverLocation.longitude,
@@ -602,15 +603,6 @@ export default function DriverRideToDropoffScreen() {
   );
 }
 
-const customMapStyle = [
-  { elementType: 'geometry', stylers: [{ color: COLORS.surface }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: COLORS.muted }] },
-  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: COLORS.white }] },
-  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: COLORS.line }] },
-  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: COLORS.fill }] },
-];
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.surface },
