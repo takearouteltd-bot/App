@@ -13,7 +13,8 @@ import {
   Linking,
 } from 'react-native';
 import { Alert } from '../../../components/ui/alert';
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
+import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
+import StaticMarker from '../../../components/StaticMarker';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import {
@@ -154,6 +155,8 @@ export default function DriverHomeScreen() {
   const snoozed = useRef(new Map());
   // Jobs this phone has rung for, with the price at the time.
   const rungFor = useRef(new Map());
+  // The jobs list last put on screen, to skip redraws that change nothing.
+  const lastJobs = useRef(null);
   const [searchingRides, setSearchingRides] = useState([]);
   const [fleetRides, setFleetRides] = useState([]);
   // This driver's place in their fleet's zone queue, if any.
@@ -597,7 +600,14 @@ export default function DriverHomeScreen() {
     if (fresh.length && !onRideRef.current) ringForNewJob(fresh[0]);
     // Nothing left to take: stop ringing.
     if (!rides.length) stopJobRing();
-    setRideRequests(rides);
+    // A new GPS fix alone, with the same jobs at about the same distance,
+    // changes nothing on screen: skip it, so the screen (and its map) isn't
+    // redrawn every few seconds while the driver waits or uses other tabs.
+    const sig = rides.map((r) => `${r.id}@${r.pickupDistanceKm.toFixed(1)}`).join('|');
+    const last = lastJobs.current;
+    const same = last && last.searching === searchingRides && last.fleet === fleetRides && last.sig === sig;
+    lastJobs.current = { searching: searchingRides, fleet: fleetRides, sig };
+    if (!same) setRideRequests(rides);
     // Keep the card the driver is reading; only start again when it is gone.
     setCurrentRideId((current) => {
       if (current && rides.some((r) => r.id === current)) return current;
@@ -611,6 +621,7 @@ export default function DriverHomeScreen() {
   useEffect(() => {
     if (isOnline) return;
     snoozed.current.clear();
+    lastJobs.current = null;
     stopJobRing();
     setRideRequests([]);
     setCurrentRideId(null);
@@ -1072,25 +1083,25 @@ export default function DriverHomeScreen() {
           />
         ) : null}
         {offerMap ? (
-          <Marker coordinate={offerMap.pickup} anchor={{ x: 0.5, y: 0.5 }}>
+          <StaticMarker coordinate={offerMap.pickup} anchor={{ x: 0.5, y: 0.5 }}>
             <View style={styles.offerPickupPin}>
               <Ionicons name="person" size={14} color={COLORS.white} />
             </View>
-          </Marker>
+          </StaticMarker>
         ) : null}
         {offerMap?.dropoff ? (
-          <Marker coordinate={offerMap.dropoff} anchor={{ x: 0.5, y: 0.5 }}>
+          <StaticMarker coordinate={offerMap.dropoff} anchor={{ x: 0.5, y: 0.5 }}>
             <View style={styles.offerDropPin}>
               <View style={styles.offerDropDot} />
             </View>
-          </Marker>
+          </StaticMarker>
         ) : null}
         {location ? (
-          <Marker coordinate={location} anchor={{ x: 0.5, y: 0.5 }} flat>
+          <StaticMarker coordinate={location} anchor={{ x: 0.5, y: 0.5 }} flat>
             <View style={styles.carMarker}>
               <Ionicons name="car-sport" size={18} color={COLORS.lime} />
             </View>
-          </Marker>
+          </StaticMarker>
         ) : null}
       </MapView>
 

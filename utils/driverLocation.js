@@ -47,7 +47,28 @@ function update(patch) {
   listeners.forEach((listener) => listener({ ...state }));
 }
 
-/* The latest position and how getting it went. Re-renders on every fix. */
+/* A new fix for the screens. The phone reports every 4 s, and every screen
+   (and the tab bar) watching the position redraws each time, which made the
+   whole app sluggish while online. So a fix is passed on only after a real
+   move (10 m) or every 20 s while parked; the server saves still see every
+   fix (writeDriverLocation throttles itself). */
+const SHOW_AFTER_METRES = 10;
+const SHOW_EVERY_MS = 20000;
+let lastShown = 0;
+function showFix(coords) {
+  const now = Date.now();
+  if (
+    state.status === 'granted' &&
+    state.coords &&
+    now - lastShown < SHOW_EVERY_MS &&
+    metresApart(state.coords, coords) < SHOW_AFTER_METRES
+  ) return;
+  lastShown = now;
+  update({ coords, status: 'granted' });
+}
+
+/* The latest position and how getting it went. Re-renders on each fix that
+   showFix passes on. */
 export function useDriverPosition() {
   const [snapshot, setSnapshot] = useState({ ...state });
   useEffect(() => {
@@ -72,6 +93,9 @@ const SAVE_EVERY_MS_IDLE = 20000;
 const SAVE_AFTER_METRES = 150;
 let savingSince = 0;
 let lastSave = null;
+// The same for the public position (driverLocations), in the publisher below.
+let publicSavingSince = 0;
+let lastPublic = null;
 
 function metresApart(a, b) {
   const R = 6371000;
@@ -136,7 +160,7 @@ TaskManager.defineTask(JOB_LOCATION_TASK, async ({ data, error }) => {
   const fix = fixes[fixes.length - 1];
   const driverId = jobDriverId || getAuth().currentUser?.uid;
   if (!driverId) return;
-  update({ coords: fix.coords, status: 'granted' });
+  showFix(fix.coords);
   await writeDriverLocation(driverId, fix.coords);
 });
 
@@ -197,7 +221,7 @@ async function startWatching(driverId) {
   watcher = await Location.watchPositionAsync(
     { accuracy: Location.Accuracy.High, timeInterval: 4000 },
     async (fix) => {
-      update({ coords: fix.coords, status: 'granted' });
+      showFix(fix.coords);
       if (driverId) await writeDriverLocation(driverId, fix.coords);
     }
   );
@@ -319,6 +343,22 @@ export function useDriverLocationPublisher(driverId, enabled = true) {
     const ref = doc(db, 'driverLocations', driverId);
 
     if (isFree && coords && Number.isFinite(coords.latitude)) {
+      // Same pace as the private save: one in flight, every 20 s or after
+      // 150 m, at once when the driver has just become free. It used to be
+      // saved on every fix, which queued up on a weak signal and slowed every
+      // other read and tap in the app.
+      const now = Date.now();
+      const due =
+        publishedFree !== true ||
+        !lastPublic ||
+        lastPublic.driverId !== driverId ||
+        now - lastPublic.at >= SAVE_EVERY_MS_IDLE ||
+        metresApart(lastPublic.coords, coords) >= SAVE_AFTER_METRES;
+      const busy = publicSavingSince && now - publicSavingSince < 30000;
+      if (!due || (busy && publishedFree === true)) return;
+      lastPublic = { driverId, at: now, coords: { latitude: coords.latitude, longitude: coords.longitude } };
+      publicSavingSince = now;
+      const done = () => { if (publicSavingSince === now) publicSavingSince = 0; };
       setPublishedFree(true);
       setDoc(
         ref,
@@ -334,13 +374,22 @@ export function useDriverLocationPublisher(driverId, enabled = true) {
           updatedAt: serverTimestamp(),
         },
         { merge: true }
-      ).catch(() => {});
+      ).catch(() => {}).finally(done);
     } else if (publishedFree !== false) {
       // Only once per change to offline, not on every GPS tick.
       setPublishedFree(false);
+      lastPublic = null;
       setDoc(ref, { online: false, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
     }
     // publishedFree is the guard, not a trigger.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [driverId, enabled, isFree, coords, vehicleType]);
+}
+
+/* The publisher as a component that draws nothing. Put next to the driver
+   tabs rather than calling the hook in them, so a position change redraws
+   this alone, not every tab. */
+export function DriverLocationPublisher({ driverId }) {
+  useDriverLocationPublisher(driverId, !!driverId);
+  return null;
 }
