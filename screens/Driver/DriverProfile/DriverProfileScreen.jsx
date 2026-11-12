@@ -54,15 +54,19 @@ export default function DriverProfileScreen() {
   const [loggingOut, setLoggingOut] = useState(false);
 
   const cities = useCities();
-  const saveWorkingCity = async (cityId) => {
+  // "Automatic": the driver's Home screen moves the city to where they are.
+  // "Any area": no city, so jobs nearby from every city (by search radius).
+  const AUTO_CITY = "__auto";
+  const ANY_CITY = "__any";
+  const saveWorkingCity = async (choice) => {
     if (!user?.uid) return;
-    const city = cities.find((c) => c.id === cityId);
+    const city = cities.find((c) => c.id === choice);
+    const update =
+      choice === AUTO_CITY
+        ? { workingCityAuto: true }
+        : { workingCityId: city?.id || null, workingCityName: city?.name || null, workingCityAuto: false };
     try {
-      await setDoc(
-        doc(db, "drivers", user.uid),
-        { workingCityId: cityId, workingCityName: city?.name || null },
-        { merge: true }
-      );
+      await setDoc(doc(db, "drivers", user.uid), update, { merge: true });
     } catch (error) {
       Alert.alert("Could not change city", "Please try again.");
     }
@@ -279,13 +283,18 @@ export default function DriverProfileScreen() {
           ]}
         />
 
-        {/* Working city: jobs are only offered from here once chosen. Hidden
+        {/* Working city: jobs are only offered from here once chosen (or
+            Automatic / Any area). Hidden
             until the dashboard lists at least one city. */}
         {cities.length ? (
           <SelectField
             title="Where do you want to work?"
-            value={driver?.workingCityId || null}
-            options={cities.map((c) => ({ value: c.id, label: c.name }))}
+            value={driver?.workingCityAuto ? AUTO_CITY : driver?.workingCityId || ANY_CITY}
+            options={[
+              { value: AUTO_CITY, label: "Automatic (where I am)", detail: "Switches to the city you're driving in" },
+              { value: ANY_CITY, label: "Any area", detail: "Jobs near you from every city" },
+              ...cities.map((c) => ({ value: c.id, label: c.name, detail: "Jobs picked up here only" })),
+            ]}
             onChange={saveWorkingCity}
             renderTrigger={(open, selected) => (
               <RowGroup
@@ -295,7 +304,11 @@ export default function DriverProfileScreen() {
                     icon: "navigate-outline",
                     iconColor: COLORS.midnight,
                     title: "Working city",
-                    detail: selected ? `${selected.label} · jobs picked up here only` : "Any area, choose a city",
+                    detail: driver?.workingCityAuto
+                      ? `Automatic · now ${driver?.workingCityName || "any area"}`
+                      : driver?.workingCityId
+                      ? `${selected?.label || driver?.workingCityName || "One city"} · jobs picked up here only`
+                      : "Any area · jobs near you from every city",
                     onPress: open,
                   },
                 ]}

@@ -37,7 +37,7 @@ import { getAuth } from 'firebase/auth';
 import { useAppConfig, currencySymbol } from '../../../utils/appConfig';
 import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocuments';
 import { canServe, classLabel, vehicleLabel, wantsJobType, jobChoices } from '../../../constants/vehicleClasses';
-import { servesCity } from '../../../utils/cities';
+import { servesCity, useCities, cityFor } from '../../../utils/cities';
 import { biddingEnabled, counterSteps, offerSeconds, sendCounterOffer, withdrawCounterOffer } from '../../../utils/bidding';
 import { clearJobAlerts, ringForNewJob, stopJobRing } from '../../../utils/notifications';
 import PaymentTypeBanner from '../../../components/PaymentTypeBanner';
@@ -136,6 +136,11 @@ export default function DriverHomeScreen() {
   // The penalty end this phone has already explained, so it is said once.
   const penaltyExplained = useRef(null);
   const [workingCityId, setWorkingCityId] = useState(null);
+  const [workingCityName, setWorkingCityName] = useState(null);
+  // "Automatic (where I am)" in Account: the city follows the driver.
+  const [workingCityAuto, setWorkingCityAuto] = useState(false);
+  // Cities the driver said "Keep" to while online, so they are asked once.
+  const keptCity = useRef(new Set());
   const [femaleVerified, setFemaleVerified] = useState(false);
   // Off: this driver isn't offered jobs paid in cash (server and here).
   const [cashJobs, setCashJobs] = useState(true);
@@ -253,6 +258,8 @@ export default function DriverHomeScreen() {
         !data.subscription?.lastPaidAt
       );
       setWorkingCityId(data.workingCityId || null);
+      setWorkingCityName(data.workingCityName || null);
+      setWorkingCityAuto(data.workingCityAuto === true);
       setFemaleVerified(data.femaleVerified === true);
       setCashJobs(data.cashJobs !== false);
       setJobTypes(Array.isArray(data.jobTypes) ? data.jobTypes : null);
@@ -675,6 +682,46 @@ export default function DriverHomeScreen() {
     }
     return undefined;
   }, [isOnline, pulseAnim]);
+
+  /* Working city vs where the driver is. A driver set to Birmingham who is
+     online in Redditch gets no Redditch jobs (servesCity here and in
+     offerRideToDrivers), often without knowing it. So:
+       - Automatic: the app moves the city to wherever they are (no city
+         when outside every city, so they get jobs nearby by radius);
+       - otherwise: ask once per city per online spell, never during a trip.
+     Outside every city nothing is asked. */
+  const cities = useCities();
+  const hereCity = isOnline && location ? cityFor(cities, location) : null;
+  const hereCityId = hereCity?.id || null;
+  const hereCityName = hereCity?.name || null;
+  const cityLabel = workingCityName || cities.find((c) => c.id === workingCityId)?.name || null;
+  useEffect(() => {
+    if (!isOnline) keptCity.current.clear();
+  }, [isOnline]);
+  useEffect(() => {
+    if (!isOnline || !isApproved || !driverId || onRide || !location) return;
+    const save = (id, name) =>
+      updateDoc(doc(db, 'drivers', driverId), { workingCityId: id, workingCityName: name }).catch(() =>
+        Alert.alert('Could not change your city', 'Check your connection, or change it in Account.')
+      );
+    if (workingCityAuto) {
+      if (!cities.length || hereCityId === workingCityId) return;
+      save(hereCityId, hereCityName);
+      return;
+    }
+    if (!hereCityId || !workingCityId || hereCityId === workingCityId) return;
+    if (keptCity.current.has(hereCityId)) return;
+    keptCity.current.add(hereCityId);
+    const current = cityLabel || 'another city';
+    Alert.alert(
+      `You're in ${hereCityName}`,
+      `You only get ${current} jobs at the moment, so ${hereCityName} jobs won't reach you. Switch to ${hereCityName}?`,
+      [
+        { text: `Keep ${current}`, style: 'cancel' },
+        { text: `Switch to ${hereCityName}`, onPress: () => save(hereCityId, hereCityName) },
+      ]
+    );
+  }, [isOnline, isApproved, driverId, onRide, hereCityId, hereCityName, workingCityId, workingCityAuto, cityLabel, cities.length, location]);
 
   /* Cash jobs on or off: the server stops offering cash jobs when off. */
   const toggleCashJobs = useCallback(() => {
@@ -1183,6 +1230,22 @@ export default function DriverHomeScreen() {
               })()}
             </Text>
           </TouchableOpacity>
+          {/* Where they get jobs; chosen in Account. */}
+          {cities.length ? (
+            <TouchableOpacity
+              style={[styles.cashToggle, hereCityId && workingCityId && hereCityId !== workingCityId && styles.cashToggleOff]}
+              onPress={() => navigation.navigate('Account', { screen: 'DriverProfile' })}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Working city"
+            >
+              <Ionicons name="navigate-outline" size={16} color={COLORS.midnight} />
+              <Text style={styles.cashToggleText}>
+                {workingCityId ? `${cityLabel || 'One city'} jobs only` : 'Jobs from any city'}
+                {workingCityAuto ? ' (auto)' : ''}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
           </View>
         ) : null}
 
