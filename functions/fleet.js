@@ -86,20 +86,30 @@ const PLACES_API = process.env.PLACES_API_BASE ||
 const ROUTES_API = process.env.ROUTES_API_BASE ||
   "https://routes.googleapis.com";
 
-/* Fare multipliers per vehicle class, as FareEstimationScreen's
-   RIDE_OPTIONS. Change both together. */
-const CLASS_MULTIPLIERS = {
-  RouteMini: 1.0,
-  RoutePlus: 1.2,
-  RouteXL: 1.5,
-  RouteEco: 0.9,
-  RouteExecutive: 2.0,
+/* Job categories -> the prefix their prices are saved under in config/app
+   fares, as App/utils/fares.js PRICE_KEY. Plus and Eco are no longer booked
+   but are still accepted (older apps) and priced as Normal. */
+const RIDE_TYPES = {
+  RouteMini: "normal",
+  RoutePriority: "priority",
+  RouteUrgent: "urgent",
+  RouteXL: "xl",
+  RouteExecutive: "executive",
+  RoutePlus: "normal",
+  RouteEco: "normal",
 };
+/* What can be booked now, in the order the apps show them. */
+const BOOKABLE_TYPES = ["RouteMini", "RoutePriority", "RouteUrgent",
+  "RouteXL", "RouteExecutive"];
 
 /* Fare defaults, as App/utils/appConfig.js DEFAULT_APP_CONFIG.fares. */
 const FARE_DEFAULTS = {
-  baseFare: 3.0, ratePerMile: 2.2, ratePerMinute: 0.25, minimumFare: 6,
-  vatPercent: 20,
+  normalFirstMile: 4.5, normalPerMile: 1.0,
+  priorityFirstMile: 5.5, priorityPerMile: 1.2,
+  urgentFirstMile: 6.5, urgentPerMile: 1.5,
+  xlFirstMile: 6.5, xlPerMile: 1.5,
+  executiveFirstMile: 9.0, executivePerMile: 2.0,
+  ratePerMinute: 0, minimumFare: 0, vatPercent: 20,
 };
 
 const JOIN_CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -123,6 +133,7 @@ const MAX_INVOICE_LINES = 200;
 
 module.exports = (deps) => {
   const {functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
+    wantsJobType,
     hasExpiredDocument, toE164, toMillis, addOneMonth,
     TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor, STRIPE_SECRETS,
     fleetBilling, privacy, membershipSuspended, positionStale} = deps;
@@ -266,7 +277,10 @@ module.exports = (deps) => {
 
   /**
    * The fare for a route, worked out exactly as the passenger app does
-   * (FareEstimationScreen calculateFareDetails), without a promo.
+   * (App/utils/fares.js priceTrip), without a promo. First-mile pricing:
+   * the category's first-mile price, then its per-mile price for every
+   * tenth of a mile after the first. baseFare holds the first mile and
+   * distanceFare the rest, so receipts keep adding up.
    * @param {Object} raw config/app document data.
    * @param {Object} route {distanceKm, durationMinutes}
    * @param {string} rideType Vehicle class id.
@@ -280,12 +294,14 @@ module.exports = (deps) => {
     });
     const surgeRaw = raw && raw.surge ? Number(raw.surge.multiplier) : 1;
     const surge = Number.isFinite(surgeRaw) && surgeRaw >= 1 ? surgeRaw : 1;
-    const multiplier = CLASS_MULTIPLIERS[rideType] || 1;
-    const miles = route.distanceKm * 0.621371;
-    const distanceFare = miles * f.ratePerMile;
+    const key = RIDE_TYPES[rideType] || "normal";
+    const firstMile = f[key + "FirstMile"];
+    const perMile = f[key + "PerMile"];
+    // Charged to the tenth of a mile, as shown: 2.45 mi is 2.5.
+    const miles = Math.round(route.distanceKm * 0.621371 * 10) / 10;
+    const distanceFare = Math.max(0, miles - 1) * perMile;
     const timeFare = route.durationMinutes * f.ratePerMinute;
-    const subtotal = (f.baseFare + distanceFare + timeFare) * multiplier *
-      surge;
+    const subtotal = (firstMile + distanceFare + timeFare) * surge;
     const beforeVat = Math.max(subtotal, f.minimumFare);
     const vat = beforeVat * f.vatPercent / 100;
     const r2 = (n) => Number(n.toFixed(2));
@@ -294,14 +310,17 @@ module.exports = (deps) => {
           .toUpperCase(),
       vatPercent: f.vatPercent,
       discountAmount: 0,
-      baseFare: r2(f.baseFare),
+      pricing: "first_mile",
+      firstMile: r2(firstMile),
+      perMile: r2(perMile),
+      baseFare: r2(firstMile),
       distanceFare: r2(distanceFare),
       timeFare: r2(timeFare),
       surgeMultiplier: surge,
-      rideMultiplier: multiplier,
+      rideMultiplier: 1,
       vat: r2(vat),
       total: r2(beforeVat + vat),
-      distanceInMiles: r2(miles),
+      distanceInMiles: miles,
       subtotal: r2(beforeVat),
     };
   }
@@ -368,7 +387,7 @@ module.exports = (deps) => {
   }
   if (deps.shared) {
     deps.shared.priceAppRide = priceAppRide;
-    deps.shared.CLASS_MULTIPLIERS = CLASS_MULTIPLIERS;
+    deps.shared.RIDE_TYPES = RIDE_TYPES;
   }
 
   /**
@@ -383,14 +402,16 @@ module.exports = (deps) => {
 
   /**
    * Whether automatic dispatch (nearest, all drivers, zone queue) may offer
-   * this job to the driver: a driver who switched cash jobs off in the app
-   * isn't offered them. The office can still pick them by name.
+   * this job to the driver: a driver who switched cash jobs off, or
+   * unticked this job category, in the app isn't offered it. The office can
+   * still pick them by name.
    * @param {Object} d Driver data.
    * @param {Object} ride Ride data.
    * @return {boolean} Offer it.
    */
   function wantsJob(d, ride) {
-    return !(d.cashJobs === false && cashInHand(ride));
+    return !(d.cashJobs === false && cashInHand(ride)) &&
+      wantsJobType(d.jobTypes, ride.rideType);
   }
 
   /**
@@ -650,6 +671,7 @@ module.exports = (deps) => {
           d.name || d.fullName || "Driver",
         vehicleType: d.vehicleType || "RouteMini",
         noCash: d.cashJobs === false,
+        jobTypes: Array.isArray(d.jobTypes) ? d.jobTypes : null,
         since: was && was.zoneId === zone.id && was.since ? was.since : now,
       });
     });
@@ -719,6 +741,7 @@ module.exports = (deps) => {
       for (const z of tried) {
         next = (queues[z.id] || []).find((e) => !skip.has(e.driverId) &&
           canServe(e.vehicleType, ride.rideType) &&
+          wantsJobType(e.jobTypes || undefined, ride.rideType) &&
           !(e.noCash === true && cashInHand(ride))) || null;
         if (next) {
           zone = z;
@@ -2213,7 +2236,7 @@ module.exports = (deps) => {
     const [route, raw] = await Promise.all([
       routeFor(pickup, dropoff, stops), rawConfig()]);
     const fares = {};
-    Object.keys(CLASS_MULTIPLIERS).forEach((id) => {
+    BOOKABLE_TYPES.forEach((id) => {
       fares[id] = fareFor(raw, route, id).total;
     });
     return {
@@ -2258,7 +2281,7 @@ module.exports = (deps) => {
       throw new HttpsError("invalid-argument",
           "Choose a pickup and a drop-off.");
     }
-    const rideType = CLASS_MULTIPLIERS[d.rideType] ? d.rideType : "RouteMini";
+    const rideType = RIDE_TYPES[d.rideType] ? d.rideType : "RouteMini";
 
     // Now, or a booked time at least a few minutes ahead.
     const now = Date.now();
@@ -2551,7 +2574,7 @@ module.exports = (deps) => {
       throw new HttpsError("invalid-argument",
           "Choose a pickup and a drop-off.");
     }
-    const rideType = CLASS_MULTIPLIERS[d.rideType] ? d.rideType :
+    const rideType = RIDE_TYPES[d.rideType] ? d.rideType :
       ride.rideType;
     const key = (p) => p ? `${p.latitude},${p.longitude}` : "";
     const moved = key(pickup) !== key(ride.pickupLocation) ||
@@ -2972,7 +2995,10 @@ module.exports = (deps) => {
       const online = x.status === "online" || x.isOnRide === true;
       if (to === "online" && !online) return false;
       if (to === "offline" && online) return false;
-      if (vehicleType && (x.vehicleType || "RouteMini") !== vehicleType) {
+      // Old Plus and Eco cars count as Normal (RouteMini).
+      const own = ["RoutePlus", "RouteEco"].includes(x.vehicleType) ?
+        "RouteMini" : x.vehicleType || "RouteMini";
+      if (vehicleType && own !== vehicleType) {
         return false;
       }
       return true;
@@ -4153,7 +4179,7 @@ module.exports = (deps) => {
     stripe: deps.stripe, STRIPE_SECRETS,
     settleEndedEarly: deps.settleDriverEndedEarly,
     booking: {bookPhoneJob, quoteOne, quoteTypes, placeSearch, placeDetails,
-      placeFromText, point, CLASS_MULTIPLIERS}}));
+      placeFromText, point, RIDE_TYPES}}));
 
   /* Tickets and Lost & Found (fleetSupport.js). */
   Object.assign(out, require("./fleetSupport")({functions, db, FieldValue,

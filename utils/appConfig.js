@@ -11,11 +11,22 @@ import { db } from "../config/firebase";
 
 export const DEFAULT_APP_CONFIG = {
   currency: "GBP",
+  // First-mile pricing per job category (utils/fares.js): the price of the
+  // first mile, then the price of each mile after it. Time and the minimum
+  // fare are optional extras, off at 0.
   fares: {
-    baseFare: 3.0,
-    ratePerMile: 2.2,
-    ratePerMinute: 0.25,
-    minimumFare: 6,
+    normalFirstMile: 4.5,
+    normalPerMile: 1.0,
+    priorityFirstMile: 5.5,
+    priorityPerMile: 1.2,
+    urgentFirstMile: 6.5,
+    urgentPerMile: 1.5,
+    xlFirstMile: 6.5,
+    xlPerMile: 1.5,
+    executiveFirstMile: 9.0,
+    executivePerMile: 2.0,
+    ratePerMinute: 0,
+    minimumFare: 0,
     vatPercent: 20,
   },
   waiting: {

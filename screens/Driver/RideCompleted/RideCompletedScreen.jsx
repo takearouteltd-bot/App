@@ -58,9 +58,9 @@ export default function RideCompletedScreen() {
 
   const show = (v) => money(Number(v) || 0, currency);
   const lines = [
-    fare.baseFare !== undefined ? ['Base fare', show(fare.baseFare)] : null,
-    fare.distanceFare !== undefined ? ['Distance', show(fare.distanceFare)] : null,
-    fare.timeFare !== undefined ? ['Time', show(fare.timeFare)] : null,
+    fare.baseFare !== undefined ? [fare.pricing === 'first_mile' ? 'First mile' : 'Base fare', show(fare.baseFare)] : null,
+    fare.distanceFare !== undefined ? [fare.pricing === 'first_mile' ? 'Miles after the first' : 'Distance', show(fare.distanceFare)] : null,
+    fare.timeFare !== undefined && !(fare.pricing === 'first_mile' && !(fare.timeFare > 0)) ? ['Time', show(fare.timeFare)] : null,
     fare.surgeMultiplier > 1 ? ['Busy-time pricing', `×${fare.surgeMultiplier}`] : null,
     fare.discountAmount > 0 ? ['Promo discount', `-${show(fare.discountAmount)}`] : null,
     fare.vat > 0 ? [`VAT (${fare.vatPercent}%)`, show(fare.vat)] : null,

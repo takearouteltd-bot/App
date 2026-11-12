@@ -48,14 +48,18 @@ const CARD_DAYS_AHEAD = 5;
 const PAY_MINUTES = 30;
 // Flag a card hold to the office a day before it can lapse.
 const HOLD_WARN_MS = 6 * 86400000;
-const ALL_TYPES = ["RouteMini", "RoutePlus", "RouteXL", "RouteEco",
-  "RouteExecutive"];
+// Plus and Eco are no longer offered but stay valid for fleets that saved
+// them before.
+const ALL_TYPES = ["RouteMini", "RoutePriority", "RouteUrgent", "RouteXL",
+  "RouteExecutive", "RoutePlus", "RouteEco"];
 const TYPE_INFO = {
-  RouteMini: {label: "Standard", seats: 4},
-  RoutePlus: {label: "Plus", seats: 4},
-  RouteXL: {label: "Large (6 seats)", seats: 6},
-  RouteEco: {label: "Eco", seats: 4},
+  RouteMini: {label: "Normal", seats: 4},
+  RoutePriority: {label: "Priority", seats: 4},
+  RouteUrgent: {label: "Urgent", seats: 4},
+  RouteXL: {label: "XL (6 seats)", seats: 6},
   RouteExecutive: {label: "Executive", seats: 4},
+  RoutePlus: {label: "Plus", seats: 4},
+  RouteEco: {label: "Eco", seats: 4},
 };
 const LIVE = ["payment_pending", "scheduled", "dispatching", "accepted",
   "arrived", "ongoing"];

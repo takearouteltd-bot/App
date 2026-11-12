@@ -13,10 +13,8 @@ import { ChoiceCard, OnboardingFrame, StepSection, UploadTile } from "../../comp
 // so what a driver picks here matches what passengers book.
 const CLASS_ICON = {
   RouteMini: "car-hatchback",
-  RoutePlus: "car-side",
   RouteXL: "van-passenger",
-  RouteEco: "leaf",
-  RouteExecutive: "car-estate",
+  RouteExecutive: "car-side",
 };
 
 // Upload name (drivers/{uid}/{name}.ext) → the field it is saved as.
@@ -181,7 +179,7 @@ export default function VehicleDetailsScreen({ navigation, setOnboardingStatus }
 
       <StepSection
         title="Vehicle class"
-        hint="You'll get trips for this class and any class below it."
+        hint="Every car gets Normal, Priority and Urgent jobs. Once you're approved, you choose which ones you want in Account."
       >
         {VEHICLE_CLASSES.map((c) => (
           <ChoiceCard

@@ -36,7 +36,7 @@ const step = (s) => console.log('•', s);
 // Admin account
 const adm = await createUserWithEmailAndPassword(A.auth, 'admin@test.dev', 'secret123');
 await adminSet(`admins/${adm.user.uid}`, { isActive: true, role: 'super_admin' });
-await adminSet('config/app', { currency: 'GBP', fares: { baseFare: 3, ratePerMile: 2.2, ratePerMinute: 0.25, minimumFare: 6, vatPercent: 20 } });
+await adminSet('config/app', { currency: 'GBP', fares: { normalFirstMile: 4.5, normalPerMile: 1, executiveFirstMile: 9, executivePerMile: 2, ratePerMinute: 0.25, minimumFare: 6, vatPercent: 20 } });
 
 step('admin creates a fleet');
 const created = await A.call('createFleet', { name: 'Star Cars', ownerName: 'Sajid', email: 'owner@test.dev', phone: '07700900001', perDriverMonthly: 50 });

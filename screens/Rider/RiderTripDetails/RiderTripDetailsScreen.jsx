@@ -17,6 +17,7 @@ import {
   RouteLine, formatWhen,
 } from '../../../components/ui/kit';
 import { distanceText } from '../../../utils/routes';
+import { classLabel } from '../../../constants/vehicleClasses';
 
 export default function RiderTripDetailsScreen() {
   const navigation = useNavigation();
@@ -170,7 +171,8 @@ export default function RiderTripDetailsScreen() {
     rideMultiplier * surge;
   // The parts are rounded to pennies, so allow for that before calling it.
   const minimumApplied = beforePromo - partsTotal > Math.max(0.02, 0.015 * rideMultiplier * surge);
-  const carType = String(trip.rideType || 'Car').replace(/^Route/, '');
+  const carType = classLabel(trip.rideType);
+  const firstMile = fare.pricing === 'first_mile';
   const endedEarlyOff = Number(fare.fullTotal) > Number(fare.total) ? Number(fare.fullTotal) - Number(fare.total) : 0;
 
   const fareRows = isCancelled
@@ -181,9 +183,9 @@ export default function RiderTripDetailsScreen() {
         ...(fare.agreedPrice != null
           ? [['Agreed fare', rowMoney(fare.subtotal)]]
           : [
-              ['Base Fare', rowMoney(fare.baseFare)],
-              ['Distance Fare', rowMoney(fare.distanceFare)],
-              ['Time Fare', rowMoney(fare.timeFare)],
+              [firstMile ? 'First Mile' : 'Base Fare', rowMoney(fare.baseFare)],
+              [firstMile ? 'Miles After the First' : 'Distance Fare', rowMoney(fare.distanceFare)],
+              firstMile && !(Number(fare.timeFare) > 0) ? null : ['Time Fare', rowMoney(fare.timeFare)],
               rideMultiplier !== 1 ? [`${carType} pricing`, `× ${rideMultiplier}`] : null,
               surge > 1 ? ['Busy-time pricing', `× ${surge}`] : null,
               minimumApplied ? ['Minimum fare', rowMoney(beforePromo)] : null,

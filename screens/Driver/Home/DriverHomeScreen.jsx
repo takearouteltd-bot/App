@@ -36,7 +36,7 @@ import { httpsCallable } from 'firebase/functions';
 import { getAuth } from 'firebase/auth';
 import { useAppConfig, currencySymbol } from '../../../utils/appConfig';
 import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocuments';
-import { canServe, classLabel } from '../../../constants/vehicleClasses';
+import { canServe, classLabel, vehicleLabel, wantsJobType, jobChoices } from '../../../constants/vehicleClasses';
 import { servesCity } from '../../../utils/cities';
 import { biddingEnabled, counterSteps, offerSeconds, sendCounterOffer, withdrawCounterOffer } from '../../../utils/bidding';
 import { clearJobAlerts, ringForNewJob, stopJobRing } from '../../../utils/notifications';
@@ -139,6 +139,8 @@ export default function DriverHomeScreen() {
   const [femaleVerified, setFemaleVerified] = useState(false);
   // Off: this driver isn't offered jobs paid in cash (server and here).
   const [cashJobs, setCashJobs] = useState(true);
+  // Job categories the driver ticked in Account (null = all their car allows).
+  const [jobTypes, setJobTypes] = useState(null);
   // The taxi firm this driver works for, if any (functions/fleet.js).
   const [fleetId, setFleetId] = useState(null);
   // What a passenger sees on this driver's counter-offers.
@@ -253,6 +255,7 @@ export default function DriverHomeScreen() {
       setWorkingCityId(data.workingCityId || null);
       setFemaleVerified(data.femaleVerified === true);
       setCashJobs(data.cashJobs !== false);
+      setJobTypes(Array.isArray(data.jobTypes) ? data.jobTypes : null);
       setFleetId(data.fleetId || null);
       setDriverCard({
         name: data.firstName || (data.fullName || '').split(' ')[0] || 'Driver',
@@ -542,6 +545,8 @@ export default function DriverHomeScreen() {
       const snooze = snoozed.current.get(data.id);
       if (snooze && snooze.until > Date.now()) return;
       if (!canServe(vehicleType, data.rideType)) return;
+      // Unticked categories: only one the office sent to this driver by name.
+      if (!target && !wantsJobType(jobTypes, data.rideType)) return;
       const distance = getDistanceFromLatLonInKm(
         location.latitude,
         location.longitude,
@@ -566,6 +571,8 @@ export default function DriverHomeScreen() {
       if (Array.isArray(data.blockedDriverIds) && data.blockedDriverIds.includes(driverId)) return;
       // Somebody who booked and paid for Executive does not get a Mini.
       if (!canServe(vehicleType, data.rideType)) return;
+      // Job categories the driver unticked in Account.
+      if (!wantsJobType(jobTypes, data.rideType)) return;
       // Cash jobs switched off.
       if (!cashJobs && data.paymentMethod === 'cash') return;
       // Chosen a working city? Then only that city's jobs.
@@ -615,7 +622,7 @@ export default function DriverHomeScreen() {
       if (next) animateCard();
       return next;
     });
-  }, [searchingRides, fleetRides, fleetId, isOnline, location, isApproved, searchRadiusKm, driverId, vehicleType, workingCityId, femaleVerified, cashJobs, animateCard]);
+  }, [searchingRides, fleetRides, fleetId, isOnline, location, isApproved, searchRadiusKm, driverId, vehicleType, workingCityId, femaleVerified, cashJobs, jobTypes, animateCard]);
 
   // Going offline takes the offer card down with it.
   useEffect(() => {
@@ -911,7 +918,7 @@ export default function DriverHomeScreen() {
         // Firestore rules enforce it properly, this is the friendly message.
         if (!canServe(vehicleType, rideDoc.data().rideType)) {
           throw new Error(
-            `This is a ${classLabel(rideDoc.data().rideType)} job and your vehicle is registered as ${classLabel(vehicleType)}.`
+            `This is a ${classLabel(rideDoc.data().rideType)} job and your vehicle is registered as ${vehicleLabel(vehicleType)}.`
           );
         }
         // The passenger may have switched "female driver only" on or off
@@ -1145,6 +1152,7 @@ export default function DriverHomeScreen() {
         </View>
 
         {isApproved ? (
+          <View style={styles.toggleRow}>
           <TouchableOpacity
             style={[styles.cashToggle, !cashJobs && styles.cashToggleOff]}
             onPress={toggleCashJobs}
@@ -1158,6 +1166,24 @@ export default function DriverHomeScreen() {
               {cashJobs ? 'Cash jobs on' : 'Cash jobs off'}
             </Text>
           </TouchableOpacity>
+          {/* Which job categories they get; ticked in Account. */}
+          <TouchableOpacity
+            style={styles.cashToggle}
+            onPress={() => navigation.navigate('Account', { screen: 'DriverProfile' })}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Job types"
+          >
+            <Ionicons name="options-outline" size={16} color={COLORS.midnight} />
+            <Text style={styles.cashToggleText}>
+              {(() => {
+                const all = jobChoices(vehicleType);
+                const on = jobTypes ? all.filter((c) => jobTypes.includes(c.id)).length : all.length;
+                return on === all.length ? 'All job types' : `${on} of ${all.length} job types`;
+              })()}
+            </Text>
+          </TouchableOpacity>
+          </View>
         ) : null}
 
         {fleetHint ? (
@@ -1455,6 +1481,7 @@ function RiderRatingChip({ riderId }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.surface },
 
+  toggleRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACE[2] },
   cashToggle: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[2], alignSelf: 'flex-start',
     backgroundColor: COLORS.white, borderRadius: RADIUS.pill,

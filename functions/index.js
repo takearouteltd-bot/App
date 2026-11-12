@@ -3288,15 +3288,21 @@ function distanceKm(a, b) {
    class their vehicle was approved as as vehicleType, and both use the same
    ids. Keep this table in step with the app's constants/vehicleClasses.js.
 ====================================== */
-// A vehicle may take its own class and anything it comfortably exceeds, never
-// anything above it. Only an XL has six seats, so only an XL is sent XL work.
+// Any car can do Normal (RouteMini), Priority and Urgent jobs. Only a 6
+// seater is sent XL work and only an Executive is sent Executive work. Plus
+// and Eco are no longer booked or registered; they stay so old jobs and
+// drivers still match, and those drivers count as Normal.
+const EVERY_CAR = ["RouteMini", "RoutePriority", "RouteUrgent"];
 const SERVES = {
-  RouteMini: ["RouteMini"],
-  RoutePlus: ["RoutePlus", "RouteMini"],
-  RouteXL: ["RouteXL", "RoutePlus", "RouteMini"],
-  RouteEco: ["RouteEco", "RouteMini"],
-  RouteExecutive: ["RouteExecutive", "RoutePlus", "RouteMini"],
+  RouteMini: [...EVERY_CAR],
+  RoutePlus: ["RoutePlus", ...EVERY_CAR],
+  RouteEco: ["RouteEco", ...EVERY_CAR],
+  RouteXL: ["RouteXL", "RoutePlus", ...EVERY_CAR],
+  RouteExecutive: ["RouteExecutive", "RoutePlus", ...EVERY_CAR],
 };
+const KNOWN_RIDE_TYPES = new Set([].concat(...Object.values(SERVES)));
+const BOOKED_TYPES = ["RouteMini", "RoutePriority", "RouteUrgent", "RouteXL",
+  "RouteExecutive"];
 const DEFAULT_CLASS = "RouteMini";
 
 /**
@@ -3310,8 +3316,23 @@ const DEFAULT_CLASS = "RouteMini";
  */
 function canServe(vehicleType, rideType) {
   const vehicle = SERVES[vehicleType] ? vehicleType : DEFAULT_CLASS;
-  const ride = SERVES[rideType] ? rideType : DEFAULT_CLASS;
+  const ride = KNOWN_RIDE_TYPES.has(rideType) ? rideType : DEFAULT_CLASS;
   return SERVES[vehicle].includes(ride);
+}
+
+/**
+ * Whether the driver ticked this job category in the app (drivers.jobTypes).
+ * No choice saved means every category their car allows. Old Plus and Eco
+ * jobs count as Normal. Same rule as wantsJobType in the app's
+ * constants/vehicleClasses.js.
+ * @param {Array<string>|undefined} jobTypes Driver's ticked categories.
+ * @param {string} rideType Category the passenger booked.
+ * @return {boolean} True when the driver wants it.
+ */
+function wantsJobType(jobTypes, rideType) {
+  if (!Array.isArray(jobTypes)) return true;
+  return jobTypes.includes(BOOKED_TYPES.includes(rideType) ? rideType :
+    DEFAULT_CLASS);
 }
 
 /**
@@ -3339,6 +3360,8 @@ async function offerRideToDrivers(rideId, ride) {
       return;
     }
     if (!canServe(d.vehicleType, ride.rideType)) return;
+    // Job categories the driver unticked in the app.
+    if (!wantsJobType(d.jobTypes, ride.rideType)) return;
     // A driver who chose a working city only gets that city's jobs.
     // Same rule as servesCity() in the app's utils/cities.js.
     if (d.workingCityId && d.workingCityId !== ride.cityId) return;
@@ -3492,7 +3515,7 @@ async function checkAppFare(rideId, ride) {
   const refuse = (reason, message) =>
     refuseNewRide(rideId, ride, reason, message).then(() => false);
   const again = "Please check the price and book again.";
-  if (!fleetShared.CLASS_MULTIPLIERS[ride.rideType]) {
+  if (!fleetShared.RIDE_TYPES[ride.rideType]) {
     return refuse("bad_ride_type", "That car type is not available. " + again);
   }
   if (!ride.pickupLocation || !ride.dropoffLocation ||
@@ -4240,7 +4263,8 @@ function addFareLines(fare, add, currency) {
   const adds = fare.endedEarlyPercent === undefined &&
     Math.abs(base + distance + time - net) <= 0.03;
   if (adds) {
-    add("Base fare", emailMoney(base, currency));
+    add(fare.pricing === "first_mile" ? "First mile" : "Base fare",
+        emailMoney(base, currency));
     add("Distance", emailMoney(distance, currency));
     // Any rounding goes on the last line.
     add("Time", emailMoney(r2(net - base - distance), currency));
@@ -5005,6 +5029,7 @@ Object.assign(exports, require("./driverPenalty")({
 }).functions);
 Object.assign(exports, require("./fleet")({
   functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
+  wantsJobType,
   hasExpiredDocument, toE164, toMillis, addOneMonth,
   TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor,
   STRIPE_SECRETS, fleetBilling, shared: fleetShared, stripe, privacy,

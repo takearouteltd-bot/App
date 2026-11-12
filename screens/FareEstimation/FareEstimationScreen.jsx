@@ -36,6 +36,8 @@ import { useCities, useWholeUk, cityFor } from '../../utils/cities';
 import { inUk } from '../../utils/ukArea';
 import { biddingEnabled, minOffer, fareAtPrice } from '../../utils/bidding';
 import { MAX_STOPS } from '../../utils/stops';
+import { priceTrip } from '../../utils/fares';
+import { RIDE_CLASSES } from '../../constants/vehicleClasses';
 import {
   COLORS,
   TYPE,
@@ -56,16 +58,11 @@ import {
 } from '../../components/ui/kit';
 
 
-// Vehicle classes. `multiplier` scales the fare; `passengers` is the real seat
-// count. No arrival estimates are shown here because nothing measures them —
-// the driver's distance is only known once a job has been offered.
-const RIDE_OPTIONS = [
-  { id: 'RouteMini', label: 'Mini', multiplier: 1.0, icon: 'car-hatchback', description: 'Everyday rides', passengers: 4 },
-  { id: 'RoutePlus', label: 'Plus', multiplier: 1.2, icon: 'car', description: 'Comfortable saloons', passengers: 4 },
-  { id: 'RouteXL', label: 'XL', multiplier: 1.5, icon: 'car-estate', description: 'Room for luggage', passengers: 6 },
-  { id: 'RouteEco', label: 'Eco', multiplier: 0.9, icon: 'leaf', description: 'Hybrid and electric', passengers: 4 },
-  { id: 'RouteExecutive', label: 'Executive', multiplier: 2.0, icon: 'car-sports', description: 'Premium vehicles', passengers: 4 },
-];
+// Job categories (constants/vehicleClasses.js), each priced from its own
+// first-mile and per-mile settings (utils/fares.js). No arrival estimates are
+// shown here because nothing measures them: the driver's distance is only
+// known once a job has been offered.
+const RIDE_OPTIONS = RIDE_CLASSES.map((c) => ({ ...c, passengers: c.seats }));
 
 export default function FareEstimationScreen({ route }) {
   const navigation = useNavigation();
@@ -168,18 +165,15 @@ export default function FareEstimationScreen({ route }) {
      Rates come from the admin dashboard (config/app), with the original values
      as fallback. */
   const calculateFareDetails = useCallback(
-    (multiplier = 1) => {
-      const { baseFare, ratePerMile, ratePerMinute, minimumFare, vatPercent } = appConfig.fares;
+    (rideType = 'RouteMini') => {
+      const { vatPercent } = appConfig.fares;
       // Busy-time multiplier from the dashboard; 1 is normal pricing.
       const surge = surgeMultiplier(appConfig);
       const vatRate = vatPercent / 100;
 
-      const distanceInMiles = distance * 0.621371;
-      const distanceFare = distanceInMiles * ratePerMile;
-      const timeFare = duration * ratePerMinute;
-
-      const subtotal = (baseFare + distanceFare + timeFare) * multiplier * surge;
-      const fareBeforeVAT = Math.max(subtotal, minimumFare);
+      const priced = priceTrip(appConfig.fares, rideType, distance, duration, surge);
+      const { baseFare, distanceFare, timeFare, distanceInMiles } = priced;
+      const fareBeforeVAT = priced.beforeVat;
 
       const discountedFare = promoApplied ? fareBeforeVAT * (1 - discount) : fareBeforeVAT;
       const vatAmount = discountedFare * vatRate;
@@ -189,14 +183,18 @@ export default function FareEstimationScreen({ route }) {
         currency: appConfig.currency,
         vatPercent,
         discountAmount: Number((fareBeforeVAT - discountedFare).toFixed(2)),
+        pricing: priced.pricing,
+        firstMile: priced.firstMile,
+        perMile: priced.perMile,
+        minimumApplied: priced.minimumApplied,
         baseFare: Number(baseFare.toFixed(2)),
         distanceFare: Number(distanceFare.toFixed(2)),
         timeFare: Number(timeFare.toFixed(2)),
         surgeMultiplier: surge,
-        rideMultiplier: multiplier,
+        rideMultiplier: 1,
         vat: Number(vatAmount.toFixed(2)),
         total: Number(total.toFixed(2)),
-        distanceInMiles: Number(distanceInMiles.toFixed(2)),
+        distanceInMiles: Number(distanceInMiles.toFixed(1)),
         subtotal: Number(discountedFare.toFixed(2)),
       };
     },
@@ -309,7 +307,7 @@ export default function FareEstimationScreen({ route }) {
 
     try {
       const selectedOption = RIDE_OPTIONS.find((r) => r.id === selectedRide);
-      const recommendedFare = calculateFareDetails(selectedOption.multiplier);
+      const recommendedFare = calculateFareDetails(selectedOption.id);
       // With bidding, the ride is priced at the passenger's offer; the
       // recommendation is kept on the fare for reference.
       const fareDetails = bidding
@@ -427,15 +425,14 @@ export default function FareEstimationScreen({ route }) {
   };
 
   const selectedOption = RIDE_OPTIONS.find((r) => r.id === selectedRide);
-  const fare = calculateFareDetails(selectedOption.multiplier);
+  const fare = calculateFareDetails(selectedOption.id);
   const floor = minOffer(fare.total, appConfig);
   const offerValue = Math.max(offer ?? fare.total, floor);
   const nudgeOffer = (delta) =>
     setOffer(Math.max(floor, Math.round((offerValue + delta) * 2) / 2));
   const money = (n) => `${currencySymbol()}${Number(n).toFixed(2)}`;
   // Short trips are lifted to the minimum, so the parts above it don't add up.
-  const rawFare = (fare.baseFare + fare.distanceFare + fare.timeFare) * fare.rideMultiplier * fare.surgeMultiplier;
-  const minimumApplied = rawFare < appConfig.fares.minimumFare;
+  const minimumApplied = fare.minimumApplied;
 
   // Averaging a missing coordinate gives NaN, and the map opens on 0,0.
   const initialRegion = regionCovering([origin, destination], 0.05);
@@ -566,7 +563,7 @@ export default function FareEstimationScreen({ route }) {
             contentContainerStyle={styles.classRow}
           >
             {RIDE_OPTIONS.map((item) => {
-              const itemFare = calculateFareDetails(item.multiplier);
+              const itemFare = calculateFareDetails(item.id);
               const active = item.id === selectedRide;
               return (
                 <TouchableOpacity
@@ -745,11 +742,15 @@ export default function FareEstimationScreen({ route }) {
 
           {showBreakdown ? (
             <View style={styles.breakdown}>
-              <Row label="Base fare" value={money(fare.baseFare)} />
-              <Row label={`Distance · ${fare.distanceInMiles} mi`} value={money(fare.distanceFare)} />
-              <Row label={`Time · ${Math.ceil(duration)} min`} value={money(fare.timeFare)} />
-              {fare.rideMultiplier !== 1 ? (
-                <Row label={`${selectedOption.label} pricing`} value={`× ${fare.rideMultiplier}`} />
+              <Row label="First mile" value={money(fare.baseFare)} />
+              {fare.distanceInMiles > 1 ? (
+                <Row
+                  label={`${Math.round((fare.distanceInMiles - 1) * 10) / 10} mi more at ${money(fare.perMile)}`}
+                  value={money(fare.distanceFare)}
+                />
+              ) : null}
+              {fare.timeFare > 0 ? (
+                <Row label={`Time · ${Math.ceil(duration)} min`} value={money(fare.timeFare)} />
               ) : null}
               {fare.surgeMultiplier > 1 ? (
                 <Row label="Busy-time pricing" value={`× ${fare.surgeMultiplier}`} tone={COLORS.amber} />
@@ -766,7 +767,7 @@ export default function FareEstimationScreen({ route }) {
               ) : null}
               <View style={styles.breakdownLine} />
               <Row label="Subtotal" value={money(fare.subtotal)} />
-              <Row label={`VAT ${fare.vatPercent}%`} value={money(fare.vat)} />
+              {fare.vatPercent > 0 ? <Row label={`VAT ${fare.vatPercent}%`} value={money(fare.vat)} /> : null}
               <View style={styles.breakdownLine} />
               <Row label="Total" value={money(fare.total)} strong />
             </View>

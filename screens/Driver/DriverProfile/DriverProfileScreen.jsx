@@ -16,6 +16,7 @@ import {
   setDoc,
 } from "firebase/firestore";
 import { money } from '../../../utils/appConfig';
+import { jobChoices } from '../../../constants/vehicleClasses';
 import appJson from '../../../app.json';
 import {
   COLORS,
@@ -65,6 +66,25 @@ export default function DriverProfileScreen() {
     } catch (error) {
       Alert.alert("Could not change city", "Please try again.");
     }
+  };
+
+  // Job categories this driver wants (drivers.jobTypes). Nothing saved means
+  // every category their car allows. At least one stays ticked.
+  const choices = jobChoices(driver?.vehicleType);
+  const ticked = Array.isArray(driver?.jobTypes)
+    ? choices.filter((c) => driver.jobTypes.includes(c.id)).map((c) => c.id)
+    : choices.map((c) => c.id);
+  const toggleJobType = (id) => {
+    if (!user?.uid) return;
+    const on = ticked.includes(id);
+    if (on && ticked.length === 1) {
+      Alert.alert("Keep one ticked", "You need at least one job type to get jobs. Tick another first, or go offline instead.");
+      return;
+    }
+    const next = on ? ticked.filter((t) => t !== id) : [...ticked, id];
+    setDoc(doc(db, "drivers", user.uid), { jobTypes: next }, { merge: true }).catch(() =>
+      Alert.alert("Could not change it", "Please try again.")
+    );
   };
 
   // Cash jobs on or off (drivers.cashJobs; off means no cash offers).
@@ -283,6 +303,23 @@ export default function DriverProfileScreen() {
             )}
           />
         ) : null}
+      </Section>
+
+      <Section title="Jobs I want">
+        <RowGroup
+          items={choices.map((c) => {
+            const on = ticked.includes(c.id);
+            return {
+              key: c.id,
+              icon: on ? "checkbox" : "square-outline",
+              iconColor: on ? COLORS.midnight : COLORS.faint,
+              title: c.id === "RouteXL" ? "6 seater" : c.label,
+              detail: on ? "You get these jobs" : "Not offered to you",
+              right: null,
+              onPress: () => toggleJobType(c.id),
+            };
+          })}
+        />
       </Section>
 
       <Section title="Account">

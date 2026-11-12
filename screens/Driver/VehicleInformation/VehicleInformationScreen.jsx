@@ -12,10 +12,8 @@ import { VEHICLE_CLASSES } from '../../../constants/vehicleClasses';
 // The one class table the app matches jobs with, plus an icon per class.
 const CLASS_ICONS = {
   RouteMini: "car-hatchback",
-  RoutePlus: "car",
-  RouteXL: "car-estate",
-  RouteEco: "leaf",
-  RouteExecutive: "car-sports",
+  RouteXL: "van-passenger",
+  RouteExecutive: "car-side",
 };
 
 const formatValue = (value, fallback = "Not provided") => {
@@ -69,7 +67,9 @@ export default function VehicleInformationScreen({ navigation }) {
   const makeModel = driver?.makeModel || [make, model].filter(Boolean).join(" ");
   const registration = driver?.registrationNumber || driver?.plateNumber;
   const year = driver?.vehicleYear || driver?.year;
-  const type = driver?.vehicleType || driver?.bodyType;
+  // Cars approved as Plus or Eco (no longer offered) count as Normal.
+  const rawType = driver?.vehicleType || driver?.bodyType;
+  const type = rawType === "RoutePlus" || rawType === "RouteEco" ? "RouteMini" : rawType;
   const typeMeta = VEHICLE_CLASSES.find((c) => c.id === type) || null;
   const seats = driver?.seats || driver?.vehicleSeats || typeMeta?.seats;
   const heroIcon = CLASS_ICONS[type] || "car-sport";
