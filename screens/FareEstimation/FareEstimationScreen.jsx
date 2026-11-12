@@ -436,12 +436,19 @@ export default function FareEstimationScreen({ route }) {
 
   // Averaging a missing coordinate gives NaN, and the map opens on 0,0.
   const initialRegion = regionCovering([origin, destination], 0.05);
+  // A new map whenever the stops change. Adding a stop pin to the map already
+  // on screen closed the app on Android (tester video, 12 Nov: Add a stop,
+  // pick a recent place, "takearoute keeps stopping"); pins drawn when a map
+  // first opens are fine, as with "Book again" stops. The route and price are
+  // worked out again either way.
+  const mapKey = stops.map((s) => `${s.latitude},${s.longitude}`).join('|') || 'no-stops';
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.mapWrap}>
         {initialRegion ? (
         <MapView
+          key={mapKey}
           ref={mapRef}
           provider={PROVIDER_GOOGLE}
           style={StyleSheet.absoluteFill}
@@ -462,7 +469,7 @@ export default function FareEstimationScreen({ route }) {
           ) : null}
 
           {stops.map((s, i) => (
-            <Marker key={`stop-${i}`} coordinate={s} anchor={{ x: 0.5, y: 0.5 }}>
+            <Marker key={`stop-${i}`} coordinate={{ latitude: s.latitude, longitude: s.longitude }} anchor={{ x: 0.5, y: 0.5 }}>
               <View style={styles.stopMarker}>
                 <Text style={styles.stopMarkerText}>{i + 1}</Text>
               </View>
