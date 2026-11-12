@@ -25,6 +25,10 @@ export const DEFAULT_APP_CONFIG = {
     xlPerMile: 1.5,
     executiveFirstMile: 9.0,
     executivePerMile: 2.0,
+    // Same as Normal by default: a wheelchair user must not pay more for
+    // the accessible car (Equality Act 2010 s.165, designated vehicles).
+    wheelchairFirstMile: 4.5,
+    wheelchairPerMile: 1.0,
     ratePerMinute: 0,
     minimumFare: 0,
     vatPercent: 20,

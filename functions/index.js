@@ -3299,10 +3299,11 @@ const SERVES = {
   RouteEco: ["RouteEco", ...EVERY_CAR],
   RouteXL: ["RouteXL", "RoutePlus", ...EVERY_CAR],
   RouteExecutive: ["RouteExecutive", "RoutePlus", ...EVERY_CAR],
+  RouteWheelchair: ["RouteWheelchair", ...EVERY_CAR],
 };
 const KNOWN_RIDE_TYPES = new Set([].concat(...Object.values(SERVES)));
 const BOOKED_TYPES = ["RouteMini", "RoutePriority", "RouteUrgent", "RouteXL",
-  "RouteExecutive"];
+  "RouteExecutive", "RouteWheelchair"];
 const DEFAULT_CLASS = "RouteMini";
 
 /**

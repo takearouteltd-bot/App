@@ -356,14 +356,16 @@ service cloud.firestore {
         "RoutePlus":      ["RoutePlus", "RouteMini"],
         "RouteXL":        ["RouteXL", "RoutePlus", "RouteMini"],
         "RouteEco":       ["RouteEco", "RouteMini"],
-        "RouteExecutive": ["RouteExecutive", "RoutePlus", "RouteMini"]
+        "RouteExecutive": ["RouteExecutive", "RoutePlus", "RouteMini"],
+        "RouteWheelchair": ["RouteWheelchair", "RouteMini"]
       };
       return (vehicleType is string && vehicleType in m) ? m[vehicleType] : m["RouteMini"];
     }
 
     function rideClass(rideType) {
       return (rideType is string &&
-        rideType in ["RouteMini", "RoutePlus", "RouteXL", "RouteEco", "RouteExecutive"])
+        rideType in ["RouteMini", "RoutePlus", "RouteXL", "RouteEco", "RouteExecutive",
+          "RouteWheelchair"])
         ? rideType : "RouteMini";
     }
 

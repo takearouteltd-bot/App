@@ -16,6 +16,7 @@ export const PRICE_KEY = {
   RouteUrgent: 'urgent',
   RouteXL: 'xl',
   RouteExecutive: 'executive',
+  RouteWheelchair: 'wheelchair',
   RoutePlus: 'normal',
   RouteEco: 'normal',
 };

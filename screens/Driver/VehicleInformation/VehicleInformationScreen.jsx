@@ -14,6 +14,7 @@ const CLASS_ICONS = {
   RouteMini: "car-hatchback",
   RouteXL: "van-passenger",
   RouteExecutive: "car-side",
+  RouteWheelchair: "wheelchair-accessibility",
 };
 
 const formatValue = (value, fallback = "Not provided") => {

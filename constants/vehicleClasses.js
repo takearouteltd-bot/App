@@ -23,6 +23,7 @@ export const RIDE_CLASSES = [
   { id: 'RouteUrgent', label: 'Urgent', seats: 4, icon: 'car-emergency', description: 'Shown to drivers as an urgent job' },
   { id: 'RouteXL', label: 'XL', seats: 6, icon: 'van-passenger', description: '6 seats, room for luggage' },
   { id: 'RouteExecutive', label: 'Executive', seats: 4, icon: 'car-side', description: 'Premium cars' },
+  { id: 'RouteWheelchair', label: 'Wheelchair', seats: 4, icon: 'wheelchair-accessibility', description: 'Wheelchair accessible vehicle' },
 ];
 
 // What a driver's car can be registered as.
@@ -30,6 +31,7 @@ export const VEHICLE_CLASSES = [
   { id: 'RouteMini', label: 'Normal', seats: 4, description: 'Normal, Priority and Urgent jobs' },
   { id: 'RouteXL', label: 'XL 6 seater', seats: 6, description: '6 seater jobs, plus Normal, Priority and Urgent' },
   { id: 'RouteExecutive', label: 'Executive', seats: 4, description: 'Executive jobs, plus Normal, Priority and Urgent' },
+  { id: 'RouteWheelchair', label: 'Wheelchair accessible', seats: 4, description: 'Wheelchair jobs, plus Normal, Priority and Urgent' },
 ];
 
 // Old ids, still on some rides and drivers.
@@ -39,7 +41,8 @@ const LEGACY_LABELS = { RoutePlus: 'Plus', RouteEco: 'Eco' };
 const EVERY_CAR = ['RouteMini', 'RoutePriority', 'RouteUrgent'];
 
 // Which job categories each vehicle class may be offered. Only a 6 seater is
-// sent XL work and only an Executive is sent Executive work. Plus and Eco
+// sent XL work, only an Executive is sent Executive work and only a
+// wheelchair accessible vehicle is sent Wheelchair work. Plus and Eco
 // stay listed so jobs booked on an older app still find a car.
 export const SERVES = {
   RouteMini: [...EVERY_CAR],
@@ -47,6 +50,7 @@ export const SERVES = {
   RouteEco: ['RouteEco', ...EVERY_CAR],
   RouteXL: ['RouteXL', 'RoutePlus', ...EVERY_CAR],
   RouteExecutive: ['RouteExecutive', 'RoutePlus', ...EVERY_CAR],
+  RouteWheelchair: ['RouteWheelchair', ...EVERY_CAR],
 };
 
 // Drivers approved before vehicle classes existed have no vehicleType and
@@ -64,10 +68,11 @@ export function canServe(vehicleType, rideType) {
   return SERVES[vehicle].includes(ride);
 }
 
-// The tick boxes a driver gets: their own class first (XL or Executive),
-// then Normal, Priority and Urgent.
+// The tick boxes a driver gets: their own class first (XL, Executive or
+// Wheelchair), then Normal, Priority and Urgent.
+const OWN_CLASS_JOBS = ['RouteXL', 'RouteExecutive', 'RouteWheelchair'];
 export function jobChoices(vehicleType) {
-  const own = vehicleType === 'RouteXL' || vehicleType === 'RouteExecutive' ? [vehicleType] : [];
+  const own = OWN_CLASS_JOBS.includes(vehicleType) ? [vehicleType] : [];
   return [...own, ...EVERY_CAR].map((id) => RIDE_CLASSES.find((c) => c.id === id));
 }
 

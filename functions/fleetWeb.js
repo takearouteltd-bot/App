@@ -51,13 +51,14 @@ const HOLD_WARN_MS = 6 * 86400000;
 // Plus and Eco are no longer offered but stay valid for fleets that saved
 // them before.
 const ALL_TYPES = ["RouteMini", "RoutePriority", "RouteUrgent", "RouteXL",
-  "RouteExecutive", "RoutePlus", "RouteEco"];
+  "RouteExecutive", "RouteWheelchair", "RoutePlus", "RouteEco"];
 const TYPE_INFO = {
   RouteMini: {label: "Normal", seats: 4},
   RoutePriority: {label: "Priority", seats: 4},
   RouteUrgent: {label: "Urgent", seats: 4},
   RouteXL: {label: "XL (6 seats)", seats: 6},
   RouteExecutive: {label: "Executive", seats: 4},
+  RouteWheelchair: {label: "Wheelchair accessible", seats: 4},
   RoutePlus: {label: "Plus", seats: 4},
   RouteEco: {label: "Eco", seats: 4},
 };

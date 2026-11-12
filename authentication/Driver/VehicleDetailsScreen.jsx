@@ -15,6 +15,7 @@ const CLASS_ICON = {
   RouteMini: "car-hatchback",
   RouteXL: "van-passenger",
   RouteExecutive: "car-side",
+  RouteWheelchair: "wheelchair-accessibility",
 };
 
 // Upload name (drivers/{uid}/{name}.ext) → the field it is saved as.

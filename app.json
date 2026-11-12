@@ -2,7 +2,7 @@
   "expo": {
     "name": "takearoute",
     "slug": "takearoute",
-    "version": "1.0.30",
+    "version": "1.0.31",
     "orientation": "portrait",
     "icon": "./assets/myicon.png",
     "scheme": "takearoute",
@@ -42,7 +42,7 @@
         "POST_NOTIFICATIONS",
         "VIBRATE"
       ],
-      "versionCode": 27,
+      "versionCode": 28,
       "blockedPermissions": [
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
       ]

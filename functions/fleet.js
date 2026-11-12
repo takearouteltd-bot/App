@@ -95,12 +95,13 @@ const RIDE_TYPES = {
   RouteUrgent: "urgent",
   RouteXL: "xl",
   RouteExecutive: "executive",
+  RouteWheelchair: "wheelchair",
   RoutePlus: "normal",
   RouteEco: "normal",
 };
 /* What can be booked now, in the order the apps show them. */
 const BOOKABLE_TYPES = ["RouteMini", "RoutePriority", "RouteUrgent",
-  "RouteXL", "RouteExecutive"];
+  "RouteXL", "RouteExecutive", "RouteWheelchair"];
 
 /* Fare defaults, as App/utils/appConfig.js DEFAULT_APP_CONFIG.fares. */
 const FARE_DEFAULTS = {
@@ -109,6 +110,8 @@ const FARE_DEFAULTS = {
   urgentFirstMile: 6.5, urgentPerMile: 1.5,
   xlFirstMile: 6.5, xlPerMile: 1.5,
   executiveFirstMile: 9.0, executivePerMile: 2.0,
+  // As Normal: wheelchair users must not pay more (Equality Act 2010 s.165).
+  wheelchairFirstMile: 4.5, wheelchairPerMile: 1.0,
   ratePerMinute: 0, minimumFare: 0, vatPercent: 20,
 };
 

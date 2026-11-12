@@ -49,6 +49,17 @@ const step = (s) => console.log('•', s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Waits for the onCreate check to settle: cancelled, or price-checked.
+// The promo use is written just after the price check, so wait for it.
+async function promoUsed(expected) {
+  let used = null;
+  for (let i = 0; i < 40; i++) {
+    used = val((await adminGet('promoCodes/WELCOME10')).used);
+    if (used === expected) return used;
+    await sleep(250);
+  }
+  return used;
+}
+
 async function settled(id) {
   // The emulator runs every trigger of the previous step first, one by one.
   for (let i = 0; i < 240; i++) {
@@ -128,7 +139,7 @@ const promoFare = { promoCode: 'WELCOME10', discount: 0.1, total: 4.86 };
 id = await book(R, rider, REDDITCH, promoFare);
 r = await settled(id);
 assert.equal(val(r.status), 'searching');
-assert.equal(val((await adminGet('promoCodes/WELCOME10')).used), '1');
+assert.equal(await promoUsed('1'), '1');
 assert.equal(val((await adminGet(`promoCodes/WELCOME10/uses/${rider}`)).rideId), id);
 await adminSet(`rides/${id}`, { status: 'completed' }, true);
 assert.equal((await R.call('checkPromoCode', { code: 'WELCOME10' })).message, 'You have already used this code.');
@@ -139,7 +150,7 @@ assert.equal(val(r.cancelReason), 'promo_invalid'); assert.match(val(r.cancelMes
 step('a cancelled booking gives the use back to that passenger (not counted twice)');
 const one = await book(R2, rider2, REDDITCH, promoFare);
 await settled(one);
-assert.equal(val((await adminGet('promoCodes/WELCOME10')).used), '2');
+assert.equal(await promoUsed('2'), '2');
 await adminSet(`rides/${one}`, { status: 'cancelled' }, true);
 assert.equal((await R2.call('checkPromoCode', { code: 'WELCOME10' })).ok, false, 'limit of 2 reached');
 await adminSet('promoCodes/WELCOME10', { maxUses: 3 }, true);
@@ -147,7 +158,7 @@ assert.equal((await R2.call('checkPromoCode', { code: 'WELCOME10' })).ok, true);
 id = await book(R2, rider2, REDDITCH, promoFare);
 r = await settled(id);
 assert.equal(val(r.status), 'searching');
-assert.equal(val((await adminGet('promoCodes/WELCOME10')).used), '2');
+assert.equal(await promoUsed('2'), '2');
 await adminSet(`rides/${id}`, { status: 'completed' }, true);
 
 step('a tampered discount is refused');
@@ -204,6 +215,12 @@ r = await settled(id);
 assert.equal(val(r.pricing), 'checked'); assert.equal(Number(val(r.priceCheck.mapValue.fields.expectedTotal)), 7.8);
 await adminSet(`rides/${id}`, { status: 'completed' }, true);
 
+step('job categories: Wheelchair is bookable and priced like Normal by default');
+id = await addDoc(collection(R.db, 'rides'), { riderId: rider, status: 'searching', rideType: 'RouteWheelchair', pickupLocation: REDDITCH, dropoffLocation: REDDITCH, fare: { total: 5.4 }, paymentMethod: 'card' }).then((x) => x.id);
+r = await settled(id);
+assert.equal(val(r.pricing), 'checked'); assert.equal(Number(val(r.priceCheck.mapValue.fields.expectedTotal)), 5.4);
+await adminSet(`rides/${id}`, { status: 'completed' }, true);
+
 step('price: an unknown car type is refused; Google down falls back to straight-line and lets an honest booking through');
 id = await book(R, rider, REDDITCH, {});
 await settled(id); await adminSet(`rides/${id}`, { status: 'completed' }, true);
@@ -221,6 +238,9 @@ const drv = (await createUserWithEmailAndPassword(D.auth, 'driver-bc@test.dev', 
 await adminSet(`drivers/${drv}`, { approved: true, onboardingComplete: true, vehicleType: 'RouteMini', status: 'offline' });
 await assert.rejects(updateDoc(doc(D.db, 'drivers', drv), { vehicleType: 'RouteExecutive' }));
 await updateDoc(doc(D.db, 'drivers', drv), { status: 'offline' });
+await assert.rejects(updateDoc(doc(D.db, 'drivers', drv), { vehicleType: 'RouteWheelchair' }));
+await updateDoc(doc(A.db, 'drivers', drv), { vehicleType: 'RouteWheelchair' });
+assert.equal(val((await adminGet(`drivers/${drv}`)).vehicleType), 'RouteWheelchair');
 await updateDoc(doc(A.db, 'drivers', drv), { vehicleType: 'RouteXL' });
 assert.equal(val((await adminGet(`drivers/${drv}`)).vehicleType), 'RouteXL');
 // ...but they choose their own job types.
