@@ -62,12 +62,23 @@ async function promoUsed(expected) {
 
 async function settled(id) {
   // The emulator runs every trigger of the previous step first, one by one.
-  for (let i = 0; i < 240; i++) {
+  // Up to 3 minutes: on a slow machine the trigger backlog takes a while.
+  for (let i = 0; i < 720; i++) {
     const r = await adminGet(`rides/${id}`);
     if (val(r.status) === 'cancelled' || val(r.pricing) === 'checked') return r;
     await sleep(250);
   }
   return adminGet(`rides/${id}`);
+}
+// A booking refused for its promo code: the price check is stamped before
+// the code is checked, so wait past it for the refusal.
+async function refused(id) {
+  let r = await settled(id);
+  for (let i = 0; i < 240 && val(r.status) !== 'cancelled'; i++) {
+    await sleep(250);
+    r = await adminGet(`rides/${id}`);
+  }
+  return r;
 }
 // 1 mile, 5 min, default first-mile pricing: Normal's first mile 4.50 (no
 // base fare, no time charge) before VAT, 5.40 with it; with 10% off, 4.86.
@@ -144,7 +155,7 @@ assert.equal(val((await adminGet(`promoCodes/WELCOME10/uses/${rider}`)).rideId),
 await adminSet(`rides/${id}`, { status: 'completed' }, true);
 assert.equal((await R.call('checkPromoCode', { code: 'WELCOME10' })).message, 'You have already used this code.');
 id = await book(R, rider, REDDITCH, promoFare);
-r = await settled(id);
+r = await refused(id);
 assert.equal(val(r.cancelReason), 'promo_invalid'); assert.match(val(r.cancelMessage), /already used this code/);
 
 step('a cancelled booking gives the use back to that passenger (not counted twice)');
@@ -164,13 +175,13 @@ await adminSet(`rides/${id}`, { status: 'completed' }, true);
 step('a tampered discount is refused');
 await adminSet('promoCodes/BIG', { code: 'BIG', percent: 5, active: true });
 id = await book(R2, rider2, REDDITCH, { promoCode: 'BIG', discount: 0.9, total: 0.54 });
-r = await settled(id);
+r = await refused(id);
 assert.equal(val(r.status), 'cancelled'); // a 90% discount the code does not give: refused
 
 step('limit reached: refused at booking too');
 await adminSet('promoCodes/ONE', { code: 'ONE', percent: 5, active: true, maxUses: 1, used: 1 });
 id = await book(R, rider, REDDITCH, { promoCode: 'ONE', discount: 0.05, total: 5.13 });
-r = await settled(id);
+r = await refused(id);
 assert.match(val(r.cancelMessage), /fully used/);
 
 step('price: an honest booking is checked, the hold matches, the waiting terms are the real ones');

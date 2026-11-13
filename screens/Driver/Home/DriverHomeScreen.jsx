@@ -38,6 +38,7 @@ import { useAppConfig, currencySymbol } from '../../../utils/appConfig';
 import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocuments';
 import { canServe, classLabel, vehicleLabel, wantsJobType, jobChoices } from '../../../constants/vehicleClasses';
 import { servesCity, useCities, cityFor } from '../../../utils/cities';
+import { useBookedJobs, bookedWhen } from '../../../utils/followOn';
 import { biddingEnabled, counterSteps, offerSeconds, sendCounterOffer, withdrawCounterOffer } from '../../../utils/bidding';
 import { clearJobAlerts, ringForNewJob, stopJobRing } from '../../../utils/notifications';
 import PaymentTypeBanner from '../../../components/PaymentTypeBanner';
@@ -137,6 +138,11 @@ export default function DriverHomeScreen() {
   const penaltyExplained = useRef(null);
   const [workingCityId, setWorkingCityId] = useState(null);
   const [workingCityName, setWorkingCityName] = useState(null);
+  // Follow-on jobs while a passenger is on board (utils/followOn.js). On
+  // unless the driver switched them off; this app saves true the first
+  // time, which is also how the server knows the app can show them.
+  const [followOnJobs, setFollowOnJobs] = useState(true);
+  const followOnSaved = useRef(false);
   // "Automatic (where I am)" in Account: the city follows the driver.
   const [workingCityAuto, setWorkingCityAuto] = useState(false);
   // Cities the driver said "Keep" to while online, so they are asked once.
@@ -262,6 +268,13 @@ export default function DriverHomeScreen() {
       setWorkingCityAuto(data.workingCityAuto === true);
       setFemaleVerified(data.femaleVerified === true);
       setCashJobs(data.cashJobs !== false);
+      setFollowOnJobs(data.followOnJobs !== false);
+      if (data.followOnJobs === undefined && data.approved === true && !followOnSaved.current) {
+        followOnSaved.current = true;
+        updateDoc(doc(db, 'drivers', snap.id), { followOnJobs: true }).catch(() => {
+          followOnSaved.current = false;
+        });
+      }
       setJobTypes(Array.isArray(data.jobTypes) ? data.jobTypes : null);
       setFleetId(data.fleetId || null);
       setDriverCard({
@@ -742,6 +755,20 @@ export default function DriverHomeScreen() {
     );
   }, [driverId, cashJobs]);
 
+  /* Follow-on jobs on or off. */
+  const toggleFollowOn = useCallback(() => {
+    if (!driverId) return;
+    const next = !followOnJobs;
+    setFollowOnJobs(next);
+    updateDoc(doc(db, 'drivers', driverId), { followOnJobs: next }).catch(() => {
+      setFollowOnJobs(!next);
+      Alert.alert('Could not change it', 'Check your connection and try again.');
+    });
+  }, [driverId, followOnJobs]);
+
+  // Pre-booked jobs the office gave this driver.
+  const bookedJobs = useBookedJobs(driverId, fleetId);
+
   /* The job on offer on the map, like Uber: the route from the driver to the
      pickup (grey) and on to the drop-off (black), framed above the card.
      The driver's start point is frozen when the card appears, so GPS
@@ -871,7 +898,10 @@ export default function DriverHomeScreen() {
     return onSnapshot(
       query(collection(db, 'rides'), where('driverId', '==', driverId), where('status', '==', 'accepted')),
       async (snap) => {
-        const mine = snap.docs[0];
+        // A follow-on job waits until the trip before it ends (the server
+        // then stamps followOn.startedAt), so a restart mid-trip goes back
+        // to that trip, not to the next job.
+        const mine = snap.docs.find((d) => !(d.data().followOn && !d.data().followOn.startedAt));
         if (!mine || takenOver.current || isAccepting) return;
         takenOver.current = true;
         try {
@@ -1213,6 +1243,34 @@ export default function DriverHomeScreen() {
               {cashJobs ? 'Cash jobs on' : 'Cash jobs off'}
             </Text>
           </TouchableOpacity>
+          {/* Offered the next job near the drop-off while on a trip. */}
+          <TouchableOpacity
+            style={styles.cashToggle}
+            onPress={toggleFollowOn}
+            activeOpacity={0.85}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: followOnJobs }}
+            accessibilityLabel="Follow-on jobs"
+          >
+            <Ionicons name="arrow-redo-outline" size={16} color={followOnJobs ? COLORS.midnight : COLORS.muted} />
+            <Text style={[styles.cashToggleText, !followOnJobs && { color: COLORS.muted }]}>
+              {followOnJobs ? 'Follow-on jobs on' : 'Follow-on jobs off'}
+            </Text>
+          </TouchableOpacity>
+          {bookedJobs.length ? (
+            <TouchableOpacity
+              style={[styles.cashToggle, styles.bookedChip]}
+              onPress={() => navigation.navigate('DriverBookedJobs')}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Booked jobs"
+            >
+              <Ionicons name="calendar-outline" size={16} color={COLORS.lime} />
+              <Text style={[styles.cashToggleText, { color: COLORS.white }]}>
+                {bookedJobs.length === 1 ? '1 booked job' : `${bookedJobs.length} booked jobs`} · next {bookedWhen(bookedJobs[0].pickupAt)}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
           {/* Which job categories they get; ticked in Account. */}
           <TouchableOpacity
             style={styles.cashToggle}
@@ -1545,6 +1603,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.surface },
 
   toggleRow: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACE[2] },
+  bookedChip: { backgroundColor: COLORS.midnight, borderColor: COLORS.midnight },
   cashToggle: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[2], alignSelf: 'flex-start',
     backgroundColor: COLORS.white, borderRadius: RADIUS.pill,

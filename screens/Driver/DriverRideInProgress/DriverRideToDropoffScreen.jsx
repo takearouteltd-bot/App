@@ -24,6 +24,7 @@ import { navigationUrl, remainingStops, stopsOf } from '../../../utils/stops';
 import { fetchRoute as fetchDrivingRoute, durationText, distanceText } from '../../../utils/routes';
 import SafetyButton from '../../../components/SafetyButton';
 import PhoneCustomerCard from '../../../components/PhoneCustomerCard';
+import FollowOnCard from '../../../components/FollowOnCard';
 import { confirmMaskedCall } from '../../../utils/calling';
 import {
   COLORS, TYPE, SPACE, RADIUS, SHADOW,
@@ -483,6 +484,9 @@ export default function DriverRideToDropoffScreen() {
 
       <Animated.View style={[styles.sheet, { transform: [{ translateY: slideAnim }] }]}>
         <View style={styles.handle} />
+
+        {/* A follow-on job on offer, or the next job already accepted. */}
+        {ride?.driverId ? <FollowOnCard driverId={ride.driverId} rideId={rideId} /> : null}
 
         <View style={styles.headRow}>
           <View style={{ flex: 1 }}>

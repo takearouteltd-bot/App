@@ -28,3 +28,5 @@ Web booker (fleetWeb.js: sign-in codes, booking, card hold/capture/release, trac
 Admin's no-show fee and the driver cancel penalty (functions/driverPenalty.js, cancelRidePayment): `node rules-tests/driver-cancel.mjs`, same set-up as booking-checks plus STRIPE_API_BASE=http://127.0.0.1:8999 in functions/.env.local (fake Routes and Stripe on :8999). Rules for it are in fleet.test.mjs: keep rules tests in that one file, because `node --test` runs files at the same time and each clears the emulator.
 
 Fleet portal driver numbers (fleetDriverPhones: private record, app account, then sign-in): `node rules-tests/fleet-phones.mjs`, same set-up as booking-checks, no fakes needed.
+
+Booked jobs allocated to a driver and follow-on jobs (fleet.js syncFleetAllocation, declineFleetAllocation, keepTime, jobs held for the office; followOn.js offers, accept, decline, give back, switch after the trip): `node rules-tests/allocation-followon.mjs`, same set-up as booking-checks (fake Routes on :8999 via ROUTES_API_BASE), no other fakes.

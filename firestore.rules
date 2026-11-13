@@ -525,6 +525,8 @@ service cloud.firestore {
         resource.data.get("fleetId", null) is string &&
         driver.get("fleetId", null) == resource.data.fleetId &&
         resource.data.dispatch.get("driverId", null) in [null, request.auth.uid] &&
+        /* Held for the office: nobody takes it until it is sent again. */
+        resource.data.dispatch.get("mode", "") != "office" &&
         !(request.auth.uid in resource.data.get("declinedBy", [])) &&
         request.resource.data.status == "accepted" &&
         request.resource.data.driverId == request.auth.uid &&
@@ -717,6 +719,28 @@ service cloud.firestore {
           get(/databases/$(database)/documents/drivers/$(request.auth.uid))
             .data.get("fleetId", null) == resource.data.fleetId)
       );
+      allow write: if false;
+    }
+
+    /* A booked phone job allocated to a driver, without the customer's
+       number, for that driver's Booked jobs list (functions/fleet.js
+       syncFleetAllocation). */
+    match /fleetAllocations/{rideId} {
+      allow read: if isAdmin() || (
+        signedIn() && resource == null
+      ) || (
+        signedIn() && (
+          resource.data.driverId == request.auth.uid ||
+          (resource.data.fleetId is string && fleetStaffOf(resource.data.fleetId))
+        )
+      );
+      allow write: if false;
+    }
+
+    /* The follow-on job waiting for a driver on a trip (functions/followOn.js).
+       Answered through answerFollowOnJob. */
+    match /followOnOffers/{driverId} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == driverId);
       allow write: if false;
     }
 

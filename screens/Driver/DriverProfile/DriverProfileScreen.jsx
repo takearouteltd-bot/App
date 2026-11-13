@@ -107,6 +107,15 @@ export default function DriverProfileScreen() {
     );
   };
 
+  // Follow-on jobs (drivers.followOnJobs; utils/followOn.js).
+  const followOnOn = driver?.followOnJobs !== false;
+  const toggleFollowOn = () => {
+    if (!user?.uid) return;
+    setDoc(doc(db, "drivers", user.uid), { followOnJobs: !followOnOn }, { merge: true }).catch(() =>
+      Alert.alert("Could not change it", "Please try again.")
+    );
+  };
+
   useEffect(() => {
     if (!user?.uid) return;
 
@@ -353,6 +362,7 @@ export default function DriverProfileScreen() {
         <RowGroup
           items={[
             { icon: "cash-outline", iconColor: cashOn ? COLORS.midnight : COLORS.red, title: "Cash jobs", detail: cashOn ? "On: you're offered cash jobs" : "Off: no cash jobs offered to you", onPress: toggleCash },
+            { icon: "arrow-redo-outline", iconColor: followOnOn ? COLORS.midnight : COLORS.muted, title: "Follow-on jobs", detail: followOnOn ? "On: offered your next job near the drop-off while on a trip" : "Off: no jobs offered while you're on a trip", onPress: toggleFollowOn },
             { icon: "chatbubbles-outline", iconColor: COLORS.midnight, title: "My reports", detail: "Issues, lost property and replies from support", onPress: () => navigation.navigate("MyReports", { role: "driver" }) },
             { icon: "shield-checkmark-outline", iconColor: COLORS.red, title: "Safety", detail: driver?.emergencyContact?.name ? `Emergency contact: ${driver.emergencyContact.name}` : "Add your next of kin", onPress: () => navigation.navigate("EmergencyContact", { role: "driver" }) },
             { icon: "document-text-outline", iconColor: COLORS.midnight, title: "Terms of use", onPress: openTerms },

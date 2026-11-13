@@ -4,12 +4,13 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, SafeAreaView, ScrollView, Animated, Easing } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { doc, onSnapshot, getDoc } from 'firebase/firestore';
+import { doc, onSnapshot, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 import { money } from '../../../utils/appConfig';
 import StarRating from '../../../components/StarRating';
 import { COLORS, TYPE, SPACE, SHADOW, Card, Button, Loading, RouteLine, StatRow } from '../../../components/ui/kit';
 import { distanceText } from '../../../utils/routes';
+import { useNextJob } from '../../../utils/followOn';
 
 export default function RideCompletedScreen() {
   const route = useRoute();
@@ -18,6 +19,8 @@ export default function RideCompletedScreen() {
 
   const [ride, setRide] = useState(null);
   const [rider, setRider] = useState(null);
+  // A follow-on job accepted during this trip: it starts now.
+  const nextJob = useNextJob(ride?.driverId, rideId, true);
   const rise = useRef(new Animated.Value(24)).current;
   const fade = useRef(new Animated.Value(0)).current;
 
@@ -139,12 +142,30 @@ export default function RideCompletedScreen() {
           </Card>
         ) : null}
 
-        <Button
-          title="Ready for the next trip"
-          icon="arrow-forward"
-          style={{ marginTop: SPACE[5] }}
-          onPress={() => navigation.reset({ index: 0, routes: [{ name: 'DriverHome' }] })}
-        />
+        {nextJob ? (
+          <Button
+            title={`Go to next pickup: ${String(nextJob.pickupLocation?.address || '').split(',')[0] || 'next job'}`}
+            icon="arrow-redo"
+            variant="accent"
+            style={{ marginTop: SPACE[5] }}
+            onPress={() => {
+              // The server does this too when the trip ends; whichever is first.
+              setDoc(
+                doc(db, 'drivers', ride.driverId),
+                { isOnRide: true, currentRideId: nextJob.id, status: 'on_ride' },
+                { merge: true }
+              ).catch(() => {});
+              navigation.reset({ index: 0, routes: [{ name: 'DriverRideInProgress', params: { rideId: nextJob.id } }] });
+            }}
+          />
+        ) : (
+          <Button
+            title="Ready for the next trip"
+            icon="arrow-forward"
+            style={{ marginTop: SPACE[5] }}
+            onPress={() => navigation.reset({ index: 0, routes: [{ name: 'DriverHome' }] })}
+          />
+        )}
       </ScrollView>
     </SafeAreaView>
   );

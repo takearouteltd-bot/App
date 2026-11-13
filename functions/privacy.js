@@ -110,12 +110,15 @@ const makePrivacy = ({functions, db}) => {
       .onWrite(async (change, context) => {
         const after = change.after.exists ? change.after.data() : null;
         const ref = db.collection("fleetJobOffers").doc(context.params.rideId);
+        // A job held for the office (functions/fleet.js heldForOffice) is
+        // offered to nobody.
         const offered = after && after.source === "phone" &&
           after.status === "dispatching" && typeof after.fleetId === "string" &&
-          !after.riderId;
+          !after.riderId && (after.dispatch || {}).mode !== "office";
         if (!offered) {
           const before = change.before.exists ? change.before.data() : null;
-          if (before && before.status === "dispatching") {
+          if (before && before.status === "dispatching" &&
+              (before.dispatch || {}).mode !== "office") {
             await ref.delete().catch(() => null);
           }
           return null;

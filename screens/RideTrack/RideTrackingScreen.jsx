@@ -279,7 +279,16 @@ export default function RideTrackingScreen() {
   }
 
   const { pickupLocation, dropoffLocation, status } = rideData;
-  const state = STATUS[status] || STATUS.accepted;
+  // A follow-on job: the driver finishes the trip they're on first
+  // (functions/followOn.js), so the distance to them isn't the wait.
+  const finishing = status === 'accepted' && rideData?.followOn && !rideData.followOn.startedAt;
+  const state = finishing
+    ? {
+        title: 'Driver finishing a nearby trip',
+        detail: `They'll head to you as soon as it ends${rideData.followOn.etaMinutes ? `, in about ${rideData.followOn.etaMinutes} min` : ''}.`,
+      }
+    : STATUS[status] || STATUS.accepted;
+  const shownEta = finishing ? null : etaMinutes;
   const beforePickup = status === 'accepted' || status === 'arrived';
 
   // While the driver is still coming to you, the line that matters is theirs
@@ -369,8 +378,8 @@ export default function RideTrackingScreen() {
                 <Text style={styles.trackTitle} numberOfLines={1}>
                   {status === 'arrived'
                     ? 'Your driver has arrived'
-                    : etaMinutes
-                      ? `Arriving in ${etaMinutes} min`
+                    : shownEta
+                      ? `Arriving in ${shownEta} min`
                       : state.title}
                 </Text>
                 <Text style={TYPE.small} numberOfLines={1}>
@@ -395,8 +404,8 @@ export default function RideTrackingScreen() {
         <Text style={TYPE.label}>Your ride</Text>
         <Text style={TYPE.title}>{state.title}</Text>
         <Text style={[TYPE.small, { marginTop: SPACE[1] }]}>
-          {beforePickup && etaMinutes && status === 'accepted'
-            ? `About ${etaMinutes} min away. ${state.detail}`
+          {beforePickup && shownEta && status === 'accepted'
+            ? `About ${shownEta} min away. ${state.detail}`
             : state.detail}
         </Text>
 

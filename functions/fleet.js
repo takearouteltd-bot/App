@@ -35,7 +35,16 @@
      dispatching  offered to dispatch.driverId, or to the whole fleet when
                   that is null; a driver who declines is added to declinedBy.
                   dispatch.mode says how: "driver" (the operator chose),
-                  "all" (whole fleet) or "queue" (the zone queue, below)
+                  "all" (whole fleet), "queue" (the zone queue, below) or
+                  "office" (held: offered to nobody until the operator
+                  sends it again)
+
+   A job sent to one driver stays theirs alone. When that driver says no,
+   says they can't do a booked job, or gives it back after accepting, it is
+   held for the office ("office"), never passed to another driver by
+   itself. A booked job with a driver chosen is "allocated": the driver sees
+   it in the app from then on (fleetAllocations/{rideId}, without the
+   customer's number) and is told when it is changed, moved or cancelled.
      accepted / arrived / ongoing / completed / cancelled   as app jobs
 
    Collections:
@@ -139,7 +148,8 @@ module.exports = (deps) => {
     wantsJobType,
     hasExpiredDocument, toE164, toMillis, addOneMonth,
     TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor, STRIPE_SECRETS,
-    fleetBilling, privacy, membershipSuspended, positionStale} = deps;
+    fleetBilling, privacy, membershipSuspended, positionStale,
+    followOn} = deps;
   const paymentAlerts = require("./paymentAlerts")({functions, db});
   const {HttpsError} = functions.https;
   // From the modular entry point: the functions emulator's stand-in for
@@ -511,6 +521,48 @@ module.exports = (deps) => {
   }
 
   /**
+   * Holds a phone job for the office: offered to nobody until the operator
+   * sends it again (redispatchFleetBooking). The dashboard shows who handed
+   * it back and why.
+   * @param {string} driverId The driver it was with.
+   * @param {string} why "declined", "gave_back" or "cannot_do" (a booked
+   *   job the driver said they can't do).
+   * @return {Object} Ride update.
+   */
+  function heldForOffice(driverId, why) {
+    return {
+      "dispatch.mode": "office",
+      "dispatch.nearest": false,
+      "dispatch.driverId": null,
+      "dispatch.returnedBy": driverId,
+      "dispatch.returnedAt": FieldValue.serverTimestamp(),
+      "dispatch.heldReason": why,
+      "dispatch.autoResent": false,
+      "dispatch.offeredAt": null,
+      "dispatch.reRings": 0,
+      "dispatch.unansweredAt": FieldValue.delete(),
+    };
+  }
+
+  /**
+   * Holds a job for the office only if it is still as the event saw it:
+   * the office may have sent it again since (triggers can run late).
+   * @param {Object} ref Ride ref.
+   * @param {Function} still (ride) => whether it still needs holding.
+   * @param {Object} update heldForOffice(...) fields.
+   * @return {Promise<void>}
+   */
+  async function holdIfStill(ref, still, update) {
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (snap.exists && still(snap.data())) tx.update(ref, update);
+    }).catch((error) => {
+      console.error("Could not hold job for the office:", ref.id,
+          error.message);
+    });
+  }
+
+  /**
    * Sends a dispatching phone job: a ring to the chosen driver, or to the
    * fleet's nearby online drivers.
    * @param {string} rideId Ride id.
@@ -518,11 +570,14 @@ module.exports = (deps) => {
    * @return {Promise<number>} Drivers it was sent to.
    */
   async function offerFleetJob(rideId, ride) {
+    // Held for the office: nobody is offered it.
+    if (ride.dispatch && ride.dispatch.mode === "office") return 0;
     const cfg = await loadAppConfig();
     const pickup = ride.pickupLocation && ride.pickupLocation.address ?
       ride.pickupLocation.address : "a pickup";
     const target = ride.dispatch && ride.dispatch.driverId;
     let ids = [];
+    let freeKm = null;
     if (target) {
       ids = [target];
     } else {
@@ -537,7 +592,10 @@ module.exports = (deps) => {
           return;
         }
         const km = distanceKm(d.location, ride.pickupLocation);
-        if (km <= cfg.dispatch.searchRadiusKm) ids.push(snap.id);
+        if (km <= cfg.dispatch.searchRadiusKm) {
+          ids.push(snap.id);
+          if (freeKm === null || km < freeKm) freeKm = km;
+        }
       });
     }
     await sendPush(ids, {
@@ -553,6 +611,9 @@ module.exports = (deps) => {
       data: {type: "job_offer", rideId},
     });
     console.log(`Fleet job ${rideId} offered to ${ids.length} driver(s)`);
+    // A busy driver about to drop off nearby (or the chosen driver, if they
+    // are on a trip) is offered it as their next job.
+    await followOn.offerFor(rideId, ride, {cfg, freeKm});
     return ids.length;
   }
 
@@ -2484,11 +2545,14 @@ module.exports = (deps) => {
   }
 
   /* Sends a phone job again: to another driver, to the whole fleet, or
-     straight away instead of at its booked time. */
+     straight away instead of at its booked time. With keepTime, a booked
+     job is given to another driver (or way of sending) and still goes out
+     at its booked time. */
   out.redispatchFleetBooking = functions.https.onCall(async (data, context) => {
     const me = await assertFleetManager(context, false);
     const rideId = text(data && data.rideId, 128);
     const driverId = text(data && data.driverId, 128) || null;
+    const keepTime = Boolean(data && data.keepTime);
     const {mode, nearest} = dispatchChoice(data && data.mode, driverId,
         me.fleet);
     const rideRef = db.collection("rides").doc(rideId);
@@ -2512,6 +2576,19 @@ module.exports = (deps) => {
         throw new HttpsError("failed-precondition",
             "A driver already has this job, or it has ended.");
       }
+      if (keepTime && ride.status === "scheduled") {
+        tx.update(rideRef, {
+          "dispatch.mode": mode,
+          "dispatch.nearest": nearest,
+          "dispatch.driverId": driverId,
+          "dispatch.returnedBy": FieldValue.delete(),
+          "dispatch.returnedAt": FieldValue.delete(),
+          "dispatch.heldReason": FieldValue.delete(),
+          "declinedBy": driverId ?
+            (ride.declinedBy || []).filter((id) => id !== driverId) : [],
+        });
+        return;
+      }
       tx.update(rideRef, {
         "status": "dispatching",
         "dispatchAt": Timestamp.now(),
@@ -2521,6 +2598,7 @@ module.exports = (deps) => {
         "dispatch.offeredAt": FieldValue.serverTimestamp(),
         "dispatch.rounds": FieldValue.increment(1),
         "dispatch.returnedBy": FieldValue.delete(),
+        "dispatch.heldReason": FieldValue.delete(),
         "dispatch.queueDone": false,
         "dispatch.missed": [],
         "dispatch.reRings": 0,
@@ -2533,6 +2611,153 @@ module.exports = (deps) => {
     });
     return {ok: true};
   });
+
+  /**
+   * The driver a booked phone job is allocated to, if any.
+   * @param {?Object} r Ride data.
+   * @return {?string} Driver id.
+   */
+  function allocatedTo(r) {
+    const d = r && r.dispatch;
+    return r && r.source === "phone" && r.status === "scheduled" && d &&
+      d.mode === "driver" && typeof d.driverId === "string" ?
+      d.driverId : null;
+  }
+
+  /**
+   * A day and time in UK time, for a text: "Fri 14 Nov at 14:30".
+   * @param {?number} ms Time.
+   * @return {string} Text.
+   */
+  function ukWhen(ms) {
+    if (!ms) return "booked";
+    return new Intl.DateTimeFormat("en-GB", {timeZone: "Europe/London",
+      weekday: "short", day: "numeric", month: "short", hour: "2-digit",
+      minute: "2-digit", hour12: false}).format(new Date(ms))
+        .replace(",", "").replace(/ (\d\d:\d\d)$/, " at $1");
+  }
+
+  /**
+   * The allocated job as the driver's app shows it, without the
+   * customer's number.
+   * @param {string} rideId Ride id.
+   * @param {Object} r Ride data.
+   * @param {string} driverId Driver.
+   * @return {Object} fleetAllocations document.
+   */
+  function allocationDoc(rideId, r, driverId) {
+    const place = (p) => p ? {address: p.address || "",
+      latitude: p.latitude, longitude: p.longitude} : null;
+    return {
+      rideId,
+      driverId,
+      fleetId: r.fleetId,
+      fleetName: r.fleetName || null,
+      rideType: r.rideType || "RouteMini",
+      pickupLocation: place(r.pickupLocation),
+      dropoffLocation: place(r.dropoffLocation),
+      stops: (r.stops || []).map(place),
+      pickupAt: r.pickupAt || null,
+      dispatchAt: r.dispatchAt || null,
+      fare: Number((r.fare && r.fare.total) || 0),
+      currency: r.currency || "GBP",
+      collectBy: r.collectBy || null,
+      accountCompany: (r.account && r.account.company) || null,
+      notes: r.notes || "",
+      customerName: (r.customer && r.customer.name) || "",
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+  }
+
+  /* A booked job allocated to a driver: kept in fleetAllocations for their
+     app, and the driver is told when they get one, when it changes and
+     when it is cancelled or moved to someone else. Sending it out at its
+     time is the usual ring, so nothing extra is said then. */
+  out.syncFleetAllocation = functions.firestore
+      .document("rides/{rideId}")
+      .onWrite(async (change, context) => {
+        const before = change.before.exists ? change.before.data() : null;
+        const after = change.after.exists ? change.after.data() : null;
+        const was = allocatedTo(before);
+        const now = allocatedTo(after);
+        if (!was && !now) return null;
+        const rideId = context.params.rideId;
+        const ref = db.collection("fleetAllocations").doc(rideId);
+        const shown = (r) => JSON.stringify([toMillis(r.pickupAt),
+          (r.pickupLocation || {}).address, (r.dropoffLocation || {}).address,
+          (r.stops || []).map((p) => p && p.address), r.rideType,
+          (r.fare || {}).total, r.collectBy, r.notes,
+          (r.customer || {}).name, toMillis(r.dispatchAt)]);
+        // Only time and places are worth a notification.
+        const whereWhen = (r) => JSON.stringify([toMillis(r.pickupAt),
+          (r.pickupLocation || {}).address, (r.dropoffLocation || {}).address,
+          (r.stops || []).map((p) => p && p.address)]);
+        const changed = was && now && was === now &&
+          shown(before) !== shown(after);
+        // The list copy follows the ride as it is now, not this event, in
+        // case events arrive out of order.
+        if (now !== was || changed) {
+          const live = await db.collection("rides").doc(rideId).get();
+          const cur = live.exists ? live.data() : null;
+          const holder = allocatedTo(cur);
+          if (holder) {
+            await ref.set(allocationDoc(rideId, cur, holder));
+          } else {
+            await ref.delete().catch(() => null);
+          }
+        }
+
+        const r = after || before;
+        const fleet = r.fleetName || "The office";
+        const when = ukWhen(toMillis(r.pickupAt));
+        const from = String((r.pickupLocation || {}).address || "the pickup")
+            .split(",")[0];
+        const tell = (id, title, body) => sendPush([id], {title, body,
+          channelId: "trip-updates",
+          data: {type: "booked_job", rideId}}).catch(() => null);
+        if (now && now !== was) {
+          await tell(now, "New booked job",
+              `${fleet} booked you for ${when} from ${from}. ` +
+              "It's under Booked jobs in the app.");
+        }
+        if (was && was !== now) {
+          const released = after && after.status === "dispatching" &&
+            (after.dispatch || {}).driverId === was;
+          const ownAnswer = after && (after.dispatch || {}).returnedBy === was;
+          if (!after || ["cancelled", "canceled"].includes(after.status)) {
+            await tell(was, "Booked job cancelled",
+                `${fleet} cancelled the job ${when} from ${from}.`);
+          } else if (!released && !ownAnswer) {
+            await tell(was, "Booked job taken off you",
+                `${fleet} has given the job ${when} from ${from} to ` +
+                "someone else.");
+          }
+        } else if (changed && whereWhen(before) !== whereWhen(after)) {
+          await tell(now, "Booked job changed",
+              `${fleet} changed your booked job: now ${when} from ${from}.`);
+        }
+        return null;
+      });
+
+  /* The driver can't do a booked job allocated to them: it goes back to
+     the office, held, for the operator to give to someone else. */
+  out.declineFleetAllocation = functions.https.onCall(
+      async (data, context) => {
+        const uid = context.auth && context.auth.uid;
+        if (!uid) throw new HttpsError("unauthenticated", "Sign in.");
+        const rideRef = db.collection("rides")
+            .doc(text(data && data.rideId, 128) || "-");
+        await db.runTransaction(async (tx) => {
+          const snap = await tx.get(rideRef);
+          const ride = snap.exists ? snap.data() : null;
+          if (allocatedTo(ride) !== uid) {
+            throw new HttpsError("failed-precondition",
+                "This booked job is no longer yours.");
+          }
+          tx.update(rideRef, heldForOffice(uid, "cannot_do"));
+        });
+        return {ok: true};
+      });
 
   /* The office changes a phone booking before any driver has accepted it:
      customer, addresses, car type, time, price, payment and notes. A
@@ -3222,21 +3447,30 @@ module.exports = (deps) => {
         const rideId = context.params.rideId;
 
         // A driver gave the job back (the app sets status dispatching and
-        // driverId null). Send it on by itself: the same queue carries on,
-        // a job sent to one named driver goes to the nearest free driver,
-        // and a whole-fleet job rings the fleet again. The driver who gave
-        // it back is not asked again. The office still sees who returned it
-        // and can resend or cancel.
+        // driverId null). A job the office sent to that driver by name goes
+        // back to the office, held, for the operator to send again. Others
+        // are sent on by themselves: the same queue carries on and a
+        // whole-fleet job rings the fleet again. The driver who gave it back
+        // is not asked again. The office still sees who returned it and can
+        // resend or cancel.
         if (before && ["accepted", "arrived"].includes(before.status) &&
             after.status === "dispatching" && !after.driverId &&
             before.driverId) {
           const old = after.dispatch || {};
-          const toQueue = old.mode === "queue" || old.mode === "driver";
+          if (old.mode === "driver") {
+            await holdIfStill(change.after.ref, (cur) =>
+              cur.status === "dispatching" && !cur.driverId &&
+              (cur.dispatch || {}).mode === "driver" &&
+              (cur.dispatch || {}).driverId === old.driverId,
+            Object.assign(heldForOffice(before.driverId, "gave_back"),
+                {declinedBy: FieldValue.arrayUnion(before.driverId)}));
+            return null;
+          }
+          const toQueue = old.mode === "queue";
           await change.after.ref.update({
             "declinedBy": FieldValue.arrayUnion(before.driverId),
             "dispatch.mode": toQueue ? "queue" : "all",
-            "dispatch.nearest": old.mode === "driver" ? true :
-              old.nearest === true,
+            "dispatch.nearest": old.nearest === true,
             "dispatch.driverId": null,
             "dispatch.queueDone": false,
             "dispatch.returnedBy": before.driverId,
@@ -3252,6 +3486,21 @@ module.exports = (deps) => {
           return null;
         }
         if (after.status !== "dispatching") return null;
+
+        // The driver the office chose said no: back to the office, not on
+        // to anyone else.
+        const chosen = (after.dispatch || {}).mode === "driver" &&
+          (after.dispatch || {}).driverId;
+        if (chosen && (after.declinedBy || []).includes(chosen) &&
+            !((before && before.declinedBy) || []).includes(chosen)) {
+          await holdIfStill(change.after.ref, (cur) =>
+            cur.status === "dispatching" && !cur.driverId &&
+            (cur.dispatch || {}).mode === "driver" &&
+            (cur.dispatch || {}).driverId === chosen &&
+            (cur.declinedBy || []).includes(chosen),
+          heldForOffice(chosen, "declined"));
+          return null;
+        }
 
         // By queue: pick the first driver in the pickup zone, and the next
         // one each time the current one says no (or runFleetQueues marks

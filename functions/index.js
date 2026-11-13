@@ -79,6 +79,10 @@ const CONFIG_DEFAULTS = {
     restHours: 6},
   dispatch: {
     searchRadiusKm: 50, requestTimeoutSeconds: 20, searchTimeoutMinutes: 15,
+    // Follow-on jobs (followOn.js): a busy driver is offered a job when they
+    // could be at its pickup within this many minutes, and they drop off
+    // within followOnKm of it. 0 minutes turns them off.
+    followOnMinutes: 10, followOnKm: 3.2,
   },
   fares: {minimumFare: 6},
   cancellation: {fee: 0, freeMinutes: 2, arrivedFee: 0, noShowWaitMinutes: 5,
@@ -174,6 +178,10 @@ async function loadAppConfig() {
       // cancelled for the passenger (expireSearchingRides).
       searchTimeoutMinutes: numSetting(data.dispatch,
           "searchTimeoutMinutes", d.dispatch.searchTimeoutMinutes),
+      followOnMinutes: numSetting(data.dispatch, "followOnMinutes",
+          d.dispatch.followOnMinutes),
+      followOnKm: numSetting(data.dispatch, "followOnKm",
+          d.dispatch.followOnKm),
     },
   };
 }
@@ -3352,6 +3360,7 @@ async function offerRideToDrivers(rideId, ride) {
       .where("status", "==", "online").get();
 
   const nearby = [];
+  let freeKm = null;
   online.forEach((snap) => {
     const d = snap.data();
     if (skip.has(snap.id) || d.blocked === true || d.approved !== true ||
@@ -3371,7 +3380,10 @@ async function offerRideToDrivers(rideId, ride) {
     // The driver switched cash jobs off in the app.
     if (d.cashJobs === false && ride.paymentMethod === "cash") return;
     const km = distanceKm(d.location, ride.pickupLocation);
-    if (km <= cfg.dispatch.searchRadiusKm) nearby.push(snap.id);
+    if (km <= cfg.dispatch.searchRadiusKm) {
+      nearby.push(snap.id);
+      if (freeKm === null || km < freeKm) freeKm = km;
+    }
   });
 
   const pickup = ride.pickupLocation && ride.pickupLocation.address ?
@@ -3389,6 +3401,8 @@ async function offerRideToDrivers(rideId, ride) {
     data: {type: "job_offer", rideId},
   });
   console.log(`Job ${rideId} offered to ${nearby.length} driver(s)`);
+  // A busy driver about to drop off nearby, if they would be quicker.
+  await followOn.offerFor(rideId, ride, {cfg, freeKm});
   return null;
 }
 
@@ -3738,6 +3752,8 @@ exports.notifyRideUpdates = functions.firestore
       if (before.status === after.status) return null;
 
       const cancelled = ["cancelled", "canceled"];
+      // A follow-on job that ended or went back before it started.
+      await followOn.forget(before, after, rideId);
       const trip = {channelId: "trip-updates", data: {type: "trip", rideId}};
 
       // A ride that ends frees its driver here too, not only from the
@@ -3759,6 +3775,8 @@ exports.notifyRideUpdates = functions.firestore
         }).catch((error) => {
           console.error("Could not free driver:", endedDriver, error.message);
         });
+        // A follow-on job they accepted becomes their job now.
+        await followOn.switchAfter(endedDriver, rideId);
       }
 
       // Back to searching because the card hold failed: the passenger and
@@ -3803,6 +3821,13 @@ exports.notifyRideUpdates = functions.firestore
             title: "Your offer was accepted",
             body: "The passenger took your price. Head to the pickup."})
               .catch(() => null);
+        }
+        if (after.followOn && !after.followOn.startedAt) {
+          const eta = Number(after.followOn.etaMinutes) || 0;
+          return sendPush([after.riderId], {...trip,
+            title: "Driver found",
+            body: "Your driver is finishing a trip nearby and will head " +
+              `to you straight after${eta ? `, in about ${eta} min` : ""}.`});
         }
         return sendPush([after.riderId], {...trip,
           title: "Driver on the way",
@@ -5028,9 +5053,15 @@ Object.assign(exports, privacy.functions);
 Object.assign(exports, require("./driverPenalty")({
   functions, db, sendPush, loadAppConfig, distanceKm,
 }).functions);
+// Follow-on jobs; used by offerRideToDrivers, notifyRideUpdates and fleet.
+const followOn = require("./followOn")({
+  functions, db, sendPush, loadAppConfig, distanceKm, canServe, wantsJobType,
+  hasExpiredDocument, membershipSuspended, positionStale, toMillis,
+});
+Object.assign(exports, followOn.functions);
 Object.assign(exports, require("./fleet")({
   functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
-  wantsJobType,
+  wantsJobType, followOn,
   hasExpiredDocument, toE164, toMillis, addOneMonth,
   TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor,
   STRIPE_SECRETS, fleetBilling, shared: fleetShared, stripe, privacy,
