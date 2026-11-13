@@ -490,3 +490,33 @@ test('a driver ending a trip mid-way must flag it; a no-show must not', async ()
   await job({ status: 'arrived' });
   await assertSucceeds(updateDoc(doc(as('cfree'), 'rides/j1'), { status: 'cancelled', cancelledBy: 'driver', cancelReason: 'passenger_no_show', cancelledAt: serverTimestamp() }));
 });
+
+test('a job held for the office cannot be taken by anyone', async () => {
+  await env.withSecurityRulesDisabled((ctx) => setDoc(doc(ctx.firestore(), 'rides/held'), phoneJob({ dispatch: { driverId: null, mode: 'office' } })));
+  await assertFails(updateDoc(doc(as('d1'), 'rides/held'), claim('d1')));
+});
+test('booked jobs and follow-on offers: only their driver (and the fleet) read them; nobody writes them', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    await setDoc(doc(ctx.firestore(), 'fleetAllocations/b1'), { driverId: 'd1', fleetId: 'f1', rideId: 'b1' });
+    await setDoc(doc(ctx.firestore(), 'followOnOffers/d1'), { driverId: 'd1', rideId: 'x' });
+  });
+  await assertSucceeds(getDoc(doc(as('d1'), 'fleetAllocations/b1')));
+  await assertSucceeds(getDocs(query(collection(as('d1'), 'fleetAllocations'), where('driverId', '==', 'd1'))));
+  await assertSucceeds(getDoc(doc(as('own1'), 'fleetAllocations/b1')));
+  await assertFails(getDoc(doc(as('d2'), 'fleetAllocations/b1')));
+  await assertFails(getDoc(doc(as('own2'), 'fleetAllocations/b1')));
+  await assertFails(setDoc(doc(as('d1'), 'fleetAllocations/b2'), { driverId: 'd1', fleetId: 'f1' }));
+  await assertSucceeds(getDoc(doc(as('d1'), 'followOnOffers/d1')));
+  await assertFails(getDoc(doc(as('d2'), 'followOnOffers/d1')));
+  await assertFails(setDoc(doc(as('d1'), 'followOnOffers/d1'), { driverId: 'd1', rideId: 'y' }));
+});
+test('app errors: anyone writes one of the right shape, as themselves; only admins read', async () => {
+  const e = (extra = {}) => ({ message: 'TypeError: x', stack: 'at y', componentStack: '', screen: 'FareEstimation', kind: 'render', fatal: false, version: '1.0.32', build: 29, platform: 'android', uid: 'pass1', at: serverTimestamp(), ...extra });
+  await assertSucceeds(addDoc(collection(as('pass1'), 'appErrors'), e()));
+  await assertSucceeds(addDoc(collection(env.unauthenticatedContext().firestore(), 'appErrors'), e({ uid: null })));
+  await assertFails(addDoc(collection(as('pass1'), 'appErrors'), e({ uid: 'someone' })));
+  await assertFails(addDoc(collection(as('pass1'), 'appErrors'), e({ extra: 1 })));
+  await assertFails(addDoc(collection(as('pass1'), 'appErrors'), e({ message: 'x'.repeat(501) })));
+  await assertFails(getDocs(collection(as('pass1'), 'appErrors')));
+  await assertSucceeds(getDocs(collection(as('adm'), 'appErrors')));
+});

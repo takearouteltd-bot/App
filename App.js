@@ -14,6 +14,8 @@ import DriverNavigator from "./navigation/DriverNavigator";
 import { StripeProvider } from "@stripe/stripe-react-native";
 import SplashScreen from "./Splash/SplashScreen";
 import { AlertHost } from "./components/ui/alert";
+import AppErrorBoundary from "./components/AppErrorBoundary";
+import { installGlobalErrorLogging } from "./utils/errorLog";
 import { confirmDeleteAccount } from "./utils/deleteAccount";
 import * as NativeSplash from "expo-splash-screen";
 import { startAppConfigSync } from "./utils/appConfig";
@@ -30,6 +32,15 @@ const Stack = createNativeStackNavigator();
 
 // Lets a notification tap navigate from outside any screen.
 const navigationRef = createNavigationContainerRef();
+// Errors are logged with the screen they happened on (utils/errorLog.js).
+const currentScreen = () => {
+  try {
+    return navigationRef.isReady() ? navigationRef.getCurrentRoute()?.name || null : null;
+  } catch (e) {
+    return null;
+  }
+};
+installGlobalErrorLogging(currentScreen);
 
 // Keep the native launch screen up until our own splash has drawn over it;
 // Splash/SplashScreen hides it. Without this it vanished on the first frame
@@ -58,6 +69,8 @@ function routeForNotification(data, role) {
     if (type === "change_request") return tab("Account", { screen: "DriverPersonalInformation" });
     if (type === "membership") return tab("Membership");
     if (type === "payout") return tab("Earnings", { screen: "EarningsScreen" });
+    // A booked job given to them, changed or taken off them.
+    if (type === "booked_job") return tab("Home", { screen: "DriverBookedJobs" });
     // job_offer, trip, chat and anything else: the driver home resumes the
     // current job and shows new offers.
     return tab("Home", { screen: "DriverHome" });
@@ -93,8 +106,9 @@ function alreadyThere(data, role) {
   if (!current) return false;
   const type = data?.type;
   if (role === "driver") {
+    // A follow-on offer is answered on the trip screen itself.
     return DRIVER_JOB_SCREENS.includes(current.name) &&
-      ["job_offer", "trip", "chat"].includes(type);
+      ["job_offer", "trip", "chat", "follow_on_offer"].includes(type);
   }
   if (role === "rider") {
     return RIDER_RIDE_SCREENS.includes(current.name) &&
@@ -116,6 +130,8 @@ export default function App() {
   // Bumped on sign-out so the sign-in flow starts again from the first screen.
   const [authEpoch, setAuthEpoch] = useState(0);
   const [navReady, setNavReady] = useState(false);
+  // Bumped by "Back to start" after a screen error, to rebuild navigation.
+  const [navEpoch, setNavEpoch] = useState(0);
 
   // Latest role for the notification handler, which lives outside React's
   // render cycle; and a tap that arrived before the app was ready to act.
@@ -361,7 +377,8 @@ export default function App() {
     <StripeProvider
       publishableKey="pk_live_51T4pF7REPqWRLyvftXlZAED5bv5rrFjSh9MQle6LfToqYzspQzy5DDNZy8gU7fG2ilbj9UGhHAexEP5feYj9QW3p00AaGLzXVu"
     >
-      <NavigationContainer ref={navigationRef} onReady={() => setNavReady(true)}>
+      <AppErrorBoundary getScreen={currentScreen} onReset={() => setNavEpoch((n) => n + 1)}>
+      <NavigationContainer key={navEpoch} ref={navigationRef} onReady={() => setNavReady(true)}>
         <Stack.Navigator screenOptions={{ headerShown: false }}>
           {!userRole && (
             // Signed in but no role chosen yet (the record was created but the
@@ -405,6 +422,7 @@ export default function App() {
           )}
         </Stack.Navigator>
       </NavigationContainer>
+      </AppErrorBoundary>
       <AlertHost />
     </StripeProvider>
   );

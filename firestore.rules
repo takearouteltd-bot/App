@@ -744,6 +744,21 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    /* App errors with their message and stack (utils/errorLog.js), which
+       Play's crash report leaves out. Anyone using the app may write one,
+       of a fixed shape and size; only admins read them. */
+    match /appErrors/{errorId} {
+      allow read, delete: if isAdmin();
+      allow create: if request.resource.data.keys().hasOnly(["message", "stack", "componentStack",
+          "screen", "kind", "fatal", "version", "build", "platform", "uid", "at"]) &&
+        request.resource.data.message is string && request.resource.data.message.size() <= 500 &&
+        request.resource.data.stack is string && request.resource.data.stack.size() <= 4000 &&
+        request.resource.data.componentStack is string && request.resource.data.componentStack.size() <= 2000 &&
+        request.resource.data.uid == (request.auth == null ? null : request.auth.uid) &&
+        request.resource.data.at == request.time;
+      allow update: if false;
+    }
+
     /* ================= NEARBY CARS (NEW) ================= */
     /* A bare position per free driver, so passengers see cars nearby
        without reading driver records. */
