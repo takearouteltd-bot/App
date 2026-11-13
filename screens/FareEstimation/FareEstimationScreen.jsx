@@ -66,7 +66,12 @@ const RIDE_OPTIONS = RIDE_CLASSES.map((c) => ({ ...c, passengers: c.seats }));
 
 export default function FareEstimationScreen({ route }) {
   const navigation = useNavigation();
-  const { origin, destination } = route.params;
+  const { origin, destination } = route.params || {};
+  // Never without a journey: go back instead of crashing on it.
+  const journeyMissing = !origin || !destination;
+  useEffect(() => {
+    if (journeyMissing && navigation.canGoBack()) navigation.goBack();
+  }, [journeyMissing, navigation]);
 
   // Stops on the way, in order. The route (and so the fare, which is priced
   // on distance and time) goes through every one.
@@ -82,7 +87,12 @@ export default function FareEstimationScreen({ route }) {
     navigation.setParams({ addStop: undefined });
   }, [route.params?.addStop, navigation]);
   const removeStop = (index) => setStops((list) => list.filter((_, i) => i !== index));
-  const addStop = () => navigation.navigate('DestinationSearch', { origin, mode: 'stop' });
+  // push, not navigate: navigate went back to the "Where to?" search already
+  // below this screen, which closed it, and the stop then opened a new fare
+  // screen with no pickup or destination: "takearoute keeps stopping"
+  // (Play crash 12 Nov, JavascriptException). Picking the stop comes back
+  // here (DestinationScreen goToFare, merge).
+  const addStop = () => navigation.push('DestinationSearch', { origin, mode: 'stop' });
   const mapRef = useRef(null);
   const auth = getAuth();
   const currentUser = auth.currentUser;
@@ -436,19 +446,13 @@ export default function FareEstimationScreen({ route }) {
 
   // Averaging a missing coordinate gives NaN, and the map opens on 0,0.
   const initialRegion = regionCovering([origin, destination], 0.05);
-  // A new map whenever the stops change. Adding a stop pin to the map already
-  // on screen closed the app on Android (tester video, 12 Nov: Add a stop,
-  // pick a recent place, "takearoute keeps stopping"); pins drawn when a map
-  // first opens are fine, as with "Book again" stops. The route and price are
-  // worked out again either way.
-  const mapKey = stops.map((s) => `${s.latitude},${s.longitude}`).join('|') || 'no-stops';
+  if (journeyMissing) return null;
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.mapWrap}>
         {initialRegion ? (
         <MapView
-          key={mapKey}
           ref={mapRef}
           provider={PROVIDER_GOOGLE}
           style={StyleSheet.absoluteFill}
