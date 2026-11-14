@@ -62,6 +62,14 @@ const { width, height } = Dimensions.get('window');
 const MISSED_SNOOZE_MS = 60000;
 // The price on the table for a job (the passenger's offer when bidding).
 const fareOf = (ride) => Number(ride?.fareEstimate) || 0;
+/* BID JOBs (functions/bidJobs.js): a job nobody was taking, opened to
+   drivers further out. It is shown out to its own radius, rings again once,
+   and comes back even if its timer ran out here before (not if declined). */
+const bidRadiusKm = (ride, normalKm) =>
+  ride?.bidJob ? Math.max(normalKm, Number(ride.bidJob.radiusKm) || 0) : normalKm;
+const ringKey = (ride) => (ride?.bidJob ? `${ride.id}#bid` : ride?.id);
+const snoozeHolds = (snooze, ride) =>
+  Boolean(snooze && snooze.until > Date.now() && !(ride?.bidJob && !snooze.bid && snooze.until !== Infinity));
 // A fleet's own answer time for zone-queue jobs is not on the ride or readable
 // by drivers, so the countdown uses the default (functions/fleet.js).
 const DEFAULT_QUEUE_OFFER_SECONDS = 45;
@@ -562,8 +570,7 @@ export default function DriverHomeScreen() {
       // Cash jobs off: only one the office sent to this driver by name.
       if (!cashJobs && !target && !['account', 'card', 'online'].includes(data.collectBy)) return;
       if (Array.isArray(data.declinedBy) && data.declinedBy.includes(driverId)) return;
-      const snooze = snoozed.current.get(data.id);
-      if (snooze && snooze.until > Date.now()) return;
+      if (snoozeHolds(snoozed.current.get(data.id), data)) return;
       if (!canServe(vehicleType, data.rideType)) return;
       // Unticked categories: only one the office sent to this driver by name.
       if (!target && !wantsJobType(jobTypes, data.rideType)) return;
@@ -573,7 +580,7 @@ export default function DriverHomeScreen() {
         data.pickupLocation.latitude,
         data.pickupLocation.longitude
       );
-      if (!target && distance > searchRadiusKm * (shownIds.current.has(data.id) ? 1.25 : 1)) return;
+      if (!target && distance > bidRadiusKm(data, searchRadiusKm) * (shownIds.current.has(data.id) ? 1.25 : 1)) return;
       rides.push({ ...data, pickupDistanceKm: distance, forMe: Boolean(target) });
     });
     searchingRides.forEach((data) => {
@@ -581,12 +588,14 @@ export default function DriverHomeScreen() {
       // Shown once the server has checked the price (a second or two after
       // booking); before that the job cannot be taken (firestore.rules).
       if (data.pricing !== 'checked') return;
-      // Jobs this driver already cancelled are not offered again.
-      if (Array.isArray(data.declinedBy) && data.declinedBy.includes(driverId)) return;
       // Declined here, or its timer just ran out: don't put it straight back,
       // unless the passenger has raised the price since.
       const snooze = snoozed.current.get(data.id);
-      if (snooze && snooze.until > Date.now() && !(fareOf(data) > snooze.fare)) return;
+      const raised = Boolean(snooze && fareOf(data) > snooze.fare);
+      // Jobs this driver already cancelled or declined are not offered
+      // again, unless the passenger has raised their price since.
+      if (Array.isArray(data.declinedBy) && data.declinedBy.includes(driverId) && !raised) return;
+      if (snoozeHolds(snooze, data) && !raised) return;
       // Passengers who asked not to be matched with this driver.
       if (Array.isArray(data.blockedDriverIds) && data.blockedDriverIds.includes(driverId)) return;
       // Somebody who booked and paid for Executive does not get a Mini.
@@ -611,7 +620,8 @@ export default function DriverHomeScreen() {
       // pickup, so no arrival time is shown rather than a guessed one.
       // A job already on screen stays until it is a quarter beyond the
       // radius, so a driver near the edge does not see it blink in and out.
-      const limit = shownIds.current.has(data.id) ? searchRadiusKm * 1.25 : searchRadiusKm;
+      const radius = bidRadiusKm(data, searchRadiusKm);
+      const limit = shownIds.current.has(data.id) ? radius * 1.25 : radius;
       if (distance <= limit) {
         rides.push({ ...data, pickupDistanceKm: distance });
       }
@@ -622,15 +632,15 @@ export default function DriverHomeScreen() {
     shownIds.current = new Set(rides.map((r) => r.id));
     // Ring for jobs this phone has not seen yet. Not while on a job.
     // A job whose price went up since it rang counts as new.
-    const fresh = rides.filter((r) => !rungFor.current.has(r.id) || fareOf(r) > rungFor.current.get(r.id));
-    fresh.forEach((r) => rungFor.current.set(r.id, fareOf(r)));
+    const fresh = rides.filter((r) => !rungFor.current.has(ringKey(r)) || fareOf(r) > rungFor.current.get(ringKey(r)));
+    fresh.forEach((r) => rungFor.current.set(ringKey(r), fareOf(r)));
     if (fresh.length && !onRideRef.current) ringForNewJob(fresh[0]);
     // Nothing left to take: stop ringing.
     if (!rides.length) stopJobRing();
     // A new GPS fix alone, with the same jobs at about the same distance,
     // changes nothing on screen: skip it, so the screen (and its map) isn't
     // redrawn every few seconds while the driver waits or uses other tabs.
-    const sig = rides.map((r) => `${r.id}@${r.pickupDistanceKm.toFixed(1)}`).join('|');
+    const sig = rides.map((r) => `${ringKey(r)}@${r.pickupDistanceKm.toFixed(1)}`).join('|');
     const last = lastJobs.current;
     const same = last && last.searching === searchingRides && last.fleet === fleetRides && last.sig === sig;
     lastJobs.current = { searching: searchingRides, fleet: fleetRides, sig };
@@ -661,7 +671,7 @@ export default function DriverHomeScreen() {
   const advanceQueue = useCallback((snoozeMs = 0) => {
     if (snoozeMs > 0 && currentRideIdRef.current) {
       const ride = rideRequests.find((r) => r.id === currentRideIdRef.current);
-      snoozed.current.set(currentRideIdRef.current, { until: Date.now() + snoozeMs, fare: fareOf(ride) });
+      snoozed.current.set(currentRideIdRef.current, { until: Date.now() + snoozeMs, fare: fareOf(ride), bid: Boolean(ride?.bidJob) });
     }
     // The driver has dealt with this offer (declined it, or it went), so the
     // ring and its notification stop with it. Later new jobs ring again.
@@ -932,7 +942,9 @@ export default function DriverHomeScreen() {
         return next;
       });
     }
-    if (ride?.source === 'phone' && driverId) {
+    // App jobs too: when nobody else is left the server opens it as a BID
+    // JOB for drivers further out (functions/bidJobs.js).
+    if (ride?.id && driverId) {
       updateDoc(doc(db, 'rides', ride.id), { declinedBy: arrayUnion(driverId) }).catch(() => {});
     }
     advanceQueue(Infinity);
@@ -1452,7 +1464,16 @@ export default function DriverHomeScreen() {
       {/* A job offer. */}
       {currentRide ? (
         <Animated.View style={[styles.offerWrap, { transform: [{ translateX: slideAnim }] }]}>
-          <Sheet style={styles.offer} grabber={false}>
+          <Sheet style={[styles.offer, currentRide.bidJob && styles.bidOffer]} grabber={false}>
+            {currentRide.bidJob ? (
+              <View style={styles.bidBanner} accessibilityRole="header">
+                <Text style={styles.bidTitle}>BID JOB</Text>
+                <Text style={styles.bidText} numberOfLines={2}>
+                  {distanceText(currentRide.pickupDistanceKm)} from you
+                  {bidCounters(currentRide) ? ' · take it or offer your price' : ' · no driver nearer took it'}
+                </Text>
+              </View>
+            ) : null}
             <PaymentTypeBanner method={currentRide.paymentMethod} collectBy={currentRide.collectBy} account={currentRide.account} style={{ marginBottom: SPACE[4] }} />
             {currentRide.source === 'phone' ? (
               <View style={styles.fleetBanner}>
@@ -1521,7 +1542,7 @@ export default function DriverHomeScreen() {
               title={
                 isAccepting
                   ? 'Accepting…'
-                  : currentRide.bidding
+                  : currentRide.bidding || bidCounters(currentRide)
                   ? `Accept ${currencySymbol()}${Number(currentRide.fareEstimate || 0).toFixed(2)}${timer > 0 ? ` · ${timer}s` : ''}`
                   : timer > 0 ? `Accept · ${timer}s` : 'Accept'
               }
@@ -1537,7 +1558,7 @@ export default function DriverHomeScreen() {
             </View>
 
             {/* Bidding: counter with a higher price instead. */}
-            {currentRide.bidding && biddingEnabled(appConfig) ? (
+            {(currentRide.bidding && biddingEnabled(appConfig)) || bidCounters(currentRide) ? (
               sentOffers[currentRide.id] ? (
                 <Text style={styles.counterSent}>
                   You offered {currencySymbol()}
@@ -1545,7 +1566,7 @@ export default function DriverHomeScreen() {
                 </Text>
               ) : (
                 <View style={styles.counterRow}>
-                  {counterSteps(Number(currentRide.fareEstimate || 0), appConfig).map((price) => (
+                  {counterChoices(currentRide, appConfig).map((price) => (
                     <Button
                       key={price}
                       size="small"
@@ -1578,6 +1599,20 @@ const FALLBACK_REGION = { latitude: 51.5074, longitude: -0.1278, latitudeDelta: 
    a route to the pickup. At least 1 minute. */
 function pickupMinutes(km) {
   return Math.max(1, Math.ceil((Number(km) || 0) * 1.35 * 2));
+}
+
+/* A BID JOB the driver may counter (app jobs only; the cap is on the ride). */
+function bidCounters(ride) {
+  return Boolean(ride?.bidJob?.allowCounter && ride.source !== 'phone');
+}
+
+/* The prices offered on the counter chips. A bidding job uses the Bidding
+   settings; a BID JOB its own cap, from the fare the server checked (the
+   rules allow at most that much above fare.total). */
+function counterChoices(ride, config) {
+  if (ride?.bidding) return counterSteps(Number(ride.fareEstimate || 0), config);
+  const base = Number(ride?.fare?.total ?? ride?.fareEstimate ?? 0);
+  return counterSteps(base, { bidding: { maxCounterPercent: Number(ride?.bidJob?.maxCounterPercent) || 0 } });
 }
 
 /* The passenger's rating on a job offer, from riderPublic (drivers may read
@@ -1707,6 +1742,19 @@ const styles = StyleSheet.create({
   factText: { ...TYPE.small, fontWeight: '600', color: COLORS.inkSoft },
 
   counterRow: { flexDirection: 'row', gap: SPACE[2], marginTop: SPACE[3] },
+  bidOffer: { borderWidth: 3, borderColor: COLORS.lime },
+  bidBanner: {
+    backgroundColor: COLORS.midnight,
+    borderRadius: RADIUS.md,
+    paddingVertical: SPACE[2],
+    paddingHorizontal: SPACE[3],
+    marginBottom: SPACE[3],
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACE[2],
+  },
+  bidTitle: { color: COLORS.lime, fontWeight: '900', fontSize: 16, letterSpacing: 1 },
+  bidText: { color: COLORS.white, fontSize: 13, fontWeight: '600', flex: 1 },
   counterChip: { flex: 1, backgroundColor: COLORS.limeSoft, borderColor: COLORS.midnight, borderWidth: 2 },
   counterSent: { ...TYPE.small, textAlign: 'center', marginTop: SPACE[3], color: COLORS.midnight, fontWeight: '600' },
   decline: { marginTop: SPACE[2] },

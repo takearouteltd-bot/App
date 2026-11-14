@@ -80,8 +80,11 @@ export default function RideRequestScreen() {
   // When this phone first saw each offer (keyed by driver and send time, so
   // a fresh offer from the same driver starts its own clock).
   const seenAt = useRef(new Map());
+  // Offers come on a bidding ride, or on a BID JOB (functions/bidJobs.js)
+  // that lets drivers further out name their price.
+  const takesOffers = Boolean(rideData?.bidding || rideData?.bidJob?.allowCounter);
   useEffect(() => {
-    if (!rideId || !rideData?.bidding) return undefined;
+    if (!rideId || !takesOffers) return undefined;
     return onSnapshot(
       collection(db, 'rides', rideId, 'offers'),
       (snap) => {
@@ -97,7 +100,7 @@ export default function RideRequestScreen() {
       },
       (error) => console.log('Offers listener error:', error)
     );
-  }, [rideId, rideData?.bidding]);
+  }, [rideId, takesOffers]);
 
   // `elapsed` ticks every second, so expired offers drop out on their own.
   const liveOffers = offers
@@ -444,8 +447,16 @@ export default function RideRequestScreen() {
               </View>
             ) : null}
 
-            {rideData.bidding ? (
+            {rideData.bidJob && !rideData.bidding ? (
+              <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>
+                No driver nearby took it yet, so we've asked drivers further away too.
+                {rideData.bidJob.allowCounter ? ' They may offer you their price.' : ''}
+              </Text>
+            ) : null}
+
+            {takesOffers ? (
               <View style={styles.bid}>
+                {rideData.bidding ? (
                 <Card tone="accent" style={styles.bidRow}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.bidLabel}>Your offer</Text>
@@ -459,10 +470,11 @@ export default function RideRequestScreen() {
                     loading={raising}
                   />
                 </Card>
+                ) : null}
 
                 {liveOffers.length ? (
                   <Text style={[TYPE.label, { marginTop: SPACE[4], marginBottom: SPACE[2] }]}>Drivers offering</Text>
-                ) : (
+                ) : !rideData.bidding ? null : (
                   <Text style={[TYPE.small, { marginTop: SPACE[3] }]}>
                     Nearby drivers can accept your offer or come back with theirs.
                   </Text>

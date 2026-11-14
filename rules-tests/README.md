@@ -30,3 +30,5 @@ Admin's no-show fee and the driver cancel penalty (functions/driverPenalty.js, c
 Fleet portal driver numbers (fleetDriverPhones: private record, app account, then sign-in): `node rules-tests/fleet-phones.mjs`, same set-up as booking-checks, no fakes needed.
 
 Booked jobs allocated to a driver and follow-on jobs (fleet.js syncFleetAllocation, declineFleetAllocation, keepTime, jobs held for the office; followOn.js offers, accept, decline, give back, switch after the trip): `node rules-tests/allocation-followon.mjs`, same set-up as booking-checks (fake Routes on :8999 via ROUTES_API_BASE), no other fakes.
+
+BID JOBs (functions/bidJobs.js and the fleet side in fleet.js: opened on a decline, at booking with nobody in range, and by the openBidJobs scheduler; counter-offer cap; phone jobs at the office price; named jobs still go to the office): `node rules-tests/bid-jobs.mjs`, same set-up as booking-checks (fake Routes on :8999 via ROUTES_API_BASE) plus the Pub/Sub emulator as in fleet-e2e (`"pubsub": {"port": 8085}`, `--only auth,firestore,functions,pubsub`). It waits about 25 s for the unanswered case.

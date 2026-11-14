@@ -89,6 +89,15 @@ export const DEFAULT_APP_CONFIG = {
     maxCounterPercent: 50,
     offerSeconds: 60,
   },
+  // BID JOBs (functions/bidJobs.js): a job nobody is taking is opened to
+  // drivers further out. The ride carries what the app needs (ride.bidJob).
+  bidJobs: {
+    enabled: 1,
+    radiusKm: 8.05,
+    afterSeconds: 60,
+    allowCounter: 0,
+    maxCounterPercent: 30,
+  },
   // 1 lets passengers choose to pay the driver in cash.
   payments: {
     cashEnabled: 0,
@@ -121,6 +130,7 @@ export function normaliseAppConfig(raw) {
     payments: mergeSection(DEFAULT_APP_CONFIG.payments, data.payments),
     femaleDriver: mergeSection(DEFAULT_APP_CONFIG.femaleDriver, data.femaleDriver),
     bidding: mergeSection(DEFAULT_APP_CONFIG.bidding, data.bidding),
+    bidJobs: mergeSection(DEFAULT_APP_CONFIG.bidJobs, data.bidJobs),
   };
 }
 
