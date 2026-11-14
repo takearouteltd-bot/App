@@ -395,6 +395,19 @@ export default function DriverHomeScreen() {
       return;
     }
 
+    // Auto-renew was off and the membership ended (utils/membership.js).
+    if (newStatus === 'online' && membershipStatus === 'expired') {
+      Alert.alert(
+        'Your membership has ended',
+        'Auto-renew was off, so it ended. Buy a weekly or monthly plan to go online again.',
+        [
+          { text: 'Not now', style: 'cancel' },
+          { text: 'Buy again', onPress: () => navigation.navigate('Membership') },
+        ]
+      );
+      return;
+    }
+
     if (newStatus === 'online' && !isApproved) {
       Alert.alert(
         rejection ? 'Application not approved' : 'Application under review',

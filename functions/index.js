@@ -2,7 +2,7 @@ const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 // FieldValue imported directly too: admin.firestore.FieldValue is not
 // filled in under the functions emulator, which the tests run against.
-const {FieldValue: FV} = require("firebase-admin/firestore");
+const {FieldValue: FV, Timestamp: TS} = require("firebase-admin/firestore");
 // Helpers fleet.js hands back for use here (priceAppRide).
 const fleetShared = {};
 
@@ -74,7 +74,7 @@ const fleetBilling = require("./fleetBilling")({
 const CONFIG_DEFAULTS = {
   currency: "GBP",
   waiting: {freeMinutes: 5, ratePerMinute: 0.25, maxCharge: 10},
-  subscription: {monthlyPrice: 99.99, graceDays: 3},
+  subscription: {monthlyPrice: 99.99, weeklyPrice: 25, graceDays: 3},
   drivers: {minimumPayout: 10, instantPayouts: 0, maxShiftHours: 12,
     restHours: 6},
   dispatch: {
@@ -138,6 +138,9 @@ async function loadAppConfig() {
     subscription: {
       monthlyPrice: numSetting(data.subscription, "monthlyPrice",
           d.subscription.monthlyPrice),
+      // 0 means the weekly plan is not offered.
+      weeklyPrice: numSetting(data.subscription, "weeklyPrice",
+          d.subscription.weeklyPrice),
       graceDays: numSetting(data.subscription, "graceDays",
           d.subscription.graceDays),
     },
@@ -253,13 +256,96 @@ function toMillis(ts) {
  * @return {Date} A new Date one month later.
  */
 function addOneMonth(date) {
+  return addMonths(date, 1);
+}
+
+/**
+ * The same day some months on (or back, for a negative count), clamped
+ * to the end of a shorter month.
+ * @param {Date} date Start date.
+ * @param {number} count Months to add.
+ * @return {Date} A new Date.
+ */
+function addMonths(date, count) {
   const d = new Date(date.getTime());
   const day = d.getDate();
   d.setDate(1);
-  d.setMonth(d.getMonth() + 1);
+  d.setMonth(d.getMonth() + count);
   const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
   d.setDate(Math.min(day, last));
   return d;
+}
+
+/* ---------------- driver membership plans ----------------
+   subscription.tier is "monthly" (the original plan) or "weekly". Prices
+   always come from config (subscription.monthlyPrice / weeklyPrice), never
+   from the app. A weekly price of 0 means the weekly plan is not offered,
+   and a weekly membership then renews as monthly. subscription.nextTier is
+   a plan change the driver asked for, applied at the next renewal.
+   subscription.autoRenew false: the membership ends (status "expired") at
+   the end of the period instead of renewing. Keep the wording in step with
+   the app's utils/membership.js. */
+
+/**
+ * The plan a membership is on.
+ * @param {Object} sub Subscription object.
+ * @return {string} "weekly" or "monthly".
+ */
+function membershipTier(sub) {
+  return sub && sub.tier === "weekly" ? "weekly" : "monthly";
+}
+
+/**
+ * Whether the weekly plan is on offer.
+ * @param {Object} cfg App config.
+ * @return {boolean} Offered.
+ */
+function weeklyOffered(cfg) {
+  return Number(cfg.subscription.weeklyPrice) > 0;
+}
+
+/**
+ * The plan a period is billed as: weekly only while it is offered.
+ * @param {Object} cfg App config.
+ * @param {string} tier Requested plan.
+ * @return {string} "weekly" or "monthly".
+ */
+function billedTier(cfg, tier) {
+  return tier === "weekly" && weeklyOffered(cfg) ? "weekly" : "monthly";
+}
+
+/**
+ * Price of one period of a plan.
+ * @param {Object} cfg App config.
+ * @param {string} tier "weekly" or "monthly".
+ * @return {number} Price.
+ */
+function membershipPrice(cfg, tier) {
+  return billedTier(cfg, tier) === "weekly" ?
+    Number(cfg.subscription.weeklyPrice) : cfg.subscription.monthlyPrice;
+}
+
+/**
+ * One billing period on (count 1) or back (count -1).
+ * @param {Date} date Start.
+ * @param {string} tier Plan.
+ * @param {number} count Periods.
+ * @return {Date} A new Date.
+ */
+function addPeriod(date, tier, count = 1) {
+  if (tier === "weekly") {
+    return new Date(date.getTime() + count * 7 * 24 * 3600 * 1000);
+  }
+  return addMonths(date, count);
+}
+
+/**
+ * "Weekly membership" / "Monthly membership".
+ * @param {string} tier Plan.
+ * @return {string} Label.
+ */
+function planLabel(tier) {
+  return tier === "weekly" ? "Weekly membership" : "Monthly membership";
 }
 
 /**
@@ -2429,13 +2515,14 @@ function payoutHeldReason(payout) {
 const OFFER_STALE_MS = 15 * 60 * 1000;
 
 /**
- * Whether a driver's membership has been suspended for not paying.
+ * Whether a driver's membership stops them working: suspended for not
+ * paying, or ended because they switched auto-renew off.
  * @param {Object} driver Driver document.
- * @return {boolean} Suspended.
+ * @return {boolean} Suspended or expired.
  */
 function membershipSuspended(driver) {
   return Boolean(driver && driver.subscription &&
-    driver.subscription.status === "suspended");
+    ["suspended", "expired"].includes(driver.subscription.status));
 }
 
 /**
@@ -2891,39 +2978,59 @@ function membershipDue(sub, now) {
  */
 async function collectMembership(driverId, opts = {}) {
   const cfg = await loadAppConfig();
-  const price = cfg.subscription.monthlyPrice;
   const driverRef = db.collection("drivers").doc(driverId);
   const walletRef = db.collection("driverWallets").doc(driverId);
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = FV.serverTimestamp();
 
   /**
    * What is owed and the fields that mark it paid, from a fresh read.
    * @param {Object} sub Subscription object.
-   * @return {?Object} {amount, paidFields} or null when nothing is due.
+   * @return {?Object} {amount, tier, periodStart, periodEnd, paidFields}
+   *   or null when nothing is due.
    */
   const plan = (sub) => {
     const nowMs = Date.now();
     if (!membershipDue(sub, nowMs)) return null;
+    const tier = billedTier(cfg, membershipTier(sub));
+    const price = membershipPrice(cfg, tier);
     const debt = Number(sub.debtAmount) || 0;
     const amount = Math.round((debt > 0 ? debt : price) * 100) / 100;
     if (!(amount > 0)) return null;
     // Keep a billing date that is still ahead; only advance one that
-    // has passed, so paying late never gifts an extra month.
+    // has passed, so paying late never gifts an extra period.
     const next = toMillis(sub.nextBillingDate);
-    const nextDate = next && next > nowMs ?
-      new Date(next) : addOneMonth(new Date(nowMs));
+    // Auto-renew off and paying off a period already used: that pays the
+    // debt only. The date stays where it is, so the daily job then ends
+    // the membership rather than handing them a fresh period.
+    const settlingOnly = sub.autoRenew === false && debt > 0 && !!next &&
+      sub.status !== "expired";
+    const nextDate = (next && next > nowMs) || settlingOnly ?
+      new Date(next) : addPeriod(new Date(nowMs), tier);
+    const periodStart = addPeriod(nextDate, tier, -1);
     return {
       amount,
+      tier,
+      periodStart,
+      periodEnd: nextDate,
       paidFields: {
         "subscription.status": "active",
+        "subscription.tier": tier,
+        "subscription.amount": price,
         "subscription.debtAmount": 0,
         "subscription.lastPaidAt": now,
         "subscription.graceUntil": null,
+        "subscription.endedAt": null,
         "subscription.nextBillingDate":
-          admin.firestore.Timestamp.fromDate(nextDate),
+          TS.fromDate(nextDate),
       },
     };
   };
+  // What a purchase record says it bought (Recent purchases in the app).
+  const bought = (p) => ({
+    plan: p.tier,
+    periodStart: TS.fromDate(p.periodStart),
+    periodEnd: TS.fromDate(p.periodEnd),
+  });
 
   // 1. Wallet, in a transaction: re-read the driver, then the wallet.
   let owed = null;
@@ -2937,14 +3044,15 @@ async function collectMembership(driverId, opts = {}) {
       const balance = w.exists ? Number(w.data().availableBalance) || 0 : 0;
       if (balance < p.amount) return {owed: p};
       tx.update(walletRef, {
-        availableBalance: admin.firestore.FieldValue.increment(-p.amount),
-        totalFees: admin.firestore.FieldValue.increment(p.amount),
+        availableBalance: FV.increment(-p.amount),
+        totalFees: FV.increment(p.amount),
         updatedAt: now,
       });
       tx.set(walletRef.collection("transactions").doc(), {
         amount: -p.amount,
-        description: "Monthly membership",
+        description: planLabel(p.tier),
         type: "subscription_deduction",
+        ...bought(p),
         status: "completed",
         createdAt: now,
         updatedAt: now,
@@ -2972,7 +3080,10 @@ async function collectMembership(driverId, opts = {}) {
     return {paid: false, reason: "no_card", amount};
   }
   try {
-    const period = new Date().toISOString().slice(0, 7);
+    // One key per period paid for (a week or a month), so two weekly
+    // payments in the same month are not mistaken for one retried.
+    const period = owed.tier + "_" +
+      owed.periodEnd.toISOString().slice(0, 10);
     const intent = await stripe.paymentIntents.create({
       amount: Math.round(amount * 100),
       currency: cfg.currency.toLowerCase(),
@@ -2989,8 +3100,9 @@ async function collectMembership(driverId, opts = {}) {
     await walletRef.collection("transactions").doc().set({
       amount: 0,
       cardAmount: amount,
-      description: "Monthly membership, paid by card",
+      description: `${planLabel(owed.tier)}, paid by card`,
       type: "subscription_card_payment",
+      ...bought(owed),
       paymentIntentId: intent.id,
       status: "completed",
       createdAt: now,
@@ -3004,26 +3116,48 @@ async function collectMembership(driverId, opts = {}) {
 }
 
 /**
- * A billing date has come round: add this month's price to what is owed
- * and move the date on, once, so an unpaid month is never forgiven and
- * the daily job never adds it twice.
+ * A billing date has come round: add the next period's price to what is
+ * owed and move the date on, once, so an unpaid period is never forgiven
+ * and the daily job never adds it twice. A plan change the driver asked
+ * for (nextTier) starts here. With auto-renew off nothing is added and the
+ * membership ends instead, unless an earlier period is still owed (that
+ * goes through the usual grace and pause).
  * @param {FirebaseFirestore.DocumentReference} driverRef Driver.
- * @param {number} price Monthly price.
- * @return {Promise<void>}
+ * @param {Object} cfg App config.
+ * @return {Promise<?string>} "rolled", "ended", "owed" or null.
  */
-async function rollMembershipMonth(driverRef, price) {
-  await db.runTransaction(async (tx) => {
+async function rollMembershipPeriod(driverRef, cfg) {
+  return db.runTransaction(async (tx) => {
     const snap = await tx.get(driverRef);
-    if (!snap.exists) return;
+    if (!snap.exists) return null;
     const sub = snap.data().subscription || {};
     const next = toMillis(sub.nextBillingDate);
-    if (!next || next > Date.now()) return;
+    if (!next || next > Date.now()) return null;
     const debt = Number(sub.debtAmount) || 0;
+    if (sub.autoRenew === false) {
+      // Owed for a period they drove in: collect it as usual.
+      if (debt > 0 && sub.lastPaidAt) return "owed";
+      if (sub.status !== "active") return null;
+      tx.update(driverRef, {
+        "subscription.status": "expired",
+        // A first period never paid (they could not go online) is dropped.
+        "subscription.debtAmount": 0,
+        "subscription.graceUntil": null,
+        "subscription.endedAt": FV.serverTimestamp(),
+      });
+      return "ended";
+    }
+    const tier = billedTier(cfg, sub.nextTier || membershipTier(sub));
+    const price = membershipPrice(cfg, tier);
     tx.update(driverRef, {
+      "subscription.tier": tier,
+      "subscription.amount": price,
+      "subscription.nextTier": FV.delete(),
       "subscription.debtAmount": Math.round((debt + price) * 100) / 100,
       "subscription.nextBillingDate":
-        admin.firestore.Timestamp.fromDate(addOneMonth(new Date(next))),
+        TS.fromDate(addPeriod(new Date(next), tier)),
     });
+    return "rolled";
   });
 }
 
@@ -3039,32 +3173,70 @@ exports.renewDriverMemberships = functions
     .pubsub.schedule("every day 06:00").timeZone("Europe/London")
     .onRun(async () => {
       const cfg = await loadAppConfig();
-      const price = cfg.subscription.monthlyPrice;
       const graceMs = cfg.subscription.graceDays * 24 * 3600 * 1000;
       const now = Date.now();
+      const ownPlan = (sub) => !sub.paymentMethod ||
+        sub.paymentMethod === "wallet_deduction";
 
-      // 1. Memberships whose month has come round.
+      // 0. Auto-renew off and ending within a day: remind them once.
+      const ending = await db.collection("drivers")
+          .where("subscription.nextBillingDate", ">",
+              TS.fromMillis(now))
+          .where("subscription.nextBillingDate", "<=",
+              TS.fromMillis(now + DAY_MS))
+          .get();
+      for (const doc of ending.docs) {
+        const sub = doc.data().subscription || {};
+        const endsAt = toMillis(sub.nextBillingDate);
+        if (sub.autoRenew !== false || sub.status !== "active" ||
+            !ownPlan(sub) || Number(sub.endReminderFor) === endsAt) {
+          continue;
+        }
+        await doc.ref.update({"subscription.endReminderFor": endsAt})
+            .catch(() => null);
+        await sendPush([doc.id], {
+          data: {type: "membership"},
+          title: "Membership ends tomorrow",
+          body: "Auto-renew is off, so you can't go online after it ends. " +
+            "Switch auto-renew on or buy again under Membership.",
+          channelId: "general",
+        }).catch(() => null);
+      }
+
+      // 1. Memberships whose period has come round.
       const due = await db.collection("drivers")
           .where("subscription.nextBillingDate", "<=",
-              admin.firestore.Timestamp.fromMillis(now))
+              TS.fromMillis(now))
           .get();
 
       for (const doc of due.docs) {
         const sub = doc.data().subscription || {};
         if (!["active", "past_due"].includes(sub.status)) continue;
-        if (sub.paymentMethod && sub.paymentMethod !== "wallet_deduction") {
+        if (!ownPlan(sub)) continue;
+
+        const rolled = await rollMembershipPeriod(doc.ref, cfg);
+        if (rolled === "ended") {
+          await sendPush([doc.id], {
+            data: {type: "membership"},
+            title: "Membership ended",
+            body: "Auto-renew was off, so nothing was charged. Buy a new " +
+              "membership under Membership to go online again.",
+            channelId: "general",
+          }).catch(() => null);
           continue;
         }
-
-        await rollMembershipMonth(doc.ref, price);
         const result = await collectMembership(doc.id);
         if (result.paid) {
+          const fresh = await doc.ref.get();
+          const week = membershipTier(
+              (fresh.data() || {}).subscription) === "weekly";
           await sendPush([doc.id], {
             data: {type: "membership"},
             title: "Membership renewed",
             body: result.method === "card" ?
               "Your wallet was short, so we charged your card." :
-              "Taken from your wallet. You're all set for another month.",
+              "Taken from your wallet. You're all set for another " +
+                (week ? "week." : "month."),
             channelId: "general",
           }).catch(() => null);
           continue;
@@ -3074,7 +3246,7 @@ exports.renewDriverMemberships = functions
           await doc.ref.update({
             "subscription.status": "past_due",
             "subscription.graceUntil":
-              admin.firestore.Timestamp.fromMillis(now + graceMs),
+              TS.fromMillis(now + graceMs),
           });
           await sendPush([doc.id], {
             data: {type: "membership"},
@@ -3153,36 +3325,140 @@ exports.activateDriverMembership = functions
       }
 
       const cfg = await loadAppConfig();
-      const price = cfg.subscription.monthlyPrice;
+      const sub = snap.data().subscription || {};
+      // The plan the driver picked; the price is always the server's.
+      const tier = requestedTier(cfg, data, membershipTier(sub));
+      const price = membershipPrice(cfg, tier);
 
       // Suspended for not paying: what is owed stays owed, and they come
       // back only when it is paid (collectMembership reactivates them).
       if (current === "suspended") {
-        const owed = Number((snap.data().subscription || {}).debtAmount) ||
-          price;
+        const owed = Number(sub.debtAmount) || price;
         const result = await collectMembership(uid);
         return {paid: result.paid, method: result.method || null,
           amount: result.amount || owed, stillSuspended: !result.paid};
       }
 
-      const next = addOneMonth(new Date());
+      // Ended with auto-renew off: buying again pays one period of the
+      // chosen plan now (wallet, then card). Nothing is owed if it fails.
+      if (current === "expired") {
+        await driverRef.update({
+          "subscription.tier": tier,
+          "subscription.nextTier": FV.delete(),
+          "subscription.debtAmount": 0,
+        });
+        const result = await collectMembership(uid);
+        return {paid: result.paid, method: result.method || null,
+          amount: result.amount || price, tier,
+          stillExpired: !result.paid, reason: result.reason || null};
+      }
+
+      const next = addPeriod(new Date(), tier);
       await driverRef.set({
         subscription: {
           status: "active",
-          tier: "monthly",
+          tier,
           amount: price,
+          autoRenew: true,
           paymentMethod: "wallet_deduction",
           debtAmount: price,
           lastPaidAt: null,
           graceUntil: null,
-          nextBillingDate: admin.firestore.Timestamp.fromDate(next),
-          activatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          nextBillingDate: TS.fromDate(next),
+          activatedAt: FV.serverTimestamp(),
         },
         onboardingComplete: true,
       }, {merge: true});
 
       const result = await collectMembership(uid);
-      return {paid: result.paid, method: result.method || null, amount: price};
+      return {paid: result.paid, method: result.method || null, amount: price,
+        tier};
+    });
+
+/**
+ * The plan a driver asked for in a call ({tier}), or the fallback.
+ * @param {Object} cfg App config.
+ * @param {Object} data Call data.
+ * @param {string} fallback Plan when none was asked for.
+ * @return {string} "weekly" or "monthly".
+ */
+function requestedTier(cfg, data, fallback) {
+  const asked = data && (data.tier === "weekly" || data.tier === "monthly") ?
+    data.tier : fallback;
+  if (asked === "weekly" && !weeklyOffered(cfg)) {
+    if (data && data.tier === "weekly") {
+      throw new functions.https.HttpsError("failed-precondition",
+          "The weekly plan is not available right now.");
+    }
+    return "monthly";
+  }
+  return asked;
+}
+
+/* The driver changes their own membership from the Membership screen:
+   {autoRenew: true|false} and/or {tier: "weekly"|"monthly"}. Drivers
+   cannot write their subscription themselves (firestore.rules). A plan
+   change on a paid, running membership starts at the next renewal
+   (nextTier); before anything has been paid it applies straight away. */
+exports.updateDriverMembership = functions.https.onCall(
+    async (data, context) => {
+      if (!context.auth) {
+        throw new functions.https.HttpsError("unauthenticated",
+            "Please sign in.");
+      }
+      const driverRef = db.collection("drivers").doc(context.auth.uid);
+      const cfg = await loadAppConfig();
+      return db.runTransaction(async (tx) => {
+        const snap = await tx.get(driverRef);
+        const sub = snap.exists ? snap.data().subscription : null;
+        if (!sub || !sub.status) {
+          throw new functions.https.HttpsError("failed-precondition",
+              "Start a membership first.");
+        }
+        if (sub.paymentMethod && sub.paymentMethod !== "wallet_deduction") {
+          throw new functions.https.HttpsError("failed-precondition",
+              "Your membership is paid for you, so there is nothing to " +
+              "change.");
+        }
+        const fields = {};
+        if (data && typeof data.autoRenew === "boolean") {
+          fields["subscription.autoRenew"] = data.autoRenew;
+        }
+        if (data && data.tier !== undefined) {
+          if (data.tier !== "weekly" && data.tier !== "monthly") {
+            throw new functions.https.HttpsError("invalid-argument",
+                "Pick weekly or monthly.");
+          }
+          const tier = requestedTier(cfg, data, "monthly");
+          const current = membershipTier(sub);
+          const debt = Number(sub.debtAmount) || 0;
+          const nothingPaid = !sub.lastPaidAt && debt > 0 &&
+            sub.status === "active";
+          if (sub.status === "expired") {
+            fields["subscription.tier"] = tier;
+            fields["subscription.nextTier"] = FV.delete();
+          } else if (nothingPaid) {
+            // The first period is still unpaid: re-price it as the new plan.
+            const price = membershipPrice(cfg, tier);
+            fields["subscription.tier"] = tier;
+            fields["subscription.amount"] = price;
+            fields["subscription.debtAmount"] = price;
+            fields["subscription.nextTier"] = FV.delete();
+            fields["subscription.nextBillingDate"] =
+              TS.fromDate(addPeriod(new Date(), tier));
+          } else if (tier === current) {
+            fields["subscription.nextTier"] = FV.delete();
+          } else {
+            fields["subscription.nextTier"] = tier;
+          }
+        }
+        if (!Object.keys(fields).length) {
+          throw new functions.https.HttpsError("invalid-argument",
+              "Nothing to change.");
+        }
+        tx.update(driverRef, fields);
+        return {ok: true};
+      });
     });
 
 /* The driver pays now, by card, from the Membership screen. */
@@ -4022,7 +4298,9 @@ async function takeOffRoad(ref, now) {
       forcedOfflineReason: expired ? "documents" : "membership",
     });
     if (now - (Number(d.forcedOfflineAt) || 0) < DAY_MS / 2) return null;
-    return expired ? "documents" : "membership";
+    if (expired) return "documents";
+    return (d.subscription || {}).status === "expired" ?
+      "membership_ended" : "membership";
   }).catch((error) => {
     console.error("Could not take driver offline:", ref.id, error.message);
     return null;
@@ -4030,10 +4308,13 @@ async function takeOffRoad(ref, now) {
   if (!reason) return;
   await sendPush([ref.id], {
     title: "You've been taken offline",
-    body: reason === "documents" ?
-      "One of your documents has expired. Upload a new one to go online." :
-      "Your membership is unpaid. Pay from the Membership screen to go " +
-        "online again.",
+    body: {
+      documents: "One of your documents has expired. Upload a new one to " +
+        "go online.",
+      membership_ended: "Your membership has ended. Buy a new one from " +
+        "the Membership screen to go online again.",
+    }[reason] || "Your membership is unpaid. Pay from the Membership " +
+      "screen to go online again.",
     channelId: "general",
   }).catch(() => null);
 }

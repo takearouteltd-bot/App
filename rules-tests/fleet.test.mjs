@@ -201,6 +201,20 @@ test('blocked driver cannot go online, but can finish a trip', async () => {
   await assertFails(updateDoc(doc(as('dblk'), 'drivers/dblk'), { status: 'online' }));
   await assertSucceeds(updateDoc(doc(as('dblk2'), 'drivers/dblk2'), { status: 'online', isOnRide: false, currentRideId: null }));
 });
+test('ended or paused membership cannot go online; active can; a trip still finishes', async () => {
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, 'drivers/mexp'), driver(null, { status: 'offline', subscription: { status: 'expired', tier: 'weekly', autoRenew: false } }));
+    await setDoc(doc(db, 'drivers/msus'), driver(null, { status: 'offline', subscription: { status: 'suspended' } }));
+    await setDoc(doc(db, 'drivers/mok'), driver(null, { status: 'offline', subscription: { status: 'active', tier: 'weekly', lastPaidAt: Timestamp.now(), debtAmount: 0 } }));
+    await setDoc(doc(db, 'drivers/mtrip'), driver(null, { status: 'on_ride', isOnRide: true, subscription: { status: 'expired' } }));
+  });
+  await assertFails(updateDoc(doc(as('mexp'), 'drivers/mexp'), { status: 'online' }));
+  await assertFails(updateDoc(doc(as('msus'), 'drivers/msus'), { status: 'online' }));
+  await assertSucceeds(updateDoc(doc(as('mok'), 'drivers/mok'), { status: 'online' }));
+  await assertSucceeds(updateDoc(doc(as('mtrip'), 'drivers/mtrip'), { status: 'online', isOnRide: false, currentRideId: null }));
+  await assertFails(updateDoc(doc(as('mok'), 'drivers/mok'), { 'subscription.autoRenew': false }));
+});
 test('staff save their own phone for calls, nothing else', async () => {
   await assertSucceeds(updateDoc(doc(as('op1'), 'fleetManagers/op1'), { phone: '+447700900555' }));
   await assertFails(updateDoc(doc(as('op1'), 'fleetManagers/op1'), { phone: '0770' }));
