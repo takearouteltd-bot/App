@@ -53,6 +53,8 @@ export const DEFAULT_APP_CONFIG = {
   },
   subscription: {
     monthlyPrice: 99.99,
+    // 0 means drivers are not offered the weekly plan (utils/membership.js).
+    weeklyPrice: 25,
     graceDays: 3,
   },
   // Busy-time pricing. 1 means normal fares; 1.5 means 50% more.

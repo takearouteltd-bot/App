@@ -207,6 +207,14 @@ service cloud.firestore {
         sub.get("lastPaidAt", null) == null;
     }
 
+    /* Paused for not paying, or ended with auto-renew off (NEW). The
+       server also takes such a driver offline (enforceDriverHours). */
+    function membershipStopped() {
+      let sub = resource.data.get("subscription", null);
+      return sub is map &&
+        sub.get("status", "") in ["suspended", "expired"];
+    }
+
     function driverKeepsGuardedFields() {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       return !changed.hasAny(driverSensitiveFieldNames()) &&
@@ -264,6 +272,10 @@ service cloud.firestore {
             !(request.resource.data.status == "online" &&
               resource.data.get("status", "offline") == "offline" &&
               owesFirstMembership()) &&
+            /* ...and not with a paused or ended membership. */
+            !(request.resource.data.status == "online" &&
+              resource.data.get("status", "offline") == "offline" &&
+              membershipStopped()) &&
             /* ...and not while resting after their hours limit. */
             !(request.resource.data.status == "online" &&
               resource.data.status != "online" &&

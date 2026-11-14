@@ -38,6 +38,7 @@ import { useCities } from '../../../utils/cities';
 import { openTerms, openPrivacy } from '../../../utils/legal';
 import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocuments';
 import { signOutEverywhere } from '../../../utils/notifications';
+import { membershipSummary, useMembershipPurchases, shortDate } from '../../../utils/membership';
 import { confirmDeleteAccount } from '../../../utils/deleteAccount';
 
 export default function DriverProfileScreen() {
@@ -106,6 +107,9 @@ export default function DriverProfileScreen() {
       [{ text: "Keep them on", style: "cancel" }, { text: "Turn off", style: "destructive", onPress: save }]
     );
   };
+
+  // The last membership bought, under Membership (utils/membership.js).
+  const lastPurchase = useMembershipPurchases(user?.uid, 1)[0] || null;
 
   // Follow-on jobs (drivers.followOnJobs; utils/followOn.js).
   const followOnOn = driver?.followOnJobs !== false;
@@ -287,7 +291,7 @@ export default function DriverProfileScreen() {
           items={[
             { icon: "car-outline", iconColor: COLORS.midnight, title: vehicle || "Vehicle", detail: driver?.registrationNumber ? driver.registrationNumber.toUpperCase() : "No vehicle on file", onPress: () => navigation.navigate("VehicleInformation") },
             { icon: "folder-open-outline", iconColor: COLORS.midnight, title: "My documents", detail: documentAlerts.length ? `${documentAlerts.length} need${documentAlerts.length === 1 ? "s" : ""} updating` : "Licence, insurance, MOT and more", onPress: () => navigation.navigate("DriverDocuments") },
-            { icon: "ribbon-outline", iconColor: COLORS.midnight, title: "Membership", detail: driver?.subscription?.paymentMethod === "admin_granted" ? "Given by TakeARoute" : driver?.subscription?.paymentMethod === "fleet" ? `Paid by ${driver.fleetName || "your fleet"}` : ({ active: "Active", past_due: "Payment due", suspended: "Paused, payment needed" })[driver?.subscription?.status] || "Not set up", onPress: () => navigation.navigate("SubscriptionDetails") },
+            { icon: "ribbon-outline", iconColor: COLORS.midnight, title: "Membership", detail: membershipSummary(driver?.subscription, driver?.fleetName) + (lastPurchase ? `\nLast bought ${shortDate(lastPurchase.at)}, ${money(lastPurchase.amount)}` : ""), onPress: () => navigation.navigate("SubscriptionDetails") },
             { icon: "people-outline", iconColor: COLORS.midnight, title: "Fleet", detail: driver?.fleetId ? `You drive for ${driver.fleetName || "a fleet"}` : driver?.fleetInvite ? `${driver.fleetInvite.fleetName || "A fleet"} invited you` : driver?.fleetRequest ? `Waiting for ${driver.fleetRequest.fleetName || "the fleet"}` : "Drive for a taxi firm", onPress: () => navigation.navigate("DriverFleet") },
           ]}
         />

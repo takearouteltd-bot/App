@@ -4,6 +4,7 @@ import { useNavigation } from '@react-navigation/native';
 import { getFirestore, doc, onSnapshot, collection, query, orderBy, where } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { money, useAppConfig } from '../../../utils/appConfig';
+import { periodWord, planPrice, tierOf } from '../../../utils/membership';
 import {
   COLORS,
   TYPE,
@@ -276,14 +277,23 @@ export default function EarningsScreen() {
 
       {subscription && subscription.status === 'active' && !['fleet', 'admin_granted'].includes(subscription.paymentMethod) ? (
         <Card style={{ marginTop: SPACE[3] }}>
-          <Text style={styles.txTitle}>Subscription {money(appConfig.subscription.monthlyPrice)} a month</Text>
+          <Text style={styles.txTitle}>
+            Subscription {money(planPrice(appConfig, tierOf(subscription)))} a {periodWord(tierOf(subscription))}
+          </Text>
           <Text style={TYPE.small}>
-            Next payment{' '}
+            {subscription.autoRenew === false ? 'Ends' : 'Next payment'}{' '}
             {subscription.nextBillingDate?.toDate
               ? subscription.nextBillingDate.toDate().toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })
               : 'date not set'}
-            {fleetName ? ', charged to your card.' : ', taken from your wallet.'}
+            {subscription.autoRenew === false ? ', auto-renew is off.' : fleetName ? ', charged to your card.' : ', taken from your wallet.'}
           </Text>
+        </Card>
+      ) : null}
+
+      {subscription && subscription.status === 'expired' ? (
+        <Card tone="warning" style={{ marginTop: SPACE[3] }}>
+          <Text style={styles.txTitle}>Membership ended</Text>
+          <Text style={TYPE.small}>Auto-renew was off. Buy a weekly or monthly plan under Membership to drive again.</Text>
         </Card>
       ) : null}
 

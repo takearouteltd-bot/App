@@ -30,3 +30,5 @@ Admin's no-show fee and the driver cancel penalty (functions/driverPenalty.js, c
 Fleet portal driver numbers (fleetDriverPhones: private record, app account, then sign-in): `node rules-tests/fleet-phones.mjs`, same set-up as booking-checks, no fakes needed.
 
 Booked jobs allocated to a driver and follow-on jobs (fleet.js syncFleetAllocation, declineFleetAllocation, keepTime, jobs held for the office; followOn.js offers, accept, decline, give back, switch after the trip): `node rules-tests/allocation-followon.mjs`, same set-up as booking-checks (fake Routes on :8999 via ROUTES_API_BASE), no other fakes.
+
+Driver membership plans (weekly/monthly, plan switch at renewal, auto-renew off ends it, buying again, purchase records; rules stop an ended or paused membership going online): `node rules-tests/membership-plans.mjs`, same set-up as booking-checks (needs the Pub/Sub emulator and the dummy Stripe secrets), no fakes needed.
