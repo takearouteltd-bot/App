@@ -578,7 +578,7 @@ export default function DriverRideInProgressScreen() {
               </View>
             ) : null}
 
-            {ride?.source === 'phone' ? <PhoneCustomerCard ride={ride} /> : null}
+            {ride?.source === 'phone' ? <PhoneCustomerCard ride={ride} rideId={rideId} /> : null}
 
             <View style={styles.journey}>
               <RouteLine

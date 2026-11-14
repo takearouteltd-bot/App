@@ -573,7 +573,7 @@ export default function DriverRideToDropoffScreen() {
           </View>
         ) : null}
 
-        {ride?.source === 'phone' ? <PhoneCustomerCard ride={ride} compact /> : null}
+        {ride?.source === 'phone' ? <PhoneCustomerCard ride={ride} rideId={rideId} compact /> : null}
 
         <Button
           title={arrived ? 'Complete the trip' : 'End trip here'}

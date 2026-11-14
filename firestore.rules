@@ -151,7 +151,7 @@ service cloud.firestore {
         "payoutTermsAcceptance",
         "driverLicenseFrontUrl", "driverLicenseBackUrl", "pcoLicenseUrl",
         "vehicleLicenceUrl", "insuranceUrl", "motUrl", "dbsCertificateUrl",
-        "accountDetails", "vehicleType"
+        "v5cUrl", "companyAgreementUrl", "accountDetails", "vehicleType"
       ];
     }
 
@@ -170,7 +170,7 @@ service cloud.firestore {
       return ["rightToWorkShareCode", "driverLicenseFrontUrl",
         "driverLicenseBackUrl", "driverLicenseUrl", "pcoLicenseUrl",
         "vehicleLicenceUrl", "insuranceUrl", "motUrl", "dbsCertificateUrl",
-        "companyAgreementUrl"];
+        "companyAgreementUrl", "v5cUrl"];
     }
 
     function driverSensitiveFieldNames() {
@@ -311,7 +311,7 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    /* A driver's documents and right to work code: the owner, admins, and
+    /* A driver's documents: the owner, admins, and
        the staff of the fleet they work for or are asking to join. */
     function fleetChecksDriver(driverId) {
       let driver = get(/databases/$(database)/documents/drivers/$(driverId)).data;

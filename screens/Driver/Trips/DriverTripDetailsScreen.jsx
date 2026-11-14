@@ -39,7 +39,6 @@ export default function DriverTripDetailsScreen() {
             name: riderData.name || riderData.fullName || 'Passenger',
             image: riderData.profileImage || riderData.selfieUrl,
             rating: riderData.rating || riderData.averageRating || null,
-            phone: riderData.phone || '',
           });
         }
       } catch (error) {
@@ -180,7 +179,7 @@ export default function DriverTripDetailsScreen() {
               <Avatar uri={rider?.image} name={passengerName} size={52} />
               <View style={{ flex: 1 }}>
                 <Text style={TYPE.subhead}>{passengerName}</Text>
-                {phoneCustomer?.phone ? <Text style={TYPE.small}>{phoneCustomer.phone}</Text> : null}
+                {phoneCustomer ? <Text style={TYPE.small}>Phone booking</Text> : null}
               </View>
               {phoneCustomer ? null : (
                 <View style={styles.rating}>

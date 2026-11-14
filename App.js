@@ -15,6 +15,7 @@ import { StripeProvider } from "@stripe/stripe-react-native";
 import SplashScreen from "./Splash/SplashScreen";
 import { AlertHost } from "./components/ui/alert";
 import AppErrorBoundary from "./components/AppErrorBoundary";
+import FollowOnPopup from "./components/FollowOnPopup";
 import { installGlobalErrorLogging } from "./utils/errorLog";
 import { confirmDeleteAccount } from "./utils/deleteAccount";
 import * as NativeSplash from "expo-splash-screen";
@@ -106,7 +107,9 @@ function alreadyThere(data, role) {
   if (!current) return false;
   const type = data?.type;
   if (role === "driver") {
-    // A follow-on offer is answered on the trip screen itself.
+    // A follow-on offer is answered on the trip screen itself; from any
+    // other screen the tap goes home, which resumes the trip screen (the
+    // pop-up shows the offer meanwhile, components/FollowOnPopup.jsx).
     return DRIVER_JOB_SCREENS.includes(current.name) &&
       ["job_offer", "trip", "chat", "follow_on_offer"].includes(type);
   }
@@ -132,6 +135,9 @@ export default function App() {
   const [navReady, setNavReady] = useState(false);
   // Bumped by "Back to start" after a screen error, to rebuild navigation.
   const [navEpoch, setNavEpoch] = useState(0);
+  // The screen on show, so the follow-on pop-up keeps off the trip screen
+  // (which shows the offer itself).
+  const [routeName, setRouteName] = useState(null);
 
   // Latest role for the notification handler, which lives outside React's
   // render cycle; and a tap that arrived before the app was ready to act.
@@ -378,7 +384,15 @@ export default function App() {
       publishableKey="pk_live_51T4pF7REPqWRLyvftXlZAED5bv5rrFjSh9MQle6LfToqYzspQzy5DDNZy8gU7fG2ilbj9UGhHAexEP5feYj9QW3p00AaGLzXVu"
     >
       <AppErrorBoundary getScreen={currentScreen} onReset={() => setNavEpoch((n) => n + 1)}>
-      <NavigationContainer key={navEpoch} ref={navigationRef} onReady={() => setNavReady(true)}>
+      <NavigationContainer
+        key={navEpoch}
+        ref={navigationRef}
+        onReady={() => {
+          setNavReady(true);
+          setRouteName(currentScreen());
+        }}
+        onStateChange={() => setRouteName(currentScreen())}
+      >
         <Stack.Navigator screenOptions={{ headerShown: false }}>
           {!userRole && (
             // Signed in but no role chosen yet (the record was created but the
@@ -422,6 +436,9 @@ export default function App() {
           )}
         </Stack.Navigator>
       </NavigationContainer>
+      {userRole === "driver" && auth.currentUser?.uid ? (
+        <FollowOnPopup driverId={auth.currentUser.uid} routeName={routeName} />
+      ) : null}
       </AppErrorBoundary>
       <AlertHost />
     </StripeProvider>

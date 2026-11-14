@@ -19,6 +19,7 @@ import { getAuth } from 'firebase/auth';
 import { db } from '../../config/firebase';
 import { useWaitingClock } from '../../utils/useWaitingClock';
 import SafetyButton from '../../components/SafetyButton';
+import DriverPhotoPlate from '../../components/DriverPhotoPlate';
 import { confirmMaskedCall } from '../../utils/calling';
 import {
   COLORS,
@@ -30,7 +31,6 @@ import {
   Card,
   Button,
   Banner,
-  Avatar,
   PresenceDot,
   IconButton,
   RouteLine,
@@ -373,7 +373,7 @@ export default function RideTrackingScreen() {
         <View style={styles.sheet} onLayout={(e) => setSheetHeight(e.nativeEvent.layout.height)}>
           <Sheet>
             <View style={styles.trackRow}>
-              <Avatar uri={driverData?.selfieUrl} name={driverData?.fullName} size={44} />
+              <DriverPhotoPlate driver={driverData} size={44} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.trackTitle} numberOfLines={1}>
                   {status === 'arrived'
@@ -383,7 +383,7 @@ export default function RideTrackingScreen() {
                       : state.title}
                 </Text>
                 <Text style={TYPE.small} numberOfLines={1}>
-                  {[driverData?.fullName, driverData?.registrationNumber?.toUpperCase()]
+                  {[driverData?.fullName, [driverData?.vehicleColor, driverData?.makeModel].filter(Boolean).join(' ')]
                     .filter(Boolean)
                     .join(' · ') || 'Your driver'}
                 </Text>
@@ -431,12 +431,7 @@ export default function RideTrackingScreen() {
 
         {driverData ? (
           <Card style={styles.driverCard}>
-            <Avatar
-              uri={driverData.selfieUrl}
-              name={driverData.fullName}
-              size={52}
-              badge={<PresenceDot online />}
-            />
+            <DriverPhotoPlate driver={driverData} size={52} badge={<PresenceDot online />} />
 
             <View style={{ flex: 1 }}>
               <Text style={styles.driverName} numberOfLines={1}>
@@ -454,13 +449,6 @@ export default function RideTrackingScreen() {
                   </View>
                 ) : null}
               </View>
-              {driverData.registrationNumber ? (
-                <View style={styles.plate}>
-                  <Text style={styles.plateText}>
-                    {driverData.registrationNumber.toUpperCase()}
-                  </Text>
-                </View>
-              ) : null}
             </View>
           </Card>
         ) : null}
@@ -535,13 +523,6 @@ const styles = StyleSheet.create({
   vehicleRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[2], marginTop: 2 },
   rating: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   ratingText: { ...TYPE.caption, color: COLORS.inkSoft, fontWeight: '700' },
-  plate: {
-    alignSelf: 'flex-start', marginTop: SPACE[2],
-    backgroundColor: COLORS.fill,
-    borderRadius: RADIUS.pill,
-    paddingHorizontal: SPACE[3], paddingVertical: 4,
-  },
-  plateText: { fontSize: 13, fontWeight: '800', color: COLORS.midnight, letterSpacing: 1 },
   contact: { flexDirection: 'row', gap: SPACE[2], marginTop: SPACE[3] },
 
   journey: {

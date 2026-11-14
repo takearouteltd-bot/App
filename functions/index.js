@@ -4787,10 +4787,26 @@ exports.startMaskedCall = functions
             "Use My reports if you need help after a trip.");
       }
 
+      // A fleet's phone booking has no passenger account: the driver is
+      // put through to the number the office took, which the driver's app
+      // never shows. The customer sees the fleet's own line if it has one,
+      // so a call back reaches the office.
+      const phoneBooking = isDriver && !ride.riderId &&
+        !!(ride.customer && ride.customer.phone);
+      let line = twilio;
+      if (phoneBooking && ride.fleetId) {
+        const fleet = await db.collection("fleets").doc(ride.fleetId).get()
+            .catch(() => null);
+        const own = fleet && fleet.exists ?
+          toE164((fleet.data().phoneLine || {}).number) : null;
+        if (own) line = Object.assign({}, twilio, {from: own});
+      }
+
       const callerNumber = isDriver ?
         await phoneFor("drivers", ride.driverId) :
         await phoneFor("riders", ride.riderId);
-      const otherNumber = isDriver ?
+      const otherNumber = phoneBooking ? toE164(ride.customer.phone) :
+        isDriver ?
         await phoneFor("riders", ride.riderId) :
         await phoneFor("drivers", ride.driverId);
 
@@ -4801,14 +4817,18 @@ exports.startMaskedCall = functions
       if (!otherNumber) {
         throw new functions.https.HttpsError("failed-precondition",
             isDriver ?
+              phoneBooking ? "The office has no number for this customer." :
               "The passenger has no phone number on file." :
               "Your driver has no phone number on file.");
       }
 
       // Ring the caller first, then bridge to the other party. The caller ID
-      // on both legs is the TakeARoute number, so neither sees the other.
-      const result = await bridgeCall(twilio, callerNumber, otherNumber,
-          "Connecting you to your TakeARoute trip. Please hold.");
+      // on both legs is the TakeARoute number (or the fleet's line), so
+      // neither sees the other.
+      const result = await bridgeCall(line, callerNumber, otherNumber,
+          phoneBooking ?
+            "Connecting you to your customer. Please hold." :
+            "Connecting you to your TakeARoute trip. Please hold.");
 
       // Logged for disputes. Numbers are not stored.
       await db.collection("rides").doc(rideId).collection("calls").add({
@@ -4875,7 +4895,7 @@ exports.updateAverageRating = functions.firestore
 /**
  * Which documentExpiry key a file in drivers/{id}/ belongs to, from the
  * names the app and the dashboard give uploads. Null for files with no
- * expiry (selfie, DBS, company agreement).
+ * expiry (selfie, V5C log book, company hire permission letter).
  * @param {string} file File name without the folder.
  * @return {string|null} Expiry key.
  */

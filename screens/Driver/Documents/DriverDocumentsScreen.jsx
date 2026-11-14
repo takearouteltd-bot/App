@@ -108,7 +108,9 @@ export default function DriverDocumentsScreen({ navigation }) {
   }
 
   const alerts = expiryAlertsFor(driver);
-  const uploaded = DRIVER_DOCUMENTS.filter(
+  // The company hire permission letter only applies to a company-owned car.
+  const documents = DRIVER_DOCUMENTS.filter((item) => !item.companyOnly || driver.ownershipType === 'company');
+  const uploaded = documents.filter(
     (item) => driver[item.urlField] || (item.urlField.startsWith('driverLicense') ? driver.driverLicenseUrl : null)
   ).length;
 
@@ -125,7 +127,7 @@ export default function DriverDocumentsScreen({ navigation }) {
           <Card tone="dark" style={styles.hero}>
             <Text style={styles.heroLabel}>Uploaded</Text>
             <Text style={styles.heroValue}>
-              {uploaded} of {DRIVER_DOCUMENTS.length}
+              {uploaded} of {documents.length}
             </Text>
             <View style={styles.heroPill}>
               <StatusPill
@@ -150,7 +152,7 @@ export default function DriverDocumentsScreen({ navigation }) {
           ) : null}
 
           <Section title="Documents">
-            {DRIVER_DOCUMENTS.map((item) => {
+            {documents.map((item) => {
               const e = item.expiryKey ? expiryStatus(driver.documentExpiry?.[item.expiryKey]) : null;
               const pending = pendingFor(item.urlField);
               // Newest first, so this is the last request for this document.

@@ -1,8 +1,11 @@
 /* On the trip screen (passenger on board): a follow-on job on offer, with
    Accept and No thanks and a countdown, or the next job already accepted,
-   with a way to give it back. See utils/followOn.js. */
-import React, { useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
+   with a way to give it back. See utils/followOn.js.
+
+   offerOnly: just the offer, for FollowOnPopup, which shows it over any
+   other screen the driver has open. */
+import React, { useEffect, useState } from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Alert } from './ui/alert';
 import { Button, COLORS, RADIUS, SPACE, TYPE } from './ui/kit';
@@ -10,27 +13,33 @@ import { classLabel } from '../constants/vehicleClasses';
 import { currencySymbol } from '../utils/appConfig';
 import { distanceText } from '../utils/routes';
 import { answerFollowOn, followOnError, useFollowOnOffer, useNextJob } from '../utils/followOn';
+import { ringBriefly, stopJobRing } from '../utils/notifications';
 
 const short = (p) => String(p?.address || '').split(',')[0] || 'Pickup';
 
-export default function FollowOnCard({ driverId, rideId }) {
-  const offer = useFollowOnOffer(driverId);
-  const next = useNextJob(driverId, rideId);
-  const [busy, setBusy] = useState(null);
-  const seen = useRef(null);
+// The last offer rung for, across every card and the pop-up, so moving
+// between screens does not ring for the same offer again.
+let rungFor = null;
 
-  // A short buzz when an offer arrives; no ring with a passenger on board.
+export default function FollowOnCard({ driverId, rideId, offerOnly = false, style }) {
+  const offer = useFollowOnOffer(driverId);
+  const next = useNextJob(offerOnly ? null : driverId, rideId);
+  const [busy, setBusy] = useState(null);
+
+  // A short ring when an offer arrives, so the driver notices it like any
+  // new job, but not the long loop with a passenger on board.
   const offerId = offer?.rideId || null;
   useEffect(() => {
-    if (!offerId || seen.current === offerId) return;
-    seen.current = offerId;
-    Vibration.vibrate([0, 250, 150, 250]);
+    if (!offerId || rungFor === offerId) return;
+    rungFor = offerId;
+    ringBriefly();
   }, [offerId]);
 
   const answer = async (what) => {
     const id = what === 'drop' ? next?.id : offer?.rideId;
     if (!id || busy) return;
     setBusy(what);
+    stopJobRing();
     try {
       await answerFollowOn(id, what);
     } catch (error) {
@@ -42,7 +51,7 @@ export default function FollowOnCard({ driverId, rideId }) {
 
   if (next) {
     return (
-      <View style={[styles.card, styles.next]}>
+      <View style={[styles.card, styles.next, style]}>
         <View style={styles.row}>
           <Ionicons name="arrow-redo" size={18} color={COLORS.lime} />
           <Text style={[TYPE.callout, styles.onDark, { flex: 1 }]} numberOfLines={1}>
@@ -76,7 +85,7 @@ export default function FollowOnCard({ driverId, rideId }) {
 
   if (!offer) return null;
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, style]}>
       <View style={styles.row}>
         <Ionicons name="arrow-redo" size={18} color={COLORS.midnight} />
         <Text style={[TYPE.callout, { flex: 1 }]} numberOfLines={1}>

@@ -1,21 +1,18 @@
 // components/PhoneCustomerCard.jsx
 // The customer on a fleet's phone booking (functions/fleet.js). They have no
-// passenger account, so there is no in-app chat or masked call: the driver
-// sees their name, the office's notes, and can ring them directly.
+// passenger account, so there is no in-app chat. The driver sees their name
+// and the office's notes, never their number: Call rings the driver's phone
+// and puts them through (startMaskedCall), showing the customer the fleet's
+// line, so neither side sees the other's number.
 import React from 'react';
-import { Linking, StyleSheet, Text, View } from 'react-native';
-import { Alert } from './ui/alert';
+import { StyleSheet, Text, View } from 'react-native';
 import { COLORS, TYPE, SPACE, RADIUS, Avatar, Button } from './ui/kit';
+import { confirmMaskedCall } from '../utils/calling';
 
-export default function PhoneCustomerCard({ ride, compact }) {
+export default function PhoneCustomerCard({ ride, rideId, compact }) {
   const customer = ride?.customer || {};
   const name = customer.name || 'Customer';
-  const call = () => {
-    if (!customer.phone) return;
-    Linking.openURL(`tel:${customer.phone}`).catch(() =>
-      Alert.alert('Could not call', `Please dial ${customer.phone}.`)
-    );
-  };
+  const id = rideId || ride?.id;
   return (
     <View style={[styles.card, compact && styles.compact]}>
       <View style={styles.row}>
@@ -26,8 +23,14 @@ export default function PhoneCustomerCard({ ride, compact }) {
             Phone booking · {ride?.fleetName || 'your fleet'}
           </Text>
         </View>
-        {customer.phone ? (
-          <Button size="small" variant="secondary" icon="call-outline" title="Call" onPress={call} />
+        {customer.phone && id ? (
+          <Button
+            size="small"
+            variant="secondary"
+            icon="call-outline"
+            title="Call"
+            onPress={() => confirmMaskedCall(id, 'the customer')}
+          />
         ) : null}
       </View>
       {ride?.notes ? (

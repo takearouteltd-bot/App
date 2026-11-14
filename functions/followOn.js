@@ -266,8 +266,10 @@ module.exports = (deps) => {
         title: target ? `Your next job from ${ride.fleetName || "the office"}` :
           "Follow-on job",
         body: `Pickup at ${pickup}, about ${best.minutes} min from here. ` +
-          "Accept it on the trip screen.",
-        channelId: "trip-updates",
+          "Tap to accept.",
+        // Rings and pops up like any new job, even over Google Maps.
+        channelId: "job-ring",
+        sound: "job_ring.wav",
         ttlSeconds: OFFER_SECONDS,
         data: {type: "follow_on_offer", rideId},
       }).catch(() => null);

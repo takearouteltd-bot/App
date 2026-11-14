@@ -23,6 +23,7 @@ const DOC_FIELD = {
   motCert: "motUrl",
   vehicleLicence: "vehicleLicenceUrl",
   phvInsurance: "insuranceUrl",
+  v5c: "v5cUrl",
   companyAgreement: "companyAgreementUrl",
 };
 
@@ -60,6 +61,7 @@ export default function VehicleDetailsScreen({ navigation, setOnboardingStatus }
           motCert: data.motUrl || null,
           vehicleLicence: data.vehicleLicenceUrl || null,
           phvInsurance: data.insuranceUrl || null,
+          v5c: data.v5cUrl || null,
           companyAgreement: data.companyAgreementUrl || null,
         });
       } catch (error) {
@@ -102,9 +104,10 @@ export default function VehicleDetailsScreen({ navigation, setOnboardingStatus }
     !vehicleType && "a vehicle class",
     !ownershipType && "who owns the vehicle",
     !urls.motCert && "the MOT certificate",
-    !urls.vehicleLicence && "the vehicle licence (plate)",
-    !urls.phvInsurance && "your PHV insurance",
-    ownershipType === "company" && !urls.companyAgreement && "the company agreement",
+    !urls.vehicleLicence && "the vehicle paper licence",
+    !urls.phvInsurance && "your insurance certificate",
+    !urls.v5c && "the V5C log book",
+    ownershipType === "company" && !urls.companyAgreement && "the company hire permission letter",
   ].filter(Boolean);
 
   const handleContinue = async () => {
@@ -224,7 +227,7 @@ export default function VehicleDetailsScreen({ navigation, setOnboardingStatus }
           onPress={() => pickDocument("motCert")}
         />
         <UploadTile
-          title="Vehicle licence (plate)"
+          title="Vehicle paper licence"
           subtitle="From your licensing council, in date"
           icon="card-account-details-outline"
           url={urls.vehicleLicence}
@@ -232,17 +235,25 @@ export default function VehicleDetailsScreen({ navigation, setOnboardingStatus }
           onPress={() => pickDocument("vehicleLicence")}
         />
         <UploadTile
-          title="PHV insurance"
+          title="Insurance certificate"
           subtitle="Hire and reward cover"
           icon="shield-car"
           url={urls.phvInsurance}
           uploading={uploading === "phvInsurance"}
           onPress={() => pickDocument("phvInsurance")}
         />
+        <UploadTile
+          title="V5C vehicle log book"
+          subtitle="The registration document for this car"
+          icon="book-open-variant"
+          url={urls.v5c}
+          uploading={uploading === "v5c"}
+          onPress={() => pickDocument("v5c")}
+        />
         {ownershipType === "company" ? (
           <UploadTile
-            title="Company agreement"
-            subtitle="Showing you're allowed to drive it"
+            title="Company hire permission letter"
+            subtitle="From the company, saying you may drive it for hire"
             icon="file-sign"
             url={urls.companyAgreement}
             uploading={uploading === "companyAgreement"}

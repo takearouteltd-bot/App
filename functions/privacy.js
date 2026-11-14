@@ -7,7 +7,8 @@
    driverPrivate/{id}  bank details, National Insurance number, date of
                        birth, home address, phone, email, emergency contact
                        and payout account. Owner and admins only.
-   driverFiles/{id}    document links and the right to work share code.
+   driverFiles/{id}    document links (older records may also hold a DBS
+                       link and right to work share code, no longer asked).
                        Owner, admins, and the staff of the driver's fleet or
                        the fleet they are asking to join.
    riderPublic/{id}    a passenger's name, photo and rating, for the driver on
@@ -27,7 +28,7 @@ const PRIVATE_FIELDS = ["accountDetails", "bankDetails", "sortCode",
 const FILE_FIELDS = ["rightToWorkShareCode", "driverLicenseFrontUrl",
   "driverLicenseBackUrl", "driverLicenseUrl", "pcoLicenseUrl",
   "vehicleLicenceUrl", "insuranceUrl", "motUrl", "dbsCertificateUrl",
-  "companyAgreementUrl"];
+  "companyAgreementUrl", "v5cUrl"];
 
 /* What a driver on a job may see of their passenger. */
 const RIDER_PUBLIC_FIELDS = ["fullName", "firstName", "lastName", "name",

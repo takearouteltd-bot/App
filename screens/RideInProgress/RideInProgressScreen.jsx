@@ -18,6 +18,7 @@ import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore'
 import { getAuth } from 'firebase/auth';
 import { db } from '../../config/firebase';
 import SafetyButton from '../../components/SafetyButton';
+import DriverPhotoPlate from '../../components/DriverPhotoPlate';
 import { confirmMaskedCall } from '../../utils/calling';
 import { currencySymbol } from '../../utils/appConfig';
 import {
@@ -29,7 +30,6 @@ import {
   Sheet,
   Card,
   Button,
-  Avatar,
   PresenceDot,
   IconButton,
   RouteLine,
@@ -353,12 +353,7 @@ export default function RideInProgressScreen() {
 
         {driverData ? (
           <Card style={styles.driverCard}>
-            <Avatar
-              uri={driverData.selfieUrl}
-              name={driverData.fullName}
-              size={52}
-              badge={<PresenceDot online />}
-            />
+            <DriverPhotoPlate driver={driverData} size={52} badge={<PresenceDot online />} />
 
             <View style={{ flex: 1 }}>
               <Text style={styles.driverName} numberOfLines={1}>

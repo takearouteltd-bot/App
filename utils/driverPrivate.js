@@ -2,7 +2,7 @@
 // A driver's private details live apart from drivers/{id}, which every
 // signed-in user can read: driverPrivate/{id} (bank, NI number, date of birth,
 // home address, phone, email, emergency contact) and driverFiles/{id}
-// (document links and the right to work code). See firestore.rules.
+// (document links). See firestore.rules.
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../config/firebase';
 

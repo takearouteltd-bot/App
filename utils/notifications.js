@@ -204,6 +204,9 @@ export function showPushesWhileOpen() {
       // The driver home screen sees the job itself and rings for it
       // (ringForNewJob), so showing the push too would ring twice.
       if (message?.data?.type === 'job_offer') return;
+      // Same for a follow-on offer: it pops up on whatever screen the driver
+      // has open (components/FollowOnPopup.jsx) and chimes there.
+      if (message?.data?.type === 'follow_on_offer') return;
       await ensureChannels();
       await Notifications.scheduleNotificationAsync({
         content: {
@@ -254,6 +257,20 @@ async function playRing() {
   stopJobRing();
   ringPlayer.play();
   ringTimer = setTimeout(stopJobRing, RING_MS);
+}
+
+/* A short ring, not the 30 second loop: for a follow-on job offered while
+   a passenger is on board (components/FollowOnCard.jsx). */
+export async function ringBriefly(ms = 4000) {
+  try {
+    Vibration.vibrate([0, 400, 200, 400]);
+    if (AppState.currentState !== 'active') return;
+    await playRing();
+    clearTimeout(ringTimer);
+    ringTimer = setTimeout(stopJobRing, ms);
+  } catch (error) {
+    console.log('Ring error:', error);
+  }
 }
 
 export async function ringForNewJob(ride) {

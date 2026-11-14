@@ -25,11 +25,11 @@ const CHECKS = [
         d.pcoLicenseUrl &&
         d.selfieUrl
       ),
-    summary: () => "Licence, PCO licence and selfie",
+    summary: () => "Licence, private hire badge and selfie",
   },
   {
     step: 3,
-    ok: (d) => !!(d.makeModel && d.registrationNumber && d.vehicleType && d.motUrl && d.vehicleLicenceUrl && d.insuranceUrl),
+    ok: (d) => !!(d.makeModel && d.registrationNumber && d.vehicleType && d.motUrl && d.vehicleLicenceUrl && d.insuranceUrl && d.v5cUrl),
     summary: (d) => [d.makeModel, d.registrationNumber].filter(Boolean).join(" · "),
   },
   {

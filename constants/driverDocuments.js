@@ -5,19 +5,21 @@
 export const DRIVER_DOCUMENTS = [
   { id: 'drivingLicenceFront', label: 'Driving licence (front)', icon: 'card-outline', urlField: 'driverLicenseFrontUrl', expiryKey: 'drivingLicence' },
   { id: 'drivingLicenceBack', label: 'Driving licence (back)', icon: 'card-outline', urlField: 'driverLicenseBackUrl', expiryKey: 'drivingLicence' },
-  { id: 'pcoLicence', label: 'Private hire driver licence', icon: 'ribbon-outline', urlField: 'pcoLicenseUrl', expiryKey: 'privateHireLicence' },
-  { id: 'vehicleLicence', label: 'Vehicle licence (plate)', icon: 'car-outline', urlField: 'vehicleLicenceUrl', expiryKey: 'vehicleLicence' },
-  { id: 'insurance', label: 'Hire and reward insurance', icon: 'shield-checkmark-outline', urlField: 'insuranceUrl', expiryKey: 'insurance' },
+  { id: 'pcoLicence', label: 'Private hire badge', icon: 'ribbon-outline', urlField: 'pcoLicenseUrl', expiryKey: 'privateHireLicence' },
+  { id: 'vehicleLicence', label: 'Vehicle paper licence', icon: 'car-outline', urlField: 'vehicleLicenceUrl', expiryKey: 'vehicleLicence' },
+  { id: 'insurance', label: 'Insurance certificate', icon: 'shield-checkmark-outline', urlField: 'insuranceUrl', expiryKey: 'insurance' },
   { id: 'mot', label: 'MOT certificate', icon: 'construct-outline', urlField: 'motUrl', expiryKey: 'mot' },
-  { id: 'dbs', label: 'DBS certificate', icon: 'document-text-outline', urlField: 'dbsCertificateUrl', expiryKey: null },
+  { id: 'v5c', label: 'V5C vehicle log book', icon: 'book-outline', urlField: 'v5cUrl', expiryKey: null },
+  // Only when a company owns the car (drivers.ownershipType "company").
+  { id: 'companyAgreement', label: 'Company hire permission letter', icon: 'document-text-outline', urlField: 'companyAgreementUrl', expiryKey: null, companyOnly: true },
 ];
 
 // Unique expiry entries, for alerts (the two licence sides share one date).
 export const EXPIRY_LABELS = {
   drivingLicence: 'Driving licence',
-  privateHireLicence: 'Private hire driver licence',
-  vehicleLicence: 'Vehicle licence',
-  insurance: 'Insurance',
+  privateHireLicence: 'Private hire badge',
+  vehicleLicence: 'Vehicle paper licence',
+  insurance: 'Insurance certificate',
   mot: 'MOT',
 };
 
