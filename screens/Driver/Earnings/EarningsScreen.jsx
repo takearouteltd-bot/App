@@ -132,11 +132,14 @@ export default function EarningsScreen() {
   const isPenalty = (t) => t.type === 'cancel_penalty';
   // A promo code's discount, paid back by TakeARoute: part of the trip's pay.
   const isTripPay = (t) => t.type === 'ride_earning' || t.type === 'promo_top_up';
+  // A passenger's tip (functions/tips.js): all of it is the driver's.
+  const isTip = (t) => t.type === 'tip';
   const filteredTransactions =
     selectedFilter === 'All'
       ? transactions
       : transactions.filter((t) => {
           if (selectedFilter === 'Trips') return isTripPay(t);
+          if (selectedFilter === 'Tips') return isTip(t);
           if (selectedFilter === 'Payouts') return t.type === 'payout_request' || t.type === 'payout';
           if (selectedFilter === 'Subscription') return isSubscription(t);
           if (selectedFilter === 'Penalties') return isPenalty(t);
@@ -151,7 +154,7 @@ export default function EarningsScreen() {
     return d.getTime();
   })();
   const earnedThisWeek = transactions
-    .filter((t) => isTripPay(t) && (t.createdAt?.toMillis?.() || 0) >= weekStart)
+    .filter((t) => (isTripPay(t) || isTip(t)) && (t.createdAt?.toMillis?.() || 0) >= weekStart)
     .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
 
   const formatDate = (timestamp) => {
@@ -188,6 +191,10 @@ export default function EarningsScreen() {
     let title = item.description || item.type;
     if (item.type === 'ride_earning') title = 'Trip earnings';
     if (item.type === 'promo_top_up') title = 'Promo paid by TakeARoute';
+    if (isTip(item)) {
+      icon = 'heart-outline';
+      title = 'Tip from your passenger';
+    }
     if (item.type === 'payout_request' || item.type === 'payout') {
       icon = 'arrow-down-outline';
       title = 'Withdrawal';
@@ -306,7 +313,7 @@ export default function EarningsScreen() {
 
       <Section title="Activity">
         <View style={styles.filters}>
-          {['All', 'Trips', 'Payouts', 'Subscription', 'Penalties'].map((f) => (
+          {['All', 'Trips', 'Tips', 'Payouts', 'Subscription', 'Penalties'].map((f) => (
             <Chip
               key={f}
               label={f}

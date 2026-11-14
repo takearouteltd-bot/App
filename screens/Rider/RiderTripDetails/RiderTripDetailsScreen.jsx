@@ -10,6 +10,8 @@ import { money } from '../../../utils/appConfig';
 import { stopsOf } from '../../../utils/stops';
 import EmailReceiptButton from '../../../components/EmailReceiptButton';
 import StarRating from '../../../components/StarRating';
+import TipCard from '../../../components/TipCard';
+import { paidTip } from '../../../utils/tips';
 import StopRows from '../../../components/trips/StopRows';
 import { STATUS_LABEL, STATUS_PILL } from '../../../components/trips/TripsList';
 import {
@@ -25,6 +27,16 @@ export default function RiderTripDetailsScreen() {
   const { trip } = route.params;
 
   const [driver, setDriver] = useState(null);
+  // The trip live, for a tip left from here (the list passed a copy).
+  const [live, setLive] = useState(null);
+  useEffect(() => {
+    if (!trip?.id) return undefined;
+    return onSnapshot(
+      doc(db, 'rides', trip.id),
+      (snap) => snap.exists() && setLive({ id: snap.id, ...snap.data() }),
+      () => {}
+    );
+  }, [trip?.id]);
   const [loadingDriver, setLoadingDriver] = useState(true);
   const [blockedDrivers, setBlockedDrivers] = useState([]);
   const riderId = auth.currentUser?.uid;
@@ -196,6 +208,9 @@ export default function RiderTripDetailsScreen() {
         // If the waiting charge could not be taken it is not part of the total.
         fare.waitingCharge > 0 && !trip.extraChargeFailed ? ['Waiting time', rowMoney(fare.waitingCharge)] : null,
       ].filter(Boolean);
+  // A tip is its own card payment after the trip, shown under the fare.
+  const tip = paidTip(live || trip);
+  if (tip > 0) fareRows.push(['Tip for your driver', rowMoney(tip)]);
 
   return (
     <Screen>
@@ -318,9 +333,17 @@ export default function RiderTripDetailsScreen() {
 
         <View style={styles.totalRow}>
           <Text style={styles.totalLabel}>Total Paid</Text>
-          <Text style={styles.totalValue}>{rowMoney(fareTotal)}</Text>
+          <Text style={styles.totalValue}>{rowMoney(fareTotal + tip)}</Text>
         </View>
       </Card>
+
+      <TipCard
+        ride={live}
+        rideId={trip.id}
+        driverName={driver?.firstName || driver?.fullName || 'your driver'}
+        onAddCard={() => navigation.navigate('AddPaymentMethod')}
+        style={{ marginTop: SPACE[3] }}
+      />
 
       {/* Buttons */}
       <View style={styles.actions}>

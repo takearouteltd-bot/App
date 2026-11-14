@@ -208,6 +208,15 @@ export default function DriverTripDetailsScreen() {
               {currency}{fareTotal.toFixed(2)}
             </Text>
           </View>
+          {/* Paid on its own after the trip; all of it is the driver's. */}
+          {trip.tip?.status === 'paid' ? (
+            <View style={styles.paymentRow}>
+              <Text style={[TYPE.body, { color: COLORS.success }]}>Tip from your passenger</Text>
+              <Text style={[TYPE.callout, { color: COLORS.success }]}>
+                {currency}{Number(trip.tip.amount || 0).toFixed(2)}
+              </Text>
+            </View>
+          ) : null}
         </Card>
       </Section>
 

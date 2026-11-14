@@ -69,7 +69,7 @@ function routeForNotification(data, role) {
     if (type === "fleet_chat" || type === "fleet_message") return tab("Account", { screen: "OfficeChat" });
     if (type === "change_request") return tab("Account", { screen: "DriverPersonalInformation" });
     if (type === "membership") return tab("Membership");
-    if (type === "payout") return tab("Earnings", { screen: "EarningsScreen" });
+    if (type === "payout" || type === "tip") return tab("Earnings", { screen: "EarningsScreen" });
     // A booked job given to them, changed or taken off them.
     if (type === "booked_job") return tab("Home", { screen: "DriverBookedJobs" });
     // job_offer, trip, chat and anything else: the driver home resumes the

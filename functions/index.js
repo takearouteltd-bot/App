@@ -91,6 +91,9 @@ const CONFIG_DEFAULTS = {
     // Mode 0 none, 1 money, 2 time off the road. Radius 0 = every cancel.
     driverPenaltyMode: 0, driverPenaltyAmount: 0, driverPenaltyMinutes: 0,
     driverPenaltyRadiusKm: 0},
+  // Passenger tips after a trip (tips.js).
+  tips: {enabled: 1, preset1: 1, preset2: 2, preset3: 5, maxAmount: 50,
+    windowHours: 24},
 };
 
 /**
@@ -182,6 +185,14 @@ async function loadAppConfig() {
           d.dispatch.followOnMinutes),
       followOnKm: numSetting(data.dispatch, "followOnKm",
           d.dispatch.followOnKm),
+    },
+    tips: {
+      enabled: numSetting(data.tips, "enabled", d.tips.enabled) === 1 ? 1 : 0,
+      preset1: numSetting(data.tips, "preset1", d.tips.preset1),
+      preset2: numSetting(data.tips, "preset2", d.tips.preset2),
+      preset3: numSetting(data.tips, "preset3", d.tips.preset3),
+      maxAmount: numSetting(data.tips, "maxAmount", d.tips.maxAmount),
+      windowHours: numSetting(data.tips, "windowHours", d.tips.windowHours),
     },
   };
 }
@@ -4342,6 +4353,12 @@ function buildReceipt(ride, rideId, extra) {
       add("Waiting time", emailMoney(fare.waitingCharge, currency));
     }
   }
+  // A tip is charged on its own after the trip, so it shows on a receipt
+  // sent (or resent) once it has been paid, and counts in the total paid.
+  const tip = !isFee && ride.tip && ride.tip.status === "paid" ?
+    Number(ride.tip.amount) || 0 : 0;
+  if (tip > 0) add("Tip for your driver", emailMoney(tip, currency));
+  const paid = Math.round((total + tip) * 100) / 100;
 
   const rowsHtml = lines.map((l) => `
       <tr>
@@ -4367,7 +4384,7 @@ function buildReceipt(ride, rideId, extra) {
         ${extra.fleetName ? escapeHtml(extra.fleetName) + " &middot; " : ""}
         TakeARoute receipt</div>
       <div style="color:#B8F03A;font-size:34px;font-weight:800;margin-top:6px;">
-        ${escapeHtml(emailMoney(total, currency))}</div>
+        ${escapeHtml(emailMoney(paid, currency))}</div>
       <div style="color:#AEB5C4;font-size:13px;margin-top:4px;">
         ${escapeHtml(date)}, ${escapeHtml(time)}</div>
     </div>
@@ -4392,7 +4409,7 @@ function buildReceipt(ride, rideId, extra) {
           <td style="color:#0B0F1A;font-size:16px;font-weight:700;">
             Total paid</td>
           <td style="text-align:right;color:#0B0F1A;font-size:16px;
-            font-weight:800;">${escapeHtml(emailMoney(total, currency))}</td>
+            font-weight:800;">${escapeHtml(emailMoney(paid, currency))}</td>
         </tr>
       </table>
       <div style="color:#6B7280;font-size:13px;margin-top:12px;">
@@ -4424,13 +4441,13 @@ function buildReceipt(ride, rideId, extra) {
     paidLine(ride),
     `${pickup} to ${dropoff}`,
     ...lines.map((l) => `${l.label}: ${l.value}`),
-    `Total paid: ${emailMoney(total, currency)}`,
+    `Total paid: ${emailMoney(paid, currency)}`,
     `Driver: ${extra.driverName || "TakeARoute driver"}`,
     `Trip reference ${String(rideId).slice(0, 8).toUpperCase()}`,
   ].join("\n");
 
   return {
-    subject: `Your TakeARoute receipt, ${emailMoney(total, currency)}`,
+    subject: `Your TakeARoute receipt, ${emailMoney(paid, currency)}`,
     html,
     text,
   };
@@ -5072,6 +5089,11 @@ Object.assign(exports, paymentAlerts.functions);
 Object.assign(exports, privacy.functions);
 Object.assign(exports, require("./driverPenalty")({
   functions, db, sendPush, loadAppConfig, distanceKm,
+}).functions);
+// Passenger tips after a trip.
+Object.assign(exports, require("./tips")({
+  functions, db, stripe, STRIPE_SECRETS, sendPush, loadAppConfig, toMillis,
+  rideCurrency, emailMoney,
 }).functions);
 // Follow-on jobs; used by offerRideToDrivers, notifyRideUpdates and fleet.
 const followOn = require("./followOn")({
