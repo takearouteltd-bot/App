@@ -551,12 +551,16 @@ service cloud.firestore {
         myVehicleServes(resource.data);
     }
 
-    /* The chosen driver, or one of the fleet, says no to a phone job. */
+    /* The chosen driver, or one of the fleet, says no to a phone job; or
+       an approved driver says no to an app job still looking for a driver,
+       which tells the server to try further out (functions/bidJobs.js). */
     function driverDeclinesFleetJob(changed) {
       let driver = get(/databases/$(database)/documents/drivers/$(request.auth.uid)).data;
       return changed.hasOnly(["declinedBy"]) &&
-        resource.data.status == "dispatching" &&
-        driver.get("fleetId", null) == resource.data.get("fleetId", "") &&
+        ((resource.data.status == "dispatching" &&
+          driver.get("fleetId", null) == resource.data.get("fleetId", "")) ||
+         (resource.data.status == "searching" &&
+          driver.get("approved", false) == true)) &&
         request.resource.data.declinedBy.toSet() ==
           resource.data.get("declinedBy", []).toSet().union([request.auth.uid].toSet()) &&
         request.resource.data.declinedBy.size() <= resource.data.get("declinedBy", []).size() + 1;
@@ -633,6 +637,8 @@ service cloud.firestore {
         !("priceCheck" in request.resource.data) &&
         /* Tips are recorded by the server once paid (functions/tips.js). */
         !("tip" in request.resource.data) &&
+        /* BID JOBs are opened by the server only (functions/bidJobs.js). */
+        !("bidJob" in request.resource.data) &&
         /* A booking from the app, nothing else: a phone job or a fleet job
            here would skip the price check and ring a fleet. */
         request.resource.data.status == "searching" &&
@@ -686,7 +692,21 @@ service cloud.firestore {
       }
 
       /* Bidding counter-offers (NEW): one per driver, under their own uid.
-         The ride's passenger reads them and marks the one they take. */
+         The ride's passenger reads them and marks the one they take. Sent
+         on a bidding ride, or on a BID JOB that allows them, there no more
+         than its maxCounterPercent above the fare (functions/bidJobs.js). */
+      function counterAllowed(rideId) {
+        let ride = get(/databases/$(database)/documents/rides/$(rideId)).data;
+        let bid = ride.get("bidJob", {});
+        let price = request.resource.data.get("price", 0);
+        return ride.status == "searching" && (
+          ride.get("bidding", false) == true || (
+            bid.get("allowCounter", false) == true &&
+            price is number && price > 0 &&
+            price <= ride.fare.total * (1 + bid.get("maxCounterPercent", 0) / 100.0) + 0.005
+          )
+        );
+      }
       match /offers/{offerDriverId} {
         allow read: if isAdmin() || (
           signedIn() && (
@@ -700,7 +720,7 @@ service cloud.firestore {
               request.auth.uid == offerDriverId &&
               request.resource.data.driverId == offerDriverId &&
               request.resource.data.status == "pending" &&
-              get(/databases/$(database)/documents/rides/$(rideId)).data.status == "searching"
+              counterAllowed(rideId)
             ) || (
               resource != null &&
               get(/databases/$(database)/documents/rides/$(rideId)).data.riderId == request.auth.uid &&

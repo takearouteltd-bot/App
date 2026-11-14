@@ -149,7 +149,7 @@ module.exports = (deps) => {
     hasExpiredDocument, toE164, toMillis, addOneMonth,
     TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor, STRIPE_SECRETS,
     fleetBilling, privacy, membershipSuspended, positionStale,
-    followOn} = deps;
+    followOn, bidJobs} = deps;
   const paymentAlerts = require("./paymentAlerts")({functions, db});
   const {HttpsError} = functions.https;
   // From the modular entry point: the functions emulator's stand-in for
@@ -501,10 +501,26 @@ module.exports = (deps) => {
    */
   async function nearestFreeDriver(ride) {
     const cfg = await loadAppConfig();
+    let best = null;
+    (await fleetPool(ride)).forEach((p) => {
+      if (p.km <= cfg.dispatch.searchRadiusKm && (!best || p.km < best.km)) {
+        best = {driverId: p.id, km: p.km};
+      }
+    });
+    return best;
+  }
+
+  /**
+   * Every free online driver of the job's fleet who may take it and has not
+   * turned it down, with how far they are from the pickup (no radius).
+   * @param {Object} ride Ride data.
+   * @return {Promise<Array<{id: string, km: number}>>} Drivers.
+   */
+  async function fleetPool(ride) {
     const skip = new Set(ride.declinedBy || []);
     const drivers = await db.collection("drivers")
         .where("fleetId", "==", ride.fleetId).get();
-    let best = null;
+    const pool = [];
     drivers.forEach((snap) => {
       const d = snap.data();
       if (skip.has(snap.id) || d.status !== "online" || positionStale(d) ||
@@ -512,12 +528,21 @@ module.exports = (deps) => {
           !wantsJob(d, ride)) {
         return;
       }
-      const km = distanceKm(d.location, ride.pickupLocation);
-      if (km <= cfg.dispatch.searchRadiusKm && (!best || km < best.km)) {
-        best = {driverId: snap.id, km};
-      }
+      pool.push({id: snap.id, km: distanceKm(d.location, ride.pickupLocation)});
     });
-    return best;
+    return pool;
+  }
+
+  /**
+   * Whether a phone job is out to the whole fleet now (not to one driver):
+   * sent to all, or a queue or nearest run that has nobody left.
+   * @param {Object} ride Ride data.
+   * @return {boolean} Out to the fleet.
+   */
+  function outToFleet(ride) {
+    const d = ride.dispatch || {};
+    return d.mode === "all" ||
+      (d.mode === "queue" && d.queueDone === true && !d.driverId);
   }
 
   /**
@@ -576,44 +601,54 @@ module.exports = (deps) => {
     const pickup = ride.pickupLocation && ride.pickupLocation.address ?
       ride.pickupLocation.address : "a pickup";
     const target = ride.dispatch && ride.dispatch.driverId;
+    // A BID JOB (bidJobs.js) is asked out to its own, bigger, radius.
+    const bid = !target && ride.bidJob ? ride.bidJob : null;
+    const radiusKm = bid ? Math.max(cfg.dispatch.searchRadiusKm,
+        Number(bid.radiusKm) || 0) : cfg.dispatch.searchRadiusKm;
     let ids = [];
     let freeKm = null;
+    let near = [];
     if (target) {
       ids = [target];
     } else {
-      const skip = new Set(ride.declinedBy || []);
-      const drivers = await db.collection("drivers")
-          .where("fleetId", "==", ride.fleetId).get();
-      drivers.forEach((snap) => {
-        const d = snap.data();
-        if (skip.has(snap.id) || d.status !== "online" || positionStale(d) ||
-            d.isOnRide === true || !canTakeFleetJob(d, ride) ||
-            !wantsJob(d, ride)) {
-          return;
-        }
-        const km = distanceKm(d.location, ride.pickupLocation);
-        if (km <= cfg.dispatch.searchRadiusKm) {
-          ids.push(snap.id);
-          if (freeKm === null || km < freeKm) freeKm = km;
-        }
-      });
+      near = (await fleetPool(ride)).filter((p) => p.km <= radiusKm);
+      ids = near.map((p) => p.id);
+      if (near.length) freeKm = Math.min(...near.map((p) => p.km));
     }
-    await sendPush(ids, {
-      title: target ? `Job from ${ride.fleetName || "your fleet"}` :
-        "New fleet job",
-      body: `${ride.collectBy === "account" ?
-        `Account job, ${(ride.account || {}).company || "client"}` :
-        ride.collectBy === "card" ? "Card job" : "Cash job"}. ` +
-        `Pickup at ${pickup}. Open TakeARoute to accept.`,
+    const kind = ride.collectBy === "account" ?
+      `Account job, ${(ride.account || {}).company || "client"}` :
+      ride.collectBy === "card" ? "Card job" : "Cash job";
+    const ring = {
       channelId: "job-ring",
       sound: "job_ring.wav",
       ttlSeconds: 60,
       data: {type: "job_offer", rideId},
-    });
-    console.log(`Fleet job ${rideId} offered to ${ids.length} driver(s)`);
+    };
+    if (bid) {
+      const short = pickup.split(",")[0];
+      const fare = Number((ride.fare || {}).total || ride.fareEstimate || 0);
+      await Promise.all(near.map((p) => sendPush([p.id], Object.assign({
+        title: `BID JOB: ${short}`,
+        body: `${bidJobs.milesText(p.km)} away, ` +
+          `${fare ? `£${fare.toFixed(2)}, ` : ""}${kind.toLowerCase()}. ` +
+          "Open TakeARoute to take it.",
+      }, ring)).catch(() => null)));
+    } else {
+      await sendPush(ids, Object.assign({
+        title: target ? `Job from ${ride.fleetName || "your fleet"}` :
+          "New fleet job",
+        body: `${kind}. Pickup at ${pickup}. Open TakeARoute to accept.`,
+      }, ring));
+    }
+    console.log(`Fleet job ${rideId} offered to ${ids.length} driver(s)` +
+      (bid ? " as a BID JOB" : ""));
     // A busy driver about to drop off nearby (or the chosen driver, if they
     // are on a trip) is offered it as their next job.
     await followOn.offerFor(rideId, ride, {cfg, freeKm});
+    // Nobody in the fleet to ask: a second chance, further out.
+    if (!target && !ids.length && !ride.bidJob && outToFleet(ride)) {
+      await bidJobs.open(db.collection("rides").doc(rideId), "nobody");
+    }
     return ids.length;
   }
 
@@ -3502,6 +3537,21 @@ module.exports = (deps) => {
           return null;
         }
 
+        // Out to the whole fleet and a driver said no: if nobody else is
+        // left in range, a second chance as a BID JOB (bidJobs.js).
+        const wasDeclined = new Set((before && before.declinedBy) || []);
+        if (before && before.status === "dispatching" && outToFleet(after) &&
+            !after.bidJob &&
+            (after.declinedBy || []).some((id) => !wasDeclined.has(id))) {
+          const cfg = await loadAppConfig();
+          const left = (await fleetPool(after))
+              .some((p) => p.km <= cfg.dispatch.searchRadiusKm);
+          if (!left) {
+            await bidJobs.open(change.after.ref, "declined");
+            return null;
+          }
+        }
+
         // By queue: pick the first driver in the pickup zone, and the next
         // one each time the current one says no (or runFleetQueues marks
         // them as not answering). offerNextInQueue writes the choice, which
@@ -3659,11 +3709,19 @@ module.exports = (deps) => {
               "dispatch.unansweredAt": FieldValue.serverTimestamp(),
             }).catch(() => null);
           }
-          const toFleet = d.mode === "all" ||
-            (d.mode === "queue" && d.queueDone === true && !d.driverId);
+          const toFleet = outToFleet(ride);
           const offered = toMillis(d.offeredAt);
           if (!toFleet || !offered || (d.reRings || 0) >= MAX_RE_RINGS ||
               Date.now() - offered < RE_RING_MS) {
+            continue;
+          }
+          // Nobody answered the first ring: instead of ringing the same
+          // drivers again, open it as a BID JOB (it rings them, and anyone
+          // who only missed a queue offer, highlighted). Re-rings go on
+          // from there as BID JOBs.
+          if (!ride.bidJob &&
+              await bidJobs.open(doc.ref, "unanswered")) {
+            rung++;
             continue;
           }
           await db.runTransaction(async (tx) => {

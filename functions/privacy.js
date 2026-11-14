@@ -42,7 +42,7 @@ const OFFER_FIELDS = ["source", "fleetId", "fleetName", "status", "rideType",
   "dropoffLocation", "stops", "route", "fare", "fareEstimate", "offeredFare",
   "currency", "notes", "paymentMethod", "payment", "collectBy", "account",
   "pickupAt", "femaleDriverOnly", "cityId", "cityName", "waitingPolicy",
-  "cancellationPolicy", "timestamps"];
+  "cancellationPolicy", "timestamps", "bidJob"];
 
 const FIELDS = {PRIVATE_FIELDS, FILE_FIELDS, RIDER_PUBLIC_FIELDS,
   OFFER_FIELDS};

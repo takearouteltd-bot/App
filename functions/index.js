@@ -84,6 +84,10 @@ const CONFIG_DEFAULTS = {
     // within followOnKm of it. 0 minutes turns them off.
     followOnMinutes: 10, followOnKm: 3.2,
   },
+  // BID JOBs (bidJobs.js): a job nobody is taking is opened to every
+  // available driver within radiusKm, after afterSeconds unanswered.
+  bidJobs: {enabled: 1, radiusKm: 8.05, afterSeconds: 60, allowCounter: 0,
+    maxCounterPercent: 30},
   fares: {minimumFare: 6},
   cancellation: {fee: 0, freeMinutes: 2, arrivedFee: 0, noShowWaitMinutes: 5,
     driverSharePercent: 100,
@@ -196,6 +200,17 @@ async function loadAppConfig() {
       preset3: numSetting(data.tips, "preset3", d.tips.preset3),
       maxAmount: numSetting(data.tips, "maxAmount", d.tips.maxAmount),
       windowHours: numSetting(data.tips, "windowHours", d.tips.windowHours),
+    },
+    bidJobs: {
+      enabled: numSetting(data.bidJobs, "enabled", d.bidJobs.enabled) === 1 ?
+        1 : 0,
+      radiusKm: numSetting(data.bidJobs, "radiusKm", d.bidJobs.radiusKm),
+      afterSeconds: Math.max(20, numSetting(data.bidJobs, "afterSeconds",
+          d.bidJobs.afterSeconds)),
+      allowCounter: numSetting(data.bidJobs, "allowCounter",
+          d.bidJobs.allowCounter) === 1 ? 1 : 0,
+      maxCounterPercent: Math.min(300, numSetting(data.bidJobs,
+          "maxCounterPercent", d.bidJobs.maxCounterPercent)),
     },
   };
 }
@@ -3632,22 +3647,21 @@ function wantsJobType(jobTypes, rideType) {
 }
 
 /**
- * Rings every eligible online driver near the pickup.
- * @param {string} rideId Ride id.
+ * Every available online driver who may take this app job, with how far
+ * they are from the pickup (no radius applied). Drivers who declined it,
+ * blocked ones and those the passenger blocked are left out. Used by
+ * offerRideToDrivers and BID JOBs (bidJobs.js).
  * @param {Object} ride Ride document.
- * @return {Promise<null>} Nothing.
+ * @return {Promise<Array<{id: string, km: number}>>} Drivers.
  */
-async function offerRideToDrivers(rideId, ride) {
-  const cfg = await loadAppConfig();
+async function appDriverPool(ride) {
   const skip = new Set([
     ...(ride.declinedBy || []),
     ...(ride.blockedDriverIds || []),
   ]);
   const online = await db.collection("drivers")
       .where("status", "==", "online").get();
-
-  const nearby = [];
-  let freeKm = null;
+  const pool = [];
   online.forEach((snap) => {
     const d = snap.data();
     if (skip.has(snap.id) || d.blocked === true || d.approved !== true ||
@@ -3666,18 +3680,32 @@ async function offerRideToDrivers(rideId, ride) {
     if (ride.femaleDriverOnly === true && d.femaleVerified !== true) return;
     // The driver switched cash jobs off in the app.
     if (d.cashJobs === false && ride.paymentMethod === "cash") return;
-    const km = distanceKm(d.location, ride.pickupLocation);
-    if (km <= cfg.dispatch.searchRadiusKm) {
-      nearby.push(snap.id);
-      if (freeKm === null || km < freeKm) freeKm = km;
-    }
+    pool.push({id: snap.id, km: distanceKm(d.location, ride.pickupLocation)});
   });
+  return pool;
+}
+
+/**
+ * Rings every eligible online driver near the pickup. A BID JOB
+ * (ride.bidJob) rings out to its own radius, saying how far away it is.
+ * Nobody in range for an ordinary job opens it as a BID JOB.
+ * @param {string} rideId Ride id.
+ * @param {Object} ride Ride document.
+ * @param {Object} opts {bidRing: rung by bidJobs.openApp}.
+ * @return {Promise<null>} Nothing.
+ */
+async function offerRideToDrivers(rideId, ride, opts = {}) {
+  const cfg = await loadAppConfig();
+  const radiusKm = ride.bidJob ?
+    Math.max(cfg.dispatch.searchRadiusKm, Number(ride.bidJob.radiusKm) || 0) :
+    cfg.dispatch.searchRadiusKm;
+  const nearby = (await appDriverPool(ride)).filter((p) => p.km <= radiusKm);
+  const freeKm = nearby.length ?
+    Math.min(...nearby.map((p) => p.km)) : null;
 
   const pickup = ride.pickupLocation && ride.pickupLocation.address ?
     ride.pickupLocation.address : "a nearby pickup";
-  await sendPush(nearby, {
-    title: "New job offer",
-    body: `Pickup at ${pickup}. Open TakeARoute to accept.`,
+  const ring = {
     // "job-ring" replaced "job-offers" in the app
     // (see utils/notifications.js).
     // Phones on an older build without it show the push on their default
@@ -3686,10 +3714,30 @@ async function offerRideToDrivers(rideId, ride) {
     sound: "job_ring.wav",
     ttlSeconds: Math.max(10, cfg.dispatch.requestTimeoutSeconds || 20),
     data: {type: "job_offer", rideId},
-  });
-  console.log(`Job ${rideId} offered to ${nearby.length} driver(s)`);
+  };
+  if (ride.bidJob) {
+    const fare = emailMoney(Number(ride.fare && ride.fare.total) ||
+      Number(ride.fareEstimate) || 0, rideCurrency(ride).toUpperCase());
+    const short = pickup.split(",")[0];
+    await Promise.all(nearby.map((p) => sendPush([p.id], {...ring,
+      title: `BID JOB: ${short}`,
+      body: `${bidJobs.milesText(p.km)} away, ${fare}. ` +
+        "Open TakeARoute to take it."}).catch(() => null)));
+  } else {
+    await sendPush(nearby.map((p) => p.id), {...ring,
+      title: "New job offer",
+      body: `Pickup at ${pickup}. Open TakeARoute to accept.`,
+    });
+  }
+  console.log(`Job ${rideId} offered to ${nearby.length} driver(s)` +
+    (ride.bidJob ? " as a BID JOB" : ""));
+  if (opts.bidRing) return null;
   // A busy driver about to drop off nearby, if they would be quicker.
   await followOn.offerFor(rideId, ride, {cfg, freeKm});
+  // Nobody to ask: a second chance, further out.
+  if (!nearby.length && !ride.bidJob) {
+    await bidJobs.openApp(rideId, "nobody");
+  }
   return null;
 }
 
@@ -4017,7 +4065,8 @@ exports.notifyRiderOfCounterOffer = functions.firestore
     });
 
 /* The passenger gave up on a female driver: offer the job to everyone who
-   was held back the first time. */
+   was held back the first time. A driver declined a searching job: if
+   nobody else available is in range, open it as a BID JOB (bidJobs.js). */
 exports.reofferWhenPreferenceDropped = functions.firestore
     .document("rides/{rideId}")
     .onUpdate(async (change, context) => {
@@ -4026,7 +4075,9 @@ exports.reofferWhenPreferenceDropped = functions.firestore
       if (after.status !== "searching") return null;
       const dropped = before.femaleDriverOnly === true &&
         after.femaleDriverOnly !== true;
-      if (!dropped) return null;
+      if (!dropped) {
+        return bidJobs.afterDecline(context.params.rideId, before, after);
+      }
       return offerRideToDrivers(context.params.rideId, after);
     });
 
@@ -5382,9 +5433,14 @@ const followOn = require("./followOn")({
   hasExpiredDocument, membershipSuspended, positionStale, toMillis,
 });
 Object.assign(exports, followOn.functions);
+// BID JOBs; used by offerRideToDrivers, reofferWhenPreferenceDropped, fleet.
+const bidJobs = require("./bidJobs")({
+  functions, db, loadAppConfig, toMillis, appDriverPool, offerRideToDrivers,
+});
+Object.assign(exports, bidJobs.functions);
 Object.assign(exports, require("./fleet")({
   functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
-  wantsJobType, followOn,
+  wantsJobType, followOn, bidJobs,
   hasExpiredDocument, toE164, toMillis, addOneMonth,
   TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor,
   STRIPE_SECRETS, fleetBilling, shared: fleetShared, stripe, privacy,
