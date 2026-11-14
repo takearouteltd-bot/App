@@ -8,6 +8,7 @@ import { db } from '../../config/firebase';
 import { money } from '../../utils/appConfig';
 import EmailReceiptButton from '../../components/EmailReceiptButton';
 import StarRating from '../../components/StarRating';
+import TipCard from '../../components/TipCard';
 import StopRows from '../../components/trips/StopRows';
 import { COLORS, TYPE, SPACE, Screen, Card, Button, Loading, RouteLine } from '../../components/ui/kit';
 import { distanceText } from '../../utils/routes';
@@ -152,6 +153,15 @@ export default function RiderRideCompletedScreen() {
           <StarRating rideId={rideId} who="rider" existing={ride.driverRating} prompt={`How was ${driverName}?`} />
         </Card>
       ) : null}
+
+      {/* Tip: asked once the trip is done. */}
+      <TipCard
+        ride={ride}
+        rideId={rideId}
+        driverName={driver?.firstName || driverName}
+        onAddCard={() => navigation.navigate('AddPayment', { screen: 'AddPaymentMethod' })}
+        style={{ marginTop: SPACE[3] }}
+      />
 
       <View style={{ marginTop: SPACE[5], gap: SPACE[3] }}>
         <EmailReceiptButton rideId={rideId} />

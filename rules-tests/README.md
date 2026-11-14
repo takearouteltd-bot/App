@@ -30,3 +30,5 @@ Admin's no-show fee and the driver cancel penalty (functions/driverPenalty.js, c
 Fleet portal driver numbers (fleetDriverPhones: private record, app account, then sign-in): `node rules-tests/fleet-phones.mjs`, same set-up as booking-checks, no fakes needed.
 
 Booked jobs allocated to a driver and follow-on jobs (fleet.js syncFleetAllocation, declineFleetAllocation, keepTime, jobs held for the office; followOn.js offers, accept, decline, give back, switch after the trip): `node rules-tests/allocation-followon.mjs`, same set-up as booking-checks (fake Routes on :8999 via ROUTES_API_BASE), no other fakes.
+
+Passenger tips (functions/tips.js tipDriver: card charged once per trip, driver or fleet wallet credited, window, max, no card, declined card, switched off, rules): `node rules-tests/tips.mjs`, same set-up as driver-cancel (STRIPE_API_BASE=http://127.0.0.1:8999 in functions/.env.local, dummy Stripe secrets in functions/.secret.local; fake Stripe on :8999, so not alongside the other fakes). Run it on a fresh emulator.

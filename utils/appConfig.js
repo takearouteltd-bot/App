@@ -93,6 +93,16 @@ export const DEFAULT_APP_CONFIG = {
   payments: {
     cashEnabled: 0,
   },
+  // Passengers tip the driver after a trip (utils/tips.js). Three preset
+  // amounts, the most they may type, and how many hours after the trip.
+  tips: {
+    enabled: 1,
+    preset1: 1,
+    preset2: 2,
+    preset3: 5,
+    maxAmount: 50,
+    windowHours: 24,
+  },
 };
 
 function mergeSection(defaults, incoming) {
@@ -121,6 +131,7 @@ export function normaliseAppConfig(raw) {
     payments: mergeSection(DEFAULT_APP_CONFIG.payments, data.payments),
     femaleDriver: mergeSection(DEFAULT_APP_CONFIG.femaleDriver, data.femaleDriver),
     bidding: mergeSection(DEFAULT_APP_CONFIG.bidding, data.bidding),
+    tips: mergeSection(DEFAULT_APP_CONFIG.tips, data.tips),
   };
 }
 

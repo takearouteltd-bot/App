@@ -619,6 +619,8 @@ service cloud.firestore {
         request.resource.data.riderId == request.auth.uid &&
         request.resource.data.get("pricing", "") != "checked" &&
         !("priceCheck" in request.resource.data) &&
+        /* Tips are recorded by the server once paid (functions/tips.js). */
+        !("tip" in request.resource.data) &&
         /* A booking from the app, nothing else: a phone job or a fleet job
            here would skip the price check and ring a fleet. */
         request.resource.data.status == "searching" &&
