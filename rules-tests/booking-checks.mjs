@@ -8,7 +8,7 @@
 // demo-tar. Run like fleet-e2e.mjs (see README).
 import { initializeApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator, createUserWithEmailAndPassword } from 'firebase/auth';
-import { getFirestore, connectFirestoreEmulator, addDoc, collection, doc, updateDoc } from 'firebase/firestore';
+import { getFirestore, connectFirestoreEmulator, addDoc, collection, doc, setDoc, updateDoc } from 'firebase/firestore';
 import { getFunctions, connectFunctionsEmulator, httpsCallable } from 'firebase/functions';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -264,6 +264,38 @@ await adminSet('driverPayouts/bc1', { driverId: drv, amount: 25, status: 'pendin
 assert.equal((await A.call('rejectDriverPayout', { payoutId: 'bc1', reason: 'Bank details do not match' })).success, true);
 assert.equal(val((await adminGet(`driverWallets/${drv}`)).availableBalance), '25');
 assert.equal(val((await adminGet('driverPayouts/bc1')).status), 'rejected');
+
+step('booking for someone else: their name on the job, booker stamped by the server, their mobile private, tracking page for them');
+await adminSet(`riders/${rider}`, { fullName: 'Alex Booker' });
+const forId = await addDoc(collection(R.db, 'rides'), {
+  riderId: rider, driverId: null, status: 'searching', rideType: 'RouteMini',
+  pickupLocation: REDDITCH, dropoffLocation: { latitude: 52.31, longitude: -1.94, address: 'Town' },
+  passengerFor: { name: 'Sarah', hasPhone: true },
+  fare: { total: FULL, discount: 0, promoCode: null, vatPercent: 20 }, cityId: null, paymentMethod: 'card',
+  waitingPolicy: { freeMinutes: 60, ratePerMinute: 0, maxCharge: 0 },
+}).then((x) => x.id);
+await setDoc(doc(R.db, 'rides', forId, 'contact', 'passenger'), { phone: '+447700900123' });
+r = await settled(forId);
+assert.equal(val(r.status), 'searching');
+assert.equal(val(r.passengerFor.mapValue.fields.name), 'Sarah');
+for (let i = 0; i < 240 && !val((await adminGet(`rides/${forId}`)).bookedByName); i++) await sleep(250);
+assert.equal(val((await adminGet(`rides/${forId}`)).bookedByName), 'Alex');
+// A driver takes it: the person riding gets a tracking link (texted when
+// Twilio is on; here it is off, so only the link is made).
+await adminSet(`rides/${forId}`, { status: 'accepted', driverId: drv }, true);
+let tok = null;
+for (let i = 0; i < 240 && !tok; i++) {
+  tok = val((await adminGet(`rides/${forId}`)).trackToken);
+  if (!tok) await sleep(250);
+}
+assert.ok(tok, 'no tracking link made for the person riding');
+const seen = await R2.call('webTrack', { trackToken: tok });
+assert.equal(seen.status, 'accepted');
+assert.equal(seen.fleetName, 'TakeARoute');
+assert.equal(seen.bookedBy, 'Alex');
+assert.equal(seen.fare, null, 'a card ride paid by the booker shows no price to the person riding');
+assert.equal(seen.canCancel, false);
+await adminSet(`rides/${forId}`, { status: 'completed' }, true);
 
 await del('cities/redditch');
 fake.close();

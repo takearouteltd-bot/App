@@ -26,6 +26,7 @@ import { useAppConfig } from '../../../utils/appConfig';
 import SafetyButton from '../../../components/SafetyButton';
 import PaymentTypeBanner from '../../../components/PaymentTypeBanner';
 import PhoneCustomerCard from '../../../components/PhoneCustomerCard';
+import { riderOnTrip } from '../../../utils/bookingFor';
 import { confirmMaskedCall } from '../../../utils/calling';
 import { useWaitingClock } from '../../../utils/useWaitingClock';
 import {
@@ -535,14 +536,19 @@ export default function DriverRideInProgressScreen() {
               <View style={styles.riderCard}>
                 <View style={styles.riderRow}>
                   <Avatar
-                    uri={riderData.profileImage || riderData.photoURL}
-                    name={riderData.fullName || riderData.name}
+                    uri={riderOnTrip(ride, riderData).photo}
+                    name={riderOnTrip(ride, riderData).name}
                     size={48}
                   />
                   <View style={{ flex: 1 }}>
                     <Text style={TYPE.subhead} numberOfLines={1}>
-                      {riderData.fullName || riderData.name || 'Passenger'}
+                      {riderOnTrip(ride, riderData).name}
                     </Text>
+                    {riderOnTrip(ride, riderData).forSomeone ? (
+                      <Text style={TYPE.small} numberOfLines={1}>
+                        Booked by {riderOnTrip(ride, riderData).bookedBy || 'a TakeARoute passenger'}
+                      </Text>
+                    ) : null}
                     <View style={styles.ratingRow}>
                       {riderRating ? <Ionicons name="star" size={13} color={COLORS.star} /> : null}
                       <Text style={TYPE.small}>{riderRating ? riderRating : 'No rating yet'}</Text>
@@ -572,7 +578,12 @@ export default function DriverRideInProgressScreen() {
                     icon="call-outline"
                     title="Call"
                     style={{ flex: 1 }}
-                    onPress={() => confirmMaskedCall(rideId, 'your passenger')}
+                    onPress={() =>
+                      confirmMaskedCall(
+                        rideId,
+                        ride?.passengerFor?.hasPhone ? ride.passengerFor.name : 'your passenger'
+                      )
+                    }
                   />
                 </View>
               </View>

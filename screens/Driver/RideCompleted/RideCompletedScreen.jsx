@@ -72,7 +72,7 @@ export default function RideCompletedScreen() {
     fare.waitingCharge > 0 ? ['Waiting time', show(fare.waitingCharge)] : null,
   ].filter(Boolean);
 
-  const riderName = rider?.fullName || rider?.firstName || ride.customer?.name || 'the passenger';
+  const riderName = ride.passengerFor?.name || rider?.fullName || rider?.firstName || ride.customer?.name || 'the passenger';
 
   return (
     <SafeAreaView style={styles.safe}>

@@ -24,6 +24,7 @@ import { navigationUrl, remainingStops, stopsOf } from '../../../utils/stops';
 import { fetchRoute as fetchDrivingRoute, durationText, distanceText } from '../../../utils/routes';
 import SafetyButton from '../../../components/SafetyButton';
 import PhoneCustomerCard from '../../../components/PhoneCustomerCard';
+import { riderOnTrip } from '../../../utils/bookingFor';
 import FollowOnCard from '../../../components/FollowOnCard';
 import { confirmMaskedCall } from '../../../utils/calling';
 import {
@@ -539,12 +540,12 @@ export default function DriverRideToDropoffScreen() {
         {riderData ? (
           <View style={styles.riderRow}>
             <Avatar
-              uri={riderData.profileImage || riderData.photoURL}
-              name={riderData.fullName}
+              uri={riderOnTrip(ride, riderData).photo}
+              name={riderOnTrip(ride, riderData).name}
               size={40}
             />
             <Text style={styles.riderName} numberOfLines={1}>
-              {riderData.fullName || 'Passenger'}
+              {riderOnTrip(ride, riderData).name}
             </Text>
             <View style={styles.contact}>
               <Button
@@ -567,7 +568,7 @@ export default function DriverRideToDropoffScreen() {
                 variant="secondary"
                 icon="call-outline"
                 title="Call"
-                onPress={() => confirmMaskedCall(rideId, 'your passenger')}
+                onPress={() => confirmMaskedCall(rideId, ride?.passengerFor?.hasPhone ? ride.passengerFor.name : 'your passenger')}
               />
             </View>
           </View>

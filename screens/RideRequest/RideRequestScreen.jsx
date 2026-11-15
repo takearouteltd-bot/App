@@ -19,6 +19,7 @@ import { getAuth } from 'firebase/auth';
 import { useAppConfig, money } from '../../utils/appConfig';
 import { stopsOf } from '../../utils/stops';
 import StopRows, { StopPin } from '../../components/trips/StopRows';
+import BookedForLine from '../../components/BookedForLine';
 import { acceptCounterOffer, offerIsLive, raiseOffer } from '../../utils/bidding';
 import {
   COLORS, TYPE, SPACE, RADIUS, Screen, Sheet, Card, Button, Banner, Avatar, IconButton,
@@ -558,6 +559,7 @@ export default function RideRequestScreen() {
                 dropoff={dropoffLocation.address}
               />
               <StopRows ride={rideData} />
+              <BookedForLine ride={rideData} live style={{ marginTop: SPACE[3] }} />
             </View>
 
             <View style={styles.fareRow}>

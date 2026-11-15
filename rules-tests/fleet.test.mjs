@@ -534,3 +534,40 @@ test('app errors: anyone writes one of the right shape, as themselves; only admi
   await assertFails(getDocs(collection(as('pass1'), 'appErrors')));
   await assertSucceeds(getDocs(collection(as('adm'), 'appErrors')));
 });
+
+/* Booking for someone else (utils/bookingFor.js): only their name on the ride,
+   their mobile in rides/{id}/contact/passenger for the booker and admins. */
+test('booking for someone else: their name on the ride, shape checked', async () => {
+  const db = as('pass1');
+  const ride = (pf) => booking({ passengerFor: pf });
+  await assertSucceeds(addDoc(collection(db, 'rides'), ride({ name: 'Sarah Ahmed', hasPhone: true })));
+  await assertSucceeds(addDoc(collection(db, 'rides'), ride({ name: 'Mum', hasPhone: false })));
+  await assertFails(addDoc(collection(db, 'rides'), ride({ name: 'Sarah', hasPhone: true, phone: '+447700900123' })));
+  await assertFails(addDoc(collection(db, 'rides'), ride({ name: '  ', hasPhone: false })));
+  await assertFails(addDoc(collection(db, 'rides'), ride({ name: 'x'.repeat(61), hasPhone: false })));
+  await assertFails(addDoc(collection(db, 'rides'), ride({ name: 'Sarah', hasPhone: 'yes' })));
+  await assertFails(addDoc(collection(db, 'rides'), ride('Sarah')));
+});
+test('booking for someone else: their mobile is private to the booker', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'rides/forx'), cAppJob({ riderId: 'pass1', passengerFor: { name: 'Sarah', hasPhone: true } }));
+    await setDoc(doc(db, 'rides/plain'), cAppJob({ riderId: 'pass1' }));
+  });
+  const contact = (uid, id = 'forx', c = 'passenger') => doc(as(uid), `rides/${id}/contact/${c}`);
+  await assertFails(setDoc(contact('r1'), { phone: '+447700900123' }));
+  await assertFails(setDoc(contact('pass1'), { phone: '07700900123' }));
+  await assertFails(setDoc(contact('pass1', 'forx', 'other'), { phone: '+447700900123' }));
+  await assertFails(setDoc(contact('pass1', 'plain'), { phone: '+447700900123' }));
+  await assertFails(setDoc(contact('pass1'), { phone: '+447700900123', name: 'x' }));
+  await assertSucceeds(setDoc(contact('pass1'), { phone: '+447700900123' }));
+  await assertFails(setDoc(contact('pass1'), { phone: '+447700900456' }));
+  await assertSucceeds(getDoc(contact('pass1')));
+  await assertSucceeds(getDoc(contact('adm')));
+  await assertFails(getDoc(contact('cfree')));
+  // Even the driver who takes the job cannot read it.
+  await seed((db) => updateDoc(doc(db, 'rides/forx'), { status: 'accepted', driverId: 'cfree' }));
+  await assertFails(getDoc(contact('cfree')));
+  // Nobody changes who it is for afterwards.
+  await assertFails(updateDoc(doc(as('pass1'), 'rides/forx'), { passengerFor: { name: 'Someone', hasPhone: false } }));
+  await assertFails(updateDoc(doc(as('cfree'), 'rides/forx'), { passengerFor: { name: 'Someone', hasPhone: false } }));
+});
