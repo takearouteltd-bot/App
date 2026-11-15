@@ -7,6 +7,7 @@
 // The server works the same fare out again before a driver can take the job
 // (functions/fleet.js fareFor), and the dashboard shows it on the Fares
 // settings page (OperationsSettings estimateFare). Change all three together.
+// Each stop between pickup and drop-off adds the category's per-stop price.
 
 // rideType -> the settings prefix its prices are saved under in config/app
 // fares. Old Plus and Eco bookings are priced as Normal.
@@ -27,12 +28,15 @@ export function milesFromKm(km) {
   return Math.round(miles * 10) / 10;
 }
 
-// The two prices for a category, from the live settings.
+// The prices for a category, from the live settings. perStop is charged
+// for each stop between pickup and drop-off (0 = stops cost only their
+// extra miles and minutes).
 export function classPrices(fares, rideType) {
   const key = PRICE_KEY[rideType] || 'normal';
   return {
     firstMile: Number(fares[`${key}FirstMile`]) || 0,
     perMile: Number(fares[`${key}PerMile`]) || 0,
+    perStop: Math.max(0, Number(fares[`${key}PerStop`]) || 0),
   };
 }
 
@@ -43,16 +47,21 @@ export function classPrices(fares, rideType) {
  * @param {number} distanceKm route distance
  * @param {number} durationMinutes route time
  * @param {number} surge busy-time multiplier (1 normal)
+ * @param {number} stopCount stops between pickup and drop-off
  * @return {Object} fare fields stored on the ride. baseFare holds the first
  *   mile and distanceFare the miles after it, so receipts written for the old
- *   pricing still add up.
+ *   pricing still add up. The stop charge is added after the busy-time
+ *   multiplier (a stop costs the same at any time) and counts towards the
+ *   minimum fare.
  */
-export function priceTrip(fares, rideType, distanceKm, durationMinutes, surge = 1) {
-  const { firstMile, perMile } = classPrices(fares, rideType);
+export function priceTrip(fares, rideType, distanceKm, durationMinutes, surge = 1, stopCount = 0) {
+  const { firstMile, perMile, perStop } = classPrices(fares, rideType);
   const miles = milesFromKm(distanceKm);
   const distanceFare = Math.max(0, miles - 1) * perMile;
   const timeFare = (Number(durationMinutes) || 0) * (Number(fares.ratePerMinute) || 0);
-  const subtotal = (firstMile + distanceFare + timeFare) * surge;
+  const stops = Math.max(0, Math.floor(Number(stopCount) || 0));
+  const stopCharge = stops * perStop;
+  const subtotal = (firstMile + distanceFare + timeFare) * surge + stopCharge;
   const beforeVat = Math.max(subtotal, Number(fares.minimumFare) || 0);
   return {
     pricing: 'first_mile',
@@ -61,6 +70,9 @@ export function priceTrip(fares, rideType, distanceKm, durationMinutes, surge = 
     baseFare: firstMile,
     distanceFare,
     timeFare,
+    stops,
+    perStop,
+    stopCharge,
     surgeMultiplier: surge,
     rideMultiplier: 1,
     distanceInMiles: miles,

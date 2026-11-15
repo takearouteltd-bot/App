@@ -65,6 +65,7 @@ export default function RideCompletedScreen() {
     fare.distanceFare !== undefined ? [fare.pricing === 'first_mile' ? 'Miles after the first' : 'Distance', show(fare.distanceFare)] : null,
     fare.timeFare !== undefined && !(fare.pricing === 'first_mile' && !(fare.timeFare > 0)) ? ['Time', show(fare.timeFare)] : null,
     fare.surgeMultiplier > 1 ? ['Busy-time pricing', `×${fare.surgeMultiplier}`] : null,
+    fare.stopCharge > 0 ? [`Stops (${Number(fare.stops) || 0})`, show(fare.stopCharge)] : null,
     fare.discountAmount > 0 ? ['Promo discount', `-${show(fare.discountAmount)}`] : null,
     fare.vat > 0 ? [`VAT (${fare.vatPercent}%)`, show(fare.vat)] : null,
     fare.fullTotal > fare.total ? ['Full journey', show(fare.fullTotal)] : null,

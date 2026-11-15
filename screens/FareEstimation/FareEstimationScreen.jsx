@@ -181,7 +181,7 @@ export default function FareEstimationScreen({ route }) {
       const surge = surgeMultiplier(appConfig);
       const vatRate = vatPercent / 100;
 
-      const priced = priceTrip(appConfig.fares, rideType, distance, duration, surge);
+      const priced = priceTrip(appConfig.fares, rideType, distance, duration, surge, stops.length);
       const { baseFare, distanceFare, timeFare, distanceInMiles } = priced;
       const fareBeforeVAT = priced.beforeVat;
 
@@ -200,6 +200,11 @@ export default function FareEstimationScreen({ route }) {
         baseFare: Number(baseFare.toFixed(2)),
         distanceFare: Number(distanceFare.toFixed(2)),
         timeFare: Number(timeFare.toFixed(2)),
+        // Always written (0 with no stops), which tells the server this
+        // build charges for stops (functions/index.js checkAppFare).
+        stops: priced.stops,
+        perStop: priced.perStop,
+        stopCharge: Number(priced.stopCharge.toFixed(2)),
         surgeMultiplier: surge,
         rideMultiplier: 1,
         vat: Number(vatAmount.toFixed(2)),
@@ -208,7 +213,7 @@ export default function FareEstimationScreen({ route }) {
         subtotal: Number(discountedFare.toFixed(2)),
       };
     },
-    [distance, duration, promoApplied, discount, appConfig]
+    [distance, duration, promoApplied, discount, appConfig, stops.length]
   );
 
   /* ================= PROMO =================
@@ -765,6 +770,9 @@ export default function FareEstimationScreen({ route }) {
               ) : null}
               {fare.surgeMultiplier > 1 ? (
                 <Row label="Busy-time pricing" value={`× ${fare.surgeMultiplier}`} tone={COLORS.amber} />
+              ) : null}
+              {fare.stopCharge > 0 ? (
+                <Row label={`Stops (${fare.stops}) at ${money(fare.perStop)}`} value={money(fare.stopCharge)} />
               ) : null}
               {minimumApplied ? (
                 <Row label="Minimum fare" value={money(appConfig.fares.minimumFare)} />

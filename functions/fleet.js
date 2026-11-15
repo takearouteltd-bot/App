@@ -121,6 +121,10 @@ const FARE_DEFAULTS = {
   executiveFirstMile: 9.0, executivePerMile: 2.0,
   // As Normal: wheelchair users must not pay more (Equality Act 2010 s.165).
   wheelchairFirstMile: 4.5, wheelchairPerMile: 1.0,
+  // Charged for each stop between pickup and drop-off. 0 = a stop costs
+  // only its extra miles and minutes.
+  normalPerStop: 0, priorityPerStop: 0, urgentPerStop: 0, xlPerStop: 0,
+  executivePerStop: 0, wheelchairPerStop: 0,
   ratePerMinute: 0, minimumFare: 0, vatPercent: 20,
 };
 
@@ -285,6 +289,9 @@ module.exports = (deps) => {
       distanceKm: (Number(route.distanceMeters) || 0) / 1000,
       durationMinutes:
         (Number(String(route.duration || "0").replace("s", "")) || 0) / 60,
+      // How many stops the route goes through: each is charged
+      // (fareFor, the category's per-stop price).
+      stops: (stops || []).length,
     };
   }
 
@@ -293,9 +300,11 @@ module.exports = (deps) => {
    * (App/utils/fares.js priceTrip), without a promo. First-mile pricing:
    * the category's first-mile price, then its per-mile price for every
    * tenth of a mile after the first. baseFare holds the first mile and
-   * distanceFare the rest, so receipts keep adding up.
+   * distanceFare the rest, so receipts keep adding up. Each stop on the
+   * route adds the category's per-stop price, after the busy-time
+   * multiplier and before the minimum fare (as priceTrip).
    * @param {Object} raw config/app document data.
-   * @param {Object} route {distanceKm, durationMinutes}
+   * @param {Object} route {distanceKm, durationMinutes, stops}
    * @param {string} rideType Vehicle class id.
    * @return {Object} The ride's fare object.
    */
@@ -314,7 +323,11 @@ module.exports = (deps) => {
     const miles = Math.round(route.distanceKm * 0.621371 * 10) / 10;
     const distanceFare = Math.max(0, miles - 1) * perMile;
     const timeFare = route.durationMinutes * f.ratePerMinute;
-    const subtotal = (firstMile + distanceFare + timeFare) * surge;
+    const perStop = f[key + "PerStop"] || 0;
+    const stops = Math.max(0, Math.floor(Number(route.stops) || 0));
+    const stopCharge = stops * perStop;
+    const subtotal = (firstMile + distanceFare + timeFare) * surge +
+      stopCharge;
     const beforeVat = Math.max(subtotal, f.minimumFare);
     const vat = beforeVat * f.vatPercent / 100;
     const r2 = (n) => Number(n.toFixed(2));
@@ -329,6 +342,9 @@ module.exports = (deps) => {
       baseFare: r2(firstMile),
       distanceFare: r2(distanceFare),
       timeFare: r2(timeFare),
+      stops,
+      perStop: r2(perStop),
+      stopCharge: r2(stopCharge),
       surgeMultiplier: surge,
       rideMultiplier: 1,
       vat: r2(vat),
@@ -374,8 +390,8 @@ module.exports = (deps) => {
    * straight-line distance is used, which can only under-price, so it never
    * refuses an honest booking.
    * @param {Object} ride Ride data.
-   * @return {Promise<Object>} {fare, raw, distanceKm, durationMinutes,
-   *     source}
+   * @return {Promise<Object>} {fare, fareNoStopCharge, raw, distanceKm,
+   *     durationMinutes, source}
    */
   async function priceAppRide(ride) {
     const stops = Array.isArray(ride.stops) ? ride.stops : [];
@@ -391,10 +407,14 @@ module.exports = (deps) => {
         const leg = distanceKm(points[i - 1], points[i]);
         km += Number.isFinite(leg) ? leg : 0;
       }
-      route = {distanceKm: km, durationMinutes: 0};
+      route = {distanceKm: km, durationMinutes: 0, stops: stops.length};
       source = "straight_line";
     }
     return {fare: fareFor(raw, route, ride.rideType), raw,
+      // The same trip with no stop charge: what app builds from before
+      // per-stop prices worked out (checkAppFare).
+      fareNoStopCharge: fareFor(raw, Object.assign({}, route, {stops: 0}),
+          ride.rideType),
       distanceKm: route.distanceKm, durationMinutes: route.durationMinutes,
       source};
   }

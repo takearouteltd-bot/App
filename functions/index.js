@@ -3888,8 +3888,13 @@ async function checkAppFare(rideId, ride) {
   }
 
   // The app's sums: the fare before VAT, less any promo, plus VAT. The promo
-  // itself is checked next (checkNewRide).
-  const fare = priced.fare;
+  // itself is checked next (checkNewRide). App builds from before per-stop
+  // prices write no fare.stopCharge and leave stops out of the
+  // price, so they are checked against the fare without it rather than
+  // having every booking with a stop refused until the passenger updates.
+  const chargesStops = typeof (ride.fare && ride.fare.stopCharge) ===
+    "number";
+  const fare = chargesStops ? priced.fare : priced.fareNoStopCharge;
   const discount = Math.min(1, Math.max(0,
       Number(ride.fare && ride.fare.discount) || 0));
   const expected = fare.subtotal * (1 - discount) * (1 + fare.vatPercent / 100);
@@ -4613,8 +4618,9 @@ function paidLine(ride) {
 
 /**
  * The fare lines of a receipt, so that they add up to what was charged.
- * Base, distance and time are only shown when they really make up the fare;
- * a minimum fare, an agreed price or a trip ended early gets one line.
+ * Base, distance, stops and time are only shown when they really make up
+ * the fare; a minimum fare, an agreed price or a trip ended early gets one
+ * line.
  * @param {Object} fare The ride's fare.
  * @param {Function} add Adds a line (label, value).
  * @param {string} currency Currency code.
@@ -4629,14 +4635,19 @@ function addFareLines(fare, add, currency) {
   const base = r2(Number(fare.baseFare) * scale);
   const distance = r2(Number(fare.distanceFare) * scale);
   const time = r2(Number(fare.timeFare) * scale);
+  // Stops are charged after the busy-time multiplier (fareFor).
+  const stops = r2(Number(fare.stopCharge) || 0);
   const adds = fare.endedEarlyPercent === undefined &&
-    Math.abs(base + distance + time - net) <= 0.03;
+    Math.abs(base + distance + time + stops - net) <= 0.03;
   if (adds) {
     add(fare.pricing === "first_mile" ? "First mile" : "Base fare",
         emailMoney(base, currency));
     add("Distance", emailMoney(distance, currency));
+    if (stops > 0) {
+      add(`Stops (${Number(fare.stops) || 0})`, emailMoney(stops, currency));
+    }
     // Any rounding goes on the last line.
-    add("Time", emailMoney(r2(net - base - distance), currency));
+    add("Time", emailMoney(r2(net - base - distance - stops), currency));
   } else if (net > 0) {
     add(fare.endedEarlyPercent !== undefined ?
       "Fare for the part travelled" : "Trip fare",

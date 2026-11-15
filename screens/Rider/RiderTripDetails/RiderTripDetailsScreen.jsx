@@ -178,9 +178,11 @@ export default function RiderTripDetailsScreen() {
   const surge = Number(fare.surgeMultiplier) || 1;
   const promo = Number(fare.discountAmount) || 0;
   const beforePromo = (Number(fare.subtotal) || 0) + promo;
+  // Stops are added after the multipliers (utils/fares.js priceTrip).
+  const stopCharge = Number(fare.stopCharge) || 0;
   const partsTotal =
     ((Number(fare.baseFare) || 0) + (Number(fare.distanceFare) || 0) + (Number(fare.timeFare) || 0)) *
-    rideMultiplier * surge;
+    rideMultiplier * surge + stopCharge;
   // The parts are rounded to pennies, so allow for that before calling it.
   const minimumApplied = beforePromo - partsTotal > Math.max(0.02, 0.015 * rideMultiplier * surge);
   const carType = classLabel(trip.rideType);
@@ -200,6 +202,7 @@ export default function RiderTripDetailsScreen() {
               firstMile && !(Number(fare.timeFare) > 0) ? null : ['Time Fare', rowMoney(fare.timeFare)],
               rideMultiplier !== 1 ? [`${carType} pricing`, `× ${rideMultiplier}`] : null,
               surge > 1 ? ['Busy-time pricing', `× ${surge}`] : null,
+              stopCharge > 0 ? [`Stops (${Number(fare.stops) || 0})`, rowMoney(stopCharge)] : null,
               minimumApplied ? ['Minimum fare', rowMoney(beforePromo)] : null,
               promo > 0 ? [`Promo${fare.promoCode ? ` ${fare.promoCode}` : ''}`, `-${rowMoney(promo)}`] : null,
             ]),

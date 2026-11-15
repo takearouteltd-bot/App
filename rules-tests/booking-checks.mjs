@@ -2,7 +2,8 @@
 // functions/index.js): working cities, the price against Google's route
 // (a fake on :8999: put ROUTES_API_BASE=http://127.0.0.1:8999 in
 // functions/.env.local for the run), payment method and bidding, and promo
-// codes (checkPromoCode, uses left, once per passenger). Also: a driver cannot change their own car type
+// codes (checkPromoCode, uses left, once per passenger), and the per-stop
+// price. Also: a driver cannot change their own car type
 // after approval, and rejecting a payout still works with the new push.
 // Against the emulators (auth 9099, firestore 8080, functions 5001), project
 // demo-tar. Run like fleet-e2e.mjs (see README).
@@ -231,6 +232,23 @@ id = await addDoc(collection(R.db, 'rides'), { riderId: rider, status: 'searchin
 r = await settled(id);
 assert.equal(val(r.pricing), 'checked'); assert.equal(Number(val(r.priceCheck.mapValue.fields.expectedTotal)), 5.4);
 await adminSet(`rides/${id}`, { status: 'completed' }, true);
+
+step('stops: each adds the category\'s per-stop price; a new build that leaves it out is refused, an old build (no stopCharge) is checked without it');
+await adminSet('config/app', { fares: { normalPerStop: 1 } }, true);
+const TWO_STOPS = [{ latitude: 52.305, longitude: -1.945, address: 'Stop 1' }, { latitude: 52.308, longitude: -1.94, address: 'Stop 2' }];
+const withStops = (fare) => addDoc(collection(R.db, 'rides'), { riderId: rider, status: 'searching', rideType: 'RouteMini', pickupLocation: REDDITCH, dropoffLocation: { latitude: 52.31, longitude: -1.94, address: 'Town' }, stops: TWO_STOPS, fare, paymentMethod: 'card' }).then((x) => x.id);
+// 1 mile (fake Routes) 4.50 + 2 stops x 1.00 = 6.50, 7.80 with VAT.
+id = await withStops({ total: 7.8, stopCharge: 2, stops: 2, vatPercent: 20 });
+r = await settled(id);
+assert.equal(val(r.pricing), 'checked'); assert.equal(Number(val(r.priceCheck.mapValue.fields.expectedTotal)), 7.8);
+await adminSet(`rides/${id}`, { status: 'completed' }, true);
+id = await withStops({ total: FULL, stopCharge: 0, stops: 2, vatPercent: 20 });
+assert.equal(val((await settled(id)).cancelReason), 'price_changed');
+id = await withStops({ total: FULL, vatPercent: 20 });
+r = await settled(id);
+assert.equal(val(r.pricing), 'checked'); assert.equal(Number(val(r.priceCheck.mapValue.fields.expectedTotal)), FULL);
+await adminSet(`rides/${id}`, { status: 'completed' }, true);
+await adminSet('config/app', { fares: { normalPerStop: 0 } }, true);
 
 step('price: an unknown car type is refused; Google down falls back to straight-line and lets an honest booking through');
 id = await book(R, rider, REDDITCH, {});

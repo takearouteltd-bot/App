@@ -83,6 +83,7 @@ export default function DriverTripDetailsScreen() {
     [trip.fare?.pricing === 'first_mile' ? 'First Mile' : 'Base Fare', trip.fare?.baseFare],
     [trip.fare?.pricing === 'first_mile' ? 'Miles After the First' : 'Distance Fare', trip.fare?.distanceFare],
     trip.fare?.pricing === 'first_mile' && !(trip.fare?.timeFare > 0) ? null : ['Time Fare', trip.fare?.timeFare],
+    trip.fare?.stopCharge > 0 ? [`Stops (${Number(trip.fare.stops) || 0})`, trip.fare.stopCharge] : null,
     trip.fare?.vat > 0 ? ['VAT', trip.fare?.vat] : null,
     trip.fare?.fullTotal > trip.fare?.total ? ['Full journey', trip.fare.fullTotal] : null,
     trip.fare?.fullTotal > trip.fare?.total ? ['Ended early, fare so far', trip.fare.total] : null,

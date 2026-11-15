@@ -1,7 +1,7 @@
 Firestore rules tests (emulator). From App/: `cd rules-tests && npm install && cd .. && npm --prefix rules-tests test`.
 Needs Java 21 on PATH for the emulator (`/opt/homebrew/opt/openjdk@21/bin`).
 
-End-to-end fleet flow (functions + rules, real Google Routes/Places calls):
+End-to-end fleet flow (functions + rules, real Google Routes/Places calls; includes the per-stop price on a phone quote):
 `firebase emulators:exec --config <firebase.json plus "auth": {"port": 9099}> --only auth,firestore,functions --project demo-tar "node rules-tests/fleet-e2e.mjs"`
 (set `no_proxy=127.0.0.1,localhost` if a proxy is configured). The wallet credit in index.js
 cannot run in the emulator (its admin.firestore.FieldValue is missing there), so the test seeds it.
@@ -19,7 +19,7 @@ Deleting an account (deleteMyAccount): same set-up, `node rules-tests/account-de
 
 Fleet office phone (fleetPhone.js): `node rules-tests/fleet-phone.mjs`, same set-up plus a fake Twilio it starts on :8999. For this run only, add TWILIO_SID=AC + 32 zeros, TWILIO_TOKEN=testtoken, TWILIO_NUMBER=+441000000000 to functions/.secret.local and put TWILIO_API_BASE and TWILIO_NUMBERS_BASE=http://127.0.0.1:8999 in functions/.env.local; delete both after.
 
-New app bookings checked by the server (cities, price against the route, payment method, bidding, promo codes): `node rules-tests/booking-checks.mjs`, same set-up as fleet-phone with ROUTES_API_BASE=http://127.0.0.1:8999 in functions/.env.local (it starts its own fake Routes on :8999, so run it before fleet-phone, not alongside).
+New app bookings checked by the server (cities, price against the route, per-stop price incl. old builds without it, payment method, bidding, promo codes): `node rules-tests/booking-checks.mjs`, same set-up as fleet-phone with ROUTES_API_BASE=http://127.0.0.1:8999 in functions/.env.local (it starts its own fake Routes on :8999, so run it before fleet-phone, not alongside).
 
 Rules unit tests can also be run from App/ with `firebase emulators:exec --only firestore --project demo-tar 'node --test rules-tests/*.test.mjs'`.
 

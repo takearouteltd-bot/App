@@ -76,6 +76,16 @@ const quote = await O.call('quoteFleetBooking', { pickup: T5, dropoff: PAD });
 console.log('   ', quote.distanceKm, 'km', quote.durationMinutes, 'min', quote.fares);
 assert.ok(quote.distanceKm > 15 && quote.fares.RouteExecutive > quote.fares.RouteMini);
 
+step('a stop on a phone booking adds Normal\'s per-stop price (plus VAT) on top of its miles');
+const FARES = { normalFirstMile: 4.5, normalPerMile: 1, executiveFirstMile: 9, executivePerMile: 2, ratePerMinute: 0.25, minimumFare: 6, vatPercent: 20 };
+const VIA = { latitude: 51.4927, longitude: -0.2339, address: 'Hammersmith' };
+const viaFree = await O.call('quoteFleetBooking', { pickup: T5, dropoff: PAD, stops: [VIA] });
+await adminSet('config/app', { fares: { ...FARES, normalPerStop: 2.5 } }, true);
+const viaPaid = await O.call('quoteFleetBooking', { pickup: T5, dropoff: PAD, stops: [VIA] });
+assert.equal(Math.round((viaPaid.fares.RouteMini - viaFree.fares.RouteMini) * 100) / 100, 3, 'one stop at 2.50 + 20% VAT');
+assert.equal(viaPaid.fares.RouteExecutive, viaFree.fares.RouteExecutive, 'Executive has no stop price set');
+await adminSet('config/app', { fares: FARES }, true);
+
 step('address search');
 const places = await O.call('fleetPlaceSearch', { input: 'Paddington station' });
 assert.ok(places.results.length > 0, 'no places');

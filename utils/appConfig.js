@@ -12,8 +12,8 @@ import { db } from "../config/firebase";
 export const DEFAULT_APP_CONFIG = {
   currency: "GBP",
   // First-mile pricing per job category (utils/fares.js): the price of the
-  // first mile, then the price of each mile after it. Time and the minimum
-  // fare are optional extras, off at 0.
+  // first mile, then the price of each mile after it. Time, stops and the
+  // minimum fare are optional extras, off at 0.
   fares: {
     normalFirstMile: 4.5,
     normalPerMile: 1.0,
@@ -29,6 +29,14 @@ export const DEFAULT_APP_CONFIG = {
     // the accessible car (Equality Act 2010 s.165, designated vehicles).
     wheelchairFirstMile: 4.5,
     wheelchairPerMile: 1.0,
+    // Added for each stop between pickup and drop-off, per category. 0 =
+    // a stop costs only its extra miles and minutes.
+    normalPerStop: 0,
+    priorityPerStop: 0,
+    urgentPerStop: 0,
+    xlPerStop: 0,
+    executivePerStop: 0,
+    wheelchairPerStop: 0,
     ratePerMinute: 0,
     minimumFare: 0,
     vatPercent: 20,
