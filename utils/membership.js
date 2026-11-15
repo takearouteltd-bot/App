@@ -101,6 +101,19 @@ export function shortDate(t) {
   }
 }
 
+/** "14 Nov 2026, 16:27" in UK time, for payment records. */
+export function dateTime(t) {
+  if (!t) return '—';
+  try {
+    const d = t.toDate ? t.toDate() : new Date(t);
+    return d.toLocaleString('en-GB', {
+      timeZone: 'Europe/London', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+  } catch {
+    return '—';
+  }
+}
+
 /** One line for the driver's profile: plan, renews/ends date, auto-renew. */
 export function membershipSummary(sub, fleetName) {
   if (!sub?.status) return 'Not set up';

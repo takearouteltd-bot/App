@@ -6,18 +6,7 @@ import { doc, collection, onSnapshot } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { useNavigation } from '@react-navigation/native';
 import { money, useAppConfig } from '../../../utils/appConfig';
-import {
-  buyMembership,
-  perPeriod,
-  periodWord,
-  planName,
-  planPrice,
-  plansOffered,
-  shortDate,
-  tierOf,
-  updateMembership,
-  useMembershipPurchases,
-} from '../../../utils/membership';
+import { buyMembership, perPeriod, periodWord, planName, planPrice, plansOffered, shortDate, tierOf, updateMembership, useMembershipPurchases, dateTime } from '../../../utils/membership';
 import { ChoiceCard } from '../../../components/onboarding/kit';
 import {
   COLORS,
@@ -261,7 +250,11 @@ export default function SubscriptionScreen() {
           icon: p.method === 'card' ? 'card-outline' : 'wallet-outline',
           iconColor: COLORS.midnight,
           title: `${p.plan === 'weekly' ? 'Weekly' : p.plan === 'monthly' ? 'Monthly' : 'Membership'} · ${money(p.amount)}`,
-          detail: `${shortDate(p.at)} · ${p.method === 'card' ? 'Card' : 'Wallet'}${p.periodEnd ? ` · until ${shortDate(p.periodEnd)}` : ''}`,
+          // Paid when and how, then the dates it covers (older payments
+          // were recorded without them).
+          detail:
+            `Paid ${dateTime(p.at)} · ${p.method === 'card' ? 'Card' : 'Wallet'}` +
+            (p.periodStart && p.periodEnd ? `\nCovers ${dateTime(p.periodStart)} to ${dateTime(p.periodEnd)}` : ''),
         }))}
       />
     </Section>
