@@ -765,19 +765,27 @@ module.exports = (deps) => {
     const doc = found && !found.empty ? found.docs[0] : null;
     if (!doc) throw new HttpsError("not-found", "Booking not found.");
     const r = doc.data();
-    const fleetSnap = await db.collection("fleets").doc(r.fleetId).get();
-    const fleet = fleetSnap.exists ? fleetSnap.data() : {};
+    // An app ride booked for someone else (passengerFor) has no fleet: the
+    // person riding gets the same page, without a fleet name or phone, and
+    // without the price (the booker pays, unless it is a cash ride).
+    const appRide = !r.fleetId;
+    const fleetSnap = appRide ? null :
+      await db.collection("fleets").doc(r.fleetId).get();
+    const fleet = fleetSnap && fleetSnap.exists ? fleetSnap.data() : {};
     const result = {
-      status: r.status,
-      fleetName: fleet.name || r.fleetName || "",
-      phone: fleet.officePhone || fleet.phone || "",
+      status: appRide && r.status === "searching" ? "dispatching" : r.status,
+      fleetName: appRide ? "TakeARoute" : fleet.name || r.fleetName || "",
+      phone: appRide ? "" : fleet.officePhone || fleet.phone || "",
+      bookedBy: appRide ? (r.bookedByName || "") : "",
+      cash: appRide ? r.paymentMethod === "cash" : null,
       pickup: booking.point(r.pickupLocation),
       dropoff: booking.point(r.dropoffLocation),
       pickupAt: msOf(r.pickupAt),
-      fare: r.fare && (r.fare.finalTotal || r.fare.total),
+      fare: appRide && r.paymentMethod !== "cash" ? null :
+        r.fare && (r.fare.finalTotal || r.fare.total),
       paidOnline: r.collectBy === "online",
       paymentStatus: r.webPayment ? r.webPayment.status : null,
-      canCancel: ["payment_pending", "scheduled", "dispatching"]
+      canCancel: !appRide && ["payment_pending", "scheduled", "dispatching"]
           .includes(r.status) && !r.driverId,
       driver: null,
     };
@@ -802,6 +810,58 @@ module.exports = (deps) => {
     }
     return result;
   });
+
+  /* An app ride booked for someone else (passengerFor, their mobile in
+     rides/{id}/contact/passenger): text them when a driver is on the way,
+     with a tracking link, and when the driver is outside. */
+  out.someoneElseUpdates = functions.runWith({secrets: TWILIO_SECRETS})
+      .firestore.document("rides/{rideId}")
+      .onUpdate(async (change, context) => {
+        const before = change.before.data();
+        const after = change.after.data();
+        const pf = after.passengerFor;
+        if (!pf || pf.hasPhone !== true || after.fleetId ||
+            before.status === after.status ||
+            !["accepted", "arrived"].includes(after.status) ||
+            !after.driverId) {
+          return null;
+        }
+        const c = await change.after.ref.collection("contact")
+            .doc("passenger").get().catch(() => null);
+        const phone = c && c.exists ? toE164(c.data().phone) : null;
+        if (!isUkMobile(phone)) return null;
+
+        let trackToken = after.trackToken;
+        if (!trackToken) {
+          trackToken = token(16);
+          await change.after.ref.update({trackToken}).catch(() => null);
+        }
+        const link = `${BASE}/t/${trackToken}`;
+        const app = {name: "TakeARoute"};
+        const by = after.bookedByName ?
+          ` (booked by ${after.bookedByName})` : "";
+        let body;
+        if (after.status === "accepted") {
+          const dSnap = await db.collection("drivers").doc(after.driverId)
+              .get();
+          const dv = dSnap.exists ? dSnap.data() : {};
+          const who = dv.firstName ||
+            String(dv.fullName || "").split(" ")[0] || "Your driver";
+          const car = [dv.vehicleColor, dv.makeModel,
+            dv.registrationNumber ?
+              String(dv.registrationNumber).toUpperCase() : null]
+              .filter(Boolean).join(" ");
+          body = `TakeARoute: hi ${pf.name}, ${who} is on the way to pick ` +
+            `you up${car ? ` in a ${car}` : ""}${by}. Track: ${link}`;
+        } else {
+          body = `TakeARoute: ${pf.name}, your driver is outside ` +
+            `${short(after.pickupLocation)}. Track: ${link}`;
+        }
+        const sent = await sendText(app, phone, body).catch(() => false);
+        console.log("Someone-else text", context.params.rideId, after.status,
+            sent ? "sent" : "not sent");
+        return null;
+      });
 
   /* Texts the customer as the job moves on, takes the card payment when it
      ends and releases the hold if it is cancelled. */

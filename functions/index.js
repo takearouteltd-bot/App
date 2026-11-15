@@ -3946,6 +3946,15 @@ async function checkNewRide(rideId, ride) {
           "Your passenger account has been suspended. Please contact support.");
       return false;
     }
+    // Booked for someone else: the driver and the person riding see who
+    // booked it, by first name, from the account rather than the app.
+    if (ride.passengerFor) {
+      const r = riderSnap.exists ? riderSnap.data() : {};
+      const first = String(r.firstName || r.fullName || r.name || "")
+          .trim().split(/\s+/)[0].slice(0, 30);
+      ride.bookedByName = first || null;
+      await rideRef.update({bookedByName: ride.bookedByName});
+    }
   }
 
   const citySnap = await db.collection("cities")
@@ -4767,6 +4776,11 @@ function buildReceipt(ride, rideId, extra) {
       <div style="font-size:15px;color:#1F2937;margin-top:6px;">
         ${escapeHtml(extra.driverName || "TakeARoute driver")}
         ${extra.vehicle ? ", " + escapeHtml(extra.vehicle) : ""}</div>
+      ${ride.passengerFor && ride.passengerFor.name ? `
+      <div style="color:#6B7280;font-size:12px;font-weight:700;
+        text-transform:uppercase;margin-top:12px;">Booked for</div>
+      <div style="font-size:15px;color:#1F2937;margin-top:6px;">
+        ${escapeHtml(ride.passengerFor.name)}</div>` : ""}
     </div>
 
     <div style="color:#6B7280;font-size:12px;line-height:18px;
@@ -4786,6 +4800,8 @@ function buildReceipt(ride, rideId, extra) {
     ...lines.map((l) => `${l.label}: ${l.value}`),
     `Total paid: ${emailMoney(paid, currency)}`,
     `Driver: ${extra.driverName || "TakeARoute driver"}`,
+    ...(ride.passengerFor && ride.passengerFor.name ?
+      [`Booked for: ${ride.passengerFor.name}`] : []),
     `Trip reference ${String(rideId).slice(0, 8).toUpperCase()}`,
   ].join("\n");
 
@@ -5165,9 +5181,21 @@ exports.startMaskedCall = functions
       const callerNumber = isDriver ?
         await phoneFor("drivers", ride.driverId) :
         await phoneFor("riders", ride.riderId);
+      // Booked for someone else (passengerFor): the driver is put through
+      // to the person riding, if the booker gave their mobile, otherwise
+      // to the booker. The booker still calls the driver as usual.
+      const riderNumber = async () => {
+        if (ride.passengerFor && ride.passengerFor.hasPhone === true) {
+          const c = await db.collection("rides").doc(rideId)
+              .collection("contact").doc("passenger").get().catch(() => null);
+          const phone = c && c.exists ? toE164(c.data().phone) : null;
+          if (phone) return phone;
+        }
+        return phoneFor("riders", ride.riderId);
+      };
       const otherNumber = phoneBooking ? toE164(ride.customer.phone) :
         isDriver ?
-        await phoneFor("riders", ride.riderId) :
+        await riderNumber() :
         await phoneFor("drivers", ride.driverId);
 
       if (!callerNumber) {

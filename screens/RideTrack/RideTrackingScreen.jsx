@@ -11,6 +11,7 @@ import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import CarMarker from '../../components/CarMarker';
 import { remainingStops, stopsOf } from '../../utils/stops';
 import StopRows, { StopPin } from '../../components/trips/StopRows';
+import BookedForLine from '../../components/BookedForLine';
 import RouteDirections from '../../components/RouteDirections';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -477,6 +478,7 @@ export default function RideTrackingScreen() {
         <View style={styles.journey}>
           <RouteLine compact pickup={pickupLocation.address} dropoff={dropoffLocation.address} />
           <StopRows ride={rideData} />
+          <BookedForLine ride={rideData} live style={{ marginTop: SPACE[3] }} />
         </View>
 
         {/* The trip screen opens by itself when the driver starts the ride. */}

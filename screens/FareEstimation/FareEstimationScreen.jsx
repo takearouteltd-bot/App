@@ -36,6 +36,7 @@ import { useCities, useWholeUk, cityFor } from '../../utils/cities';
 import { inUk } from '../../utils/ukArea';
 import { biddingEnabled, minOffer, fareAtPrice } from '../../utils/bidding';
 import { MAX_STOPS } from '../../utils/stops';
+import { passengerForField, prettyPhone, savePassengerContact } from '../../utils/bookingFor';
 import { priceTrip } from '../../utils/fares';
 import { RIDE_CLASSES } from '../../constants/vehicleClasses';
 import {
@@ -87,6 +88,21 @@ export default function FareEstimationScreen({ route }) {
     navigation.setParams({ addStop: undefined });
   }, [route.params?.addStop, navigation]);
   const removeStop = (index) => setStops((list) => list.filter((_, i) => i !== index));
+  // Booked for someone else (BookForSomeoneScreen): { name, phone } or null.
+  const [passengerFor, setPassengerFor] = useState(route.params?.passengerFor || null);
+  useEffect(() => {
+    if (route.params?.passengerFor !== undefined) setPassengerFor(route.params.passengerFor || null);
+  }, [route.params?.passengerFor]);
+  const bookForSomeone = () =>
+    navigation.navigate('BookForSomeone', {
+      // Their pickup is chosen afresh (not this phone's location) unless it
+      // was already theirs.
+      prefill: { ...(passengerFor || {}), origin: passengerFor ? origin : null, destination, stops },
+    });
+  const bookForMe = () => {
+    setPassengerFor(null);
+    navigation.setParams({ passengerFor: null });
+  };
   // push, not navigate: navigate went back to the "Where to?" search already
   // below this screen, which closed it, and the stop then opened a new fare
   // screen with no pickup or destination: "takearoute keeps stopping"
@@ -111,10 +127,12 @@ export default function FareEstimationScreen({ route }) {
   const [routeFailed, setRouteFailed] = useState(false);
   const [routeAttempt, setRouteAttempt] = useState(0);
   // A new stop means a new route: the old price must not be bookable meanwhile.
+  // A new pickup or destination (e.g. after "Someone else") is a new route too.
+  const journeyKey = `${origin?.latitude},${origin?.longitude}>${destination?.latitude},${destination?.longitude}`;
   useEffect(() => {
     setRouteCalculated(false);
     setRouteFailed(false);
-  }, [stops]);
+  }, [stops, journeyKey]);
   useEffect(() => {
     if (routeCalculated || routeFailed) return undefined;
     const timer = setTimeout(() => setRouteFailed(true), 20000);
@@ -358,6 +376,10 @@ export default function FareEstimationScreen({ route }) {
         })),
         stopsCompleted: 0,
 
+        // Booked for someone else: their name only (drivers can read a ride
+        // while it searches); their mobile is saved privately just after.
+        ...(passengerForField(passengerFor) ? { passengerFor: passengerForField(passengerFor) } : {}),
+
         dropoffLocation: {
           latitude: destination.latitude,
           longitude: destination.longitude,
@@ -407,6 +429,12 @@ export default function FareEstimationScreen({ route }) {
       };
 
       const rideRef = await addDoc(collection(db, 'rides'), rideData);
+      if (rideData.passengerFor?.hasPhone) {
+        // Not fatal: without it the driver's calls go to the booker.
+        await savePassengerContact(rideRef.id, passengerFor).catch((error) =>
+          console.log('Could not save their mobile:', error)
+        );
+      }
 
       await updateDoc(doc(db, 'riders', currentUser.uid), { currentRideId: rideRef.id });
 
@@ -487,7 +515,7 @@ export default function FareEstimationScreen({ route }) {
 
           {isCoord(origin) && isCoord(destination) ? (
           <RouteDirections
-            key={routeAttempt}
+            key={`${routeAttempt}-${journeyKey}`}
             origin={origin}
             destination={destination}
             waypoints={stops.map((s) => ({ latitude: s.latitude, longitude: s.longitude }))}
@@ -550,6 +578,29 @@ export default function FareEstimationScreen({ route }) {
               </TouchableOpacity>
             </View>
           ))}
+          {/* Who's riding: the booker, or someone they book for. */}
+          <View style={styles.whoRow}>
+            <Segmented
+              style={{ flex: 1 }}
+              options={[
+                { value: 'me', label: 'Me' },
+                { value: 'other', label: 'Someone else' },
+              ]}
+              value={passengerFor ? 'other' : 'me'}
+              onChange={(v) => (v === 'me' ? bookForMe() : bookForSomeone())}
+            />
+          </View>
+          {passengerFor ? (
+            <TouchableOpacity style={styles.forRow} onPress={bookForSomeone} accessibilityRole="button">
+              <Ionicons name="person-outline" size={16} color={COLORS.midnight} />
+              <Text style={styles.forText} numberOfLines={1}>
+                For {passengerFor.name}
+                {passengerFor.phone ? ` · ${prettyPhone(passengerFor.phone)}` : ' · no mobile'}
+              </Text>
+              <Text style={styles.forEdit}>Edit</Text>
+            </TouchableOpacity>
+          ) : null}
+
           {stops.length < MAX_STOPS ? (
             <View style={styles.addStop}>
               <Chip
@@ -904,6 +955,10 @@ const styles = StyleSheet.create({
   stopDotText: { fontSize: 11, fontWeight: '800', color: COLORS.lime },
   stopText: { flex: 1, ...TYPE.small, color: COLORS.ink },
   addStop: { flexDirection: 'row', marginTop: SPACE[3] },
+  whoRow: { flexDirection: 'row', marginTop: SPACE[3] },
+  forRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[2], marginTop: SPACE[2] },
+  forText: { flex: 1, ...TYPE.small, color: COLORS.midnight, fontWeight: '600' },
+  forEdit: { ...TYPE.small, color: COLORS.blue, fontWeight: '700' },
   stopMarker: {
     width: 24, height: 24, borderRadius: 12, backgroundColor: COLORS.midnight,
     borderWidth: 2, borderColor: COLORS.white, alignItems: 'center', justifyContent: 'center',

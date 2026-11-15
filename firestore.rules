@@ -603,6 +603,21 @@ service cloud.firestore {
     }
 
     /* A suspended passenger cannot book. */
+    /* Booked for someone else: only their name rides on the booking, which
+       nearby drivers can read while it is searching. Their mobile is kept in
+       rides/{id}/contact/passenger, which drivers cannot read (calls and
+       texts go through the server). */
+    function passengerForOk(data) {
+      return !("passengerFor" in data) || (
+        data.passengerFor is map &&
+        data.passengerFor.keys().hasOnly(["name", "hasPhone"]) &&
+        data.passengerFor.name is string &&
+        data.passengerFor.name.trim().size() >= 1 &&
+        data.passengerFor.name.size() <= 60 &&
+        data.passengerFor.get("hasPhone", false) is bool
+      );
+    }
+
     function passengerMayBook() {
       let path = /databases/$(database)/documents/riders/$(request.auth.uid);
       return !exists(path) || get(path).data.get("blocked", false) != true;
@@ -645,6 +660,7 @@ service cloud.firestore {
         request.resource.data.get("source", "app") == "app" &&
         !("fleetId" in request.resource.data) &&
         request.resource.data.get("driverId", null) == null &&
+        passengerForOk(request.resource.data) &&
         passengerMayBook()
       );
 
@@ -729,6 +745,25 @@ service cloud.firestore {
           )
         );
         allow delete: if isAdmin();
+      }
+
+      /* The mobile of the person a ride was booked for (passengerFor). The
+         booker writes it once, straight after booking; only they and admins
+         read it. Drivers reach that person through masked calls and texts. */
+      match /contact/{contactId} {
+        allow read: if isAdmin() || (
+          signedIn() &&
+          get(/databases/$(database)/documents/rides/$(rideId)).data.riderId == request.auth.uid
+        );
+        allow create: if signedIn() &&
+          contactId == "passenger" &&
+          get(/databases/$(database)/documents/rides/$(rideId)).data.riderId == request.auth.uid &&
+          get(/databases/$(database)/documents/rides/$(rideId)).data.get("passengerFor", null) != null &&
+          get(/databases/$(database)/documents/rides/$(rideId)).data.status == "searching" &&
+          request.resource.data.keys().hasOnly(["phone"]) &&
+          request.resource.data.phone is string &&
+          request.resource.data.phone.matches("[+][1-9][0-9]{7,14}");
+        allow update, delete: if isAdmin();
       }
 
       /* Masked call log (NEW). Written by Cloud Functions only. */

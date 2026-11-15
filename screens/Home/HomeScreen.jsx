@@ -505,6 +505,18 @@ export default function HomeScreen() {
             ) : null}
           </View>
 
+          {/* Friends and family, from anywhere: their own pickup, not ours. */}
+          <TouchableOpacity
+            style={styles.forSomeone}
+            onPress={() => navigation.navigate('BookForSomeone')}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+          >
+            <Ionicons name="people-outline" size={18} color={COLORS.midnight} />
+            <Text style={styles.pinRowText}>Book for someone else</Text>
+            <Ionicons name="chevron-forward" size={16} color={COLORS.muted} />
+          </TouchableOpacity>
+
           {savedPlaces.length ? (
             <View style={styles.places}>
               {savedPlaces.slice(0, 3).map((place) => (
@@ -608,6 +620,7 @@ const styles = StyleSheet.create({
   },
   pinRowMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: SPACE[2], minHeight: 42 },
   pinRowText: { flex: 1, ...TYPE.small, color: COLORS.midnight, fontWeight: '700' },
+  forSomeone: { flexDirection: 'row', alignItems: 'center', gap: SPACE[2], minHeight: 42 },
 
   places: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACE[2], marginTop: SPACE[3] },
 

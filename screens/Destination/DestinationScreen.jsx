@@ -36,10 +36,14 @@ const PICKUP = {
 };
 
 export default function DestinationSearchScreen({ navigation, route }) {
-  const { origin, pickupType = 'current', mode } = route.params || {};
+  const { origin, pickupType = 'current', mode, target, who } = route.params || {};
   // Opened from the fare screen's "Add stop": the chosen place comes back
   // there as a stop instead of starting a new booking.
   const addingStop = mode === 'stop';
+  // Opened from "Book for someone else" to choose their pickup or
+  // destination: the chosen place goes back there.
+  const pickMode = mode === 'pick';
+  const pickingPickup = pickMode && target === 'pickup';
   const searchRef = useRef(null);
 
   const [currentAddress, setCurrentAddress] = useState('');
@@ -126,6 +130,11 @@ export default function DestinationSearchScreen({ navigation, route }) {
   };
 
   const goToFare = (destination) => {
+    if (pickMode) {
+      const place = { ...destination, address: destination.address || destination.description };
+      navigation.navigate({ name: 'BookForSomeone', params: { picked: { target, place } }, merge: true });
+      return;
+    }
     if (addingStop) {
       navigation.navigate({ name: 'FareEstimation', params: { addStop: destination }, merge: true });
       return;
@@ -163,20 +172,30 @@ export default function DestinationSearchScreen({ navigation, route }) {
 
   // The fare screen knows the pickup address, not how it was chosen.
   const pickup = addingStop ? { label: 'Pickup', icon: 'locate' } : PICKUP[pickupType] || PICKUP.current;
+  const title = pickMode
+    ? pickingPickup
+      ? `Pickup${who ? ` for ${who}` : ''}`
+      : `Where${who ? ` is ${who}` : ''} going?`
+    : addingStop
+    ? 'Add a stop'
+    : 'Where to?';
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScreenHeader compact title={addingStop ? 'Add a stop' : 'Where to?'} onBack={() => navigation.goBack()} />
+      <ScreenHeader compact title={title} onBack={() => navigation.goBack()} />
 
       {/* Pickup and destination as one journey, the shape people expect. */}
       <View style={styles.journey}>
-        <View style={styles.gutter}>
-          <View style={styles.dotPickup} />
-          <View style={styles.stem} />
-          <View style={styles.square} />
-        </View>
+        {pickMode ? null : (
+          <View style={styles.gutter}>
+            <View style={styles.dotPickup} />
+            <View style={styles.stem} />
+            <View style={styles.square} />
+          </View>
+        )}
 
         <View style={{ flex: 1 }}>
+          {pickMode ? null : (
           <TouchableOpacity
             style={styles.pickup}
             onPress={() => navigation.goBack()}
@@ -190,6 +209,7 @@ export default function DestinationSearchScreen({ navigation, route }) {
             </View>
             <Text style={styles.change}>Change</Text>
           </TouchableOpacity>
+          )}
 
           <View style={styles.searchWrap}>
             <TextInput
@@ -197,7 +217,9 @@ export default function DestinationSearchScreen({ navigation, route }) {
               style={styles.input}
               value={search.text}
               onChangeText={search.setText}
-              placeholder={addingStop ? 'Search for a stop' : 'Search a destination'}
+              placeholder={
+                pickingPickup ? 'Search their pickup address' : addingStop ? 'Search for a stop' : 'Search a destination'
+              }
               placeholderTextColor={COLORS.faint}
               autoFocus
               autoCorrect={false}

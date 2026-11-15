@@ -12,6 +12,7 @@ import CarMarker from '../../components/CarMarker';
 import { remainingStops } from '../../utils/stops';
 import RouteDirections from '../../components/RouteDirections';
 import StopRows, { StopPin } from '../../components/trips/StopRows';
+import BookedForLine from '../../components/BookedForLine';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
@@ -402,6 +403,7 @@ export default function RideInProgressScreen() {
             dropoff={dropoffLocation?.address}
           />
           <StopRows ride={ride} />
+          <BookedForLine ride={ride} live style={{ marginTop: SPACE[3] }} />
         </View>
 
         {driverLocation ? (

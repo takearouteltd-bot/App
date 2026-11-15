@@ -13,6 +13,7 @@ import StarRating from '../../../components/StarRating';
 import TipCard from '../../../components/TipCard';
 import { paidTip } from '../../../utils/tips';
 import StopRows from '../../../components/trips/StopRows';
+import BookedForLine from '../../../components/BookedForLine';
 import { STATUS_LABEL, STATUS_PILL } from '../../../components/trips/TripsList';
 import {
   COLORS, TYPE, SPACE, RADIUS, Screen, ScreenHeader, Card, Button, Avatar, StatusPill, StatRow,
@@ -279,6 +280,7 @@ export default function RiderTripDetailsScreen() {
           dropoff={dropoff.address || 'Unknown destination'}
         />
         <StopRows ride={trip} />
+        <BookedForLine ride={trip} style={{ marginTop: SPACE[3] }} />
       </Card>
 
       {/* Driver Card — with real data. A trip nobody accepted has no driver. */}

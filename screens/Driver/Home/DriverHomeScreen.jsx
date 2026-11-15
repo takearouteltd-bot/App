@@ -1513,6 +1513,9 @@ export default function DriverHomeScreen() {
                   />
                 ) : null}
                 {currentRide.femaleDriverOnly ? <Chip label="Female driver" icon="female-outline" /> : null}
+                {currentRide.passengerFor?.name ? (
+                  <Chip label={`For ${currentRide.passengerFor.name}`} icon="person-outline" />
+                ) : null}
                 {currentRide.riderId ? <RiderRatingChip riderId={currentRide.riderId} /> : null}
                 {Number(currentRide.fare?.surgeMultiplier) > 1 ? (
                   <Chip label={`${currentRide.fare.surgeMultiplier}× busy`} icon="flash" />

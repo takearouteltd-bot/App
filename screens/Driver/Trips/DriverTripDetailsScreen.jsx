@@ -91,7 +91,7 @@ export default function DriverTripDetailsScreen() {
   ].filter(Boolean);
   // A phone booking has the name the operator took, and no app profile.
   const phoneCustomer = trip.source === 'phone' ? trip.customer : null;
-  const passengerName = phoneCustomer?.name || rider?.name || 'Passenger';
+  const passengerName = phoneCustomer?.name || trip.passengerFor?.name || rider?.name || 'Passenger';
 
   return (
     <Screen>
@@ -177,10 +177,13 @@ export default function DriverTripDetailsScreen() {
         ) : (
           <Card>
             <View style={styles.riderRow}>
-              <Avatar uri={rider?.image} name={passengerName} size={52} />
+              <Avatar uri={trip.passengerFor ? null : rider?.image} name={passengerName} size={52} />
               <View style={{ flex: 1 }}>
                 <Text style={TYPE.subhead}>{passengerName}</Text>
                 {phoneCustomer ? <Text style={TYPE.small}>Phone booking</Text> : null}
+                {trip.passengerFor ? (
+                  <Text style={TYPE.small}>Booked by {trip.bookedByName || rider?.name || 'a passenger'}</Text>
+                ) : null}
               </View>
               {phoneCustomer ? null : (
                 <View style={styles.rating}>
