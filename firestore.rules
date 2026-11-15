@@ -151,7 +151,7 @@ service cloud.firestore {
         "payoutTermsAcceptance",
         "driverLicenseFrontUrl", "driverLicenseBackUrl", "pcoLicenseUrl",
         "vehicleLicenceUrl", "insuranceUrl", "motUrl", "dbsCertificateUrl",
-        "v5cUrl", "companyAgreementUrl", "accountDetails", "vehicleType"
+        "v5cUrl", "pcoPaperUrl", "companyAgreementUrl", "accountDetails", "vehicleType"
       ];
     }
 
@@ -170,7 +170,7 @@ service cloud.firestore {
       return ["rightToWorkShareCode", "driverLicenseFrontUrl",
         "driverLicenseBackUrl", "driverLicenseUrl", "pcoLicenseUrl",
         "vehicleLicenceUrl", "insuranceUrl", "motUrl", "dbsCertificateUrl",
-        "companyAgreementUrl", "v5cUrl"];
+        "companyAgreementUrl", "v5cUrl", "pcoPaperUrl"];
     }
 
     function driverSensitiveFieldNames() {

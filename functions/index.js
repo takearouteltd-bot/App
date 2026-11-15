@@ -5292,7 +5292,9 @@ function expiryKeyForFile(file) {
   if (name.startsWith("driverlicense") || name.startsWith("drivinglicence")) {
     return "drivingLicence";
   }
-  if (name.startsWith("pcolicen")) return "privateHireLicence";
+  if (name.startsWith("pcolicen") || name.startsWith("pcopaper")) {
+    return "privateHireLicence";
+  }
   if (name.startsWith("vehiclelicence")) return "vehicleLicence";
   if (name.startsWith("phvinsurance") || name.startsWith("insurance")) {
     return "insurance";

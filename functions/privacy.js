@@ -28,7 +28,7 @@ const PRIVATE_FIELDS = ["accountDetails", "bankDetails", "sortCode",
 const FILE_FIELDS = ["rightToWorkShareCode", "driverLicenseFrontUrl",
   "driverLicenseBackUrl", "driverLicenseUrl", "pcoLicenseUrl",
   "vehicleLicenceUrl", "insuranceUrl", "motUrl", "dbsCertificateUrl",
-  "companyAgreementUrl", "v5cUrl"];
+  "companyAgreementUrl", "v5cUrl", "pcoPaperUrl"];
 
 /* What a driver on a job may see of their passenger. */
 const RIDER_PUBLIC_FIELDS = ["fullName", "firstName", "lastName", "name",

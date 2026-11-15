@@ -10,11 +10,12 @@ import { OnboardingFrame, StepSection, UploadTile } from "../../components/onboa
 // Each document: where it is stored (drivers/{uid}/{type}.ext, saved as
 // {type}Url on the driver) and how it is described.
 const LICENCE = [
-  { type: "driverLicenseFront", title: "Driving licence, front", subtitle: "Photo card, all four corners in view", icon: "card-account-details-outline" },
-  { type: "driverLicenseBack", title: "Driving licence, back", subtitle: "The side with the categories", icon: "card-bulleted-outline" },
+  { type: "driverLicenseFront", title: "Drivers licence front", subtitle: "Photo card, all four corners in view", icon: "card-account-details-outline" },
+  { type: "driverLicenseBack", title: "Drivers licence back", subtitle: "The side with the categories", icon: "card-bulleted-outline" },
 ];
 const COMPLIANCE = [
-  { type: "pcoLicense", title: "Private hire badge", subtitle: "Your private hire driver licence", icon: "certificate-outline" },
+  { type: "pcoLicense", title: "Private hire (badge)", subtitle: "Your private hire driver badge", icon: "certificate-outline" },
+  { type: "pcoPaper", title: "Private hire (paper)", subtitle: "The paper licence that comes with your badge", icon: "file-document-outline" },
 ];
 
 export default function IdentityVerificationScreen({ navigation, setOnboardingStatus }) {
@@ -40,6 +41,7 @@ export default function IdentityVerificationScreen({ navigation, setOnboardingSt
           driverLicenseFront: data.driverLicenseFrontUrl || legacy,
           driverLicenseBack: data.driverLicenseBackUrl || legacy,
           pcoLicense: data.pcoLicenseUrl || null,
+          pcoPaper: data.pcoPaperUrl || null,
           selfie: data.selfieUrl || null,
         });
       } catch (error) {
@@ -86,6 +88,7 @@ export default function IdentityVerificationScreen({ navigation, setOnboardingSt
     !urls.driverLicenseFront && "the front of your driving licence",
     !urls.driverLicenseBack && "the back of your driving licence",
     !urls.pcoLicense && "your private hire badge",
+    !urls.pcoPaper && "your private hire paper licence",
     !urls.selfie && "a selfie",
   ].filter(Boolean);
 
@@ -130,7 +133,7 @@ export default function IdentityVerificationScreen({ navigation, setOnboardingSt
     />
   );
 
-  const done = [urls.driverLicenseFront, urls.driverLicenseBack, urls.pcoLicense, urls.selfie].filter(Boolean).length;
+  const done = [urls.driverLicenseFront, urls.driverLicenseBack, urls.pcoLicense, urls.pcoPaper, urls.selfie].filter(Boolean).length;
 
   return (
     <OnboardingFrame
@@ -138,7 +141,7 @@ export default function IdentityVerificationScreen({ navigation, setOnboardingSt
       title="Prove it's you"
       subtitle="UK private hire rules require these before you can take passengers."
       action={{ title: "Continue", onPress: handleContinue, loading: saving, icon: "arrow-forward" }}
-      footerNote={`${done} of 4 required documents added`}
+      footerNote={`${done} of 5 required documents added`}
     >
       <StepSection title="Driving licence" hint="Take the photo on a flat, well-lit surface.">
         {LICENCE.map(tile)}

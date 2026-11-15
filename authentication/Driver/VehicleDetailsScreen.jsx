@@ -104,9 +104,9 @@ export default function VehicleDetailsScreen({ navigation, setOnboardingStatus }
     !vehicleType && "a vehicle class",
     !ownershipType && "who owns the vehicle",
     !urls.motCert && "the MOT certificate",
-    !urls.vehicleLicence && "the vehicle paper licence",
     !urls.phvInsurance && "your insurance certificate",
-    !urls.v5c && "the V5C log book",
+    !urls.vehicleLicence && "the vehicle paper licence",
+    !urls.v5c && "the V5C vehicle details (second page)",
     ownershipType === "company" && !urls.companyAgreement && "the company hire permission letter",
   ].filter(Boolean);
 
@@ -219,20 +219,12 @@ export default function VehicleDetailsScreen({ navigation, setOnboardingStatus }
 
       <StepSection title="Documents" hint="A clear photo or PDF of each.">
         <UploadTile
-          title="MOT certificate"
+          title="MOT Certificate"
           subtitle="Current and in date"
           icon="certificate-outline"
           url={urls.motCert}
           uploading={uploading === "motCert"}
           onPress={() => pickDocument("motCert")}
-        />
-        <UploadTile
-          title="Vehicle paper licence"
-          subtitle="From your licensing council, in date"
-          icon="card-account-details-outline"
-          url={urls.vehicleLicence}
-          uploading={uploading === "vehicleLicence"}
-          onPress={() => pickDocument("vehicleLicence")}
         />
         <UploadTile
           title="Insurance certificate"
@@ -243,8 +235,16 @@ export default function VehicleDetailsScreen({ navigation, setOnboardingStatus }
           onPress={() => pickDocument("phvInsurance")}
         />
         <UploadTile
-          title="V5C vehicle log book"
-          subtitle="The registration document for this car"
+          title="Vehicle paper licence"
+          subtitle="From your licensing council, in date"
+          icon="card-account-details-outline"
+          url={urls.vehicleLicence}
+          uploading={uploading === "vehicleLicence"}
+          onPress={() => pickDocument("vehicleLicence")}
+        />
+        <UploadTile
+          title="V5C Vehicle details (second Page)"
+          subtitle="The second page of the log book, with the vehicle details"
           icon="book-open-variant"
           url={urls.v5c}
           uploading={uploading === "v5c"}
@@ -252,7 +252,7 @@ export default function VehicleDetailsScreen({ navigation, setOnboardingStatus }
         />
         {ownershipType === "company" ? (
           <UploadTile
-            title="Company hire permission letter"
+            title="Company hire permission letter (if applies)"
             subtitle="From the company, saying you may drive it for hire"
             icon="file-sign"
             url={urls.companyAgreement}

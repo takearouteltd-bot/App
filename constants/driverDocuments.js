@@ -3,24 +3,26 @@
 // admin dashboard writes to drivers/{id}.documentExpiry (YYYY-MM-DD strings).
 // `urlField` is where the approved file lives on the driver record.
 export const DRIVER_DOCUMENTS = [
-  { id: 'drivingLicenceFront', label: 'Driving licence (front)', icon: 'card-outline', urlField: 'driverLicenseFrontUrl', expiryKey: 'drivingLicence' },
-  { id: 'drivingLicenceBack', label: 'Driving licence (back)', icon: 'card-outline', urlField: 'driverLicenseBackUrl', expiryKey: 'drivingLicence' },
-  { id: 'pcoLicence', label: 'Private hire badge', icon: 'ribbon-outline', urlField: 'pcoLicenseUrl', expiryKey: 'privateHireLicence' },
-  { id: 'vehicleLicence', label: 'Vehicle paper licence', icon: 'car-outline', urlField: 'vehicleLicenceUrl', expiryKey: 'vehicleLicence' },
+// Names and order exactly as the operator asked (M&S, 16 Nov 2026).
+  { id: 'drivingLicenceFront', label: 'Drivers licence front', icon: 'card-outline', urlField: 'driverLicenseFrontUrl', expiryKey: 'drivingLicence' },
+  { id: 'drivingLicenceBack', label: 'Drivers licence back', icon: 'card-outline', urlField: 'driverLicenseBackUrl', expiryKey: 'drivingLicence' },
+  { id: 'pcoLicence', label: 'Private hire (badge)', icon: 'ribbon-outline', urlField: 'pcoLicenseUrl', expiryKey: 'privateHireLicence' },
+  { id: 'pcoPaper', label: 'Private hire (paper)', icon: 'document-outline', urlField: 'pcoPaperUrl', expiryKey: 'privateHireLicence' },
+  { id: 'mot', label: 'MOT Certificate', icon: 'construct-outline', urlField: 'motUrl', expiryKey: 'mot' },
   { id: 'insurance', label: 'Insurance certificate', icon: 'shield-checkmark-outline', urlField: 'insuranceUrl', expiryKey: 'insurance' },
-  { id: 'mot', label: 'MOT certificate', icon: 'construct-outline', urlField: 'motUrl', expiryKey: 'mot' },
-  { id: 'v5c', label: 'V5C vehicle log book', icon: 'book-outline', urlField: 'v5cUrl', expiryKey: null },
+  { id: 'vehicleLicence', label: 'Vehicle paper licence', icon: 'car-outline', urlField: 'vehicleLicenceUrl', expiryKey: 'vehicleLicence' },
+  { id: 'v5c', label: 'V5C Vehicle details (second Page)', icon: 'book-outline', urlField: 'v5cUrl', expiryKey: null },
   // Only when a company owns the car (drivers.ownershipType "company").
-  { id: 'companyAgreement', label: 'Company hire permission letter', icon: 'document-text-outline', urlField: 'companyAgreementUrl', expiryKey: null, companyOnly: true },
+  { id: 'companyAgreement', label: 'Company hire permission letter (if applies)', icon: 'document-text-outline', urlField: 'companyAgreementUrl', expiryKey: null, companyOnly: true },
 ];
 
 // Unique expiry entries, for alerts (the two licence sides share one date).
 export const EXPIRY_LABELS = {
-  drivingLicence: 'Driving licence',
-  privateHireLicence: 'Private hire badge',
+  drivingLicence: 'Drivers licence',
+  privateHireLicence: 'Private hire licence',
   vehicleLicence: 'Vehicle paper licence',
   insurance: 'Insurance certificate',
-  mot: 'MOT',
+  mot: 'MOT Certificate',
 };
 
 const DAY = 24 * 60 * 60 * 1000;

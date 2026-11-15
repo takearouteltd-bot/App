@@ -23,9 +23,10 @@ const CHECKS = [
         (d.driverLicenseFrontUrl || d.driverLicenseUrl) &&
         (d.driverLicenseBackUrl || d.driverLicenseUrl) &&
         d.pcoLicenseUrl &&
+        d.pcoPaperUrl &&
         d.selfieUrl
       ),
-    summary: () => "Licence, private hire badge and selfie",
+    summary: () => "Licence, private hire badge and paper, and selfie",
   },
   {
     step: 3,
