@@ -137,6 +137,8 @@ export default function DriverHomeScreen() {
   const [rejection, setRejection] = useState(null);
   // Where a driver still under review stands with a fleet, for the hint below.
   const [fleetHint, setFleetHint] = useState(null);
+  // Another driver account has this number (functions/phoneOwners.js).
+  const [phoneConflict, setPhoneConflict] = useState(null);
   // The class this driver's vehicle was approved as. Decides which jobs they
   // are shown; see constants/vehicleClasses.js.
   const [vehicleType, setVehicleType] = useState(null);
@@ -285,6 +287,7 @@ export default function DriverHomeScreen() {
       }
       setJobTypes(Array.isArray(data.jobTypes) ? data.jobTypes : null);
       setFleetId(data.fleetId || null);
+      setPhoneConflict(data.phoneConflict?.message ? data.phoneConflict : null);
       setDriverCard({
         name: data.firstName || (data.fullName || '').split(' ')[0] || 'Driver',
         rating: data.rating || null,
@@ -1330,6 +1333,17 @@ export default function DriverHomeScreen() {
             </TouchableOpacity>
           ) : null}
           </View>
+        ) : null}
+
+        {phoneConflict ? (
+          <TouchableOpacity
+            style={styles.docAlert}
+            activeOpacity={0.85}
+            onPress={() => navigation.navigate('Account', { screen: 'DriverPersonalInformation' })}
+            accessibilityRole="button"
+          >
+            <Banner tone="warning" icon="call-outline" title="Phone number already registered" body={phoneConflict.message} />
+          </TouchableOpacity>
         ) : null}
 
         {fleetHint ? (

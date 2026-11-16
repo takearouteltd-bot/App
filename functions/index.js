@@ -59,6 +59,9 @@ const paymentAlerts = require("./paymentAlerts")({functions, db});
 // Fleet subscriptions: plans, card payments, grace period and pause.
 // loadAppConfig and toMillis are function declarations further down.
 const privacy = require("./privacy")({functions, db});
+// One driver account per phone number (phoneOwners/{e164}).
+const phoneOwners = require("./phoneOwners")({functions, admin, db,
+  toE164, privacy});
 const {inUk} = require("./ukArea");
 const fleetBilling = require("./fleetBilling")({
   functions, db, stripe, STRIPE_SECRETS,
@@ -5519,6 +5522,7 @@ exports.detectDocumentExpiry = functions
 Object.assign(exports, fleetBilling.functions);
 Object.assign(exports, paymentAlerts.functions);
 Object.assign(exports, privacy.functions);
+Object.assign(exports, phoneOwners.functions);
 Object.assign(exports, require("./driverPenalty")({
   functions, db, sendPush, loadAppConfig, distanceKm,
 }).functions);
@@ -5545,5 +5549,5 @@ Object.assign(exports, require("./fleet")({
   TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor,
   STRIPE_SECRETS, fleetBilling, shared: fleetShared, stripe, privacy,
   membershipSuspended, positionStale, settleDriverEndedEarly,
-  membershipPhoneHash,
+  membershipPhoneHash, phoneOwners,
 }));

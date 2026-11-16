@@ -153,7 +153,7 @@ module.exports = (deps) => {
     hasExpiredDocument, toE164, toMillis, addOneMonth,
     TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor, STRIPE_SECRETS,
     fleetBilling, privacy, membershipSuspended, positionStale,
-    followOn, bidJobs} = deps;
+    followOn, bidJobs, phoneOwners} = deps;
   const paymentAlerts = require("./paymentAlerts")({functions, db});
   const {HttpsError} = functions.https;
   // From the modular entry point: the functions emulator's stand-in for
@@ -1314,6 +1314,25 @@ module.exports = (deps) => {
     if (!context.auth) throw new HttpsError("unauthenticated", "Sign in.");
     const accept = data && data.accept === true;
     const driverRef = db.collection("drivers").doc(context.auth.uid);
+    if (accept) {
+      // Only the driver account the number belongs to can take up an
+      // invitation sent to it (one account per number, phoneOwners.js).
+      const secret = await privacy.privateRef(context.auth.uid).get();
+      const mine = await driverRef.get();
+      const s = secret.exists ? secret.data() : {};
+      const d = mine.exists ? mine.data() : {};
+      const number = toE164(s.phoneNumber || s.phone || d.phoneNumber ||
+        d.phone);
+      if (number) {
+        const {rival} = await phoneOwners.rivalFor(context.auth.uid, number);
+        if (rival) {
+          throw new HttpsError("failed-precondition",
+              "This number belongs to another driver account, so this " +
+              "account can't join with it. Sign in with the account that " +
+              "has this number, or ask the fleet to invite your other number.");
+        }
+      }
+    }
     const result = await db.runTransaction(async (tx) => {
       const snap = await tx.get(driverRef);
       const driver = snap.exists ? snap.data() : null;
@@ -1469,7 +1488,23 @@ module.exports = (deps) => {
       invitedAt: Timestamp.now(), invitedBy: me.uid};
     await db.collection("fleetInvites").doc(phone).set(
         Object.assign({phone}, invite));
-    const matches = await findDriversByPhone(phone);
+    const found = await findDriversByPhone(phone);
+    // More than one driver account with this number (from before numbers
+    // were kept to one account): invite only the one it belongs to, and
+    // tell the office so they can ask TakeARoute to sort out the rest.
+    let matches = found;
+    let duplicates = [];
+    if (found.length > 1) {
+      const keep = [];
+      for (const doc of found) {
+        const {rival} = await phoneOwners.rivalFor(doc.id, phone);
+        if (!rival) keep.push(doc);
+      }
+      matches = keep.slice(0, 1);
+      duplicates = found.map((doc) => doc.data().fullName ||
+        [doc.data().firstName, doc.data().lastName].filter(Boolean).join(" ") ||
+        "Driver");
+    }
     let notified = 0;
     for (const doc of matches) {
       const d = doc.data();
@@ -1481,7 +1516,8 @@ module.exports = (deps) => {
         channelId: "general",
       }).catch(() => 0);
     }
-    return {existingAccount: matches.length > 0, notified};
+    return {existingAccount: found.length > 0, notified,
+      duplicateAccounts: duplicates.length, duplicateNames: duplicates};
   });
 
   /* The fleet takes back an invitation nobody has answered yet. */
@@ -1550,6 +1586,9 @@ module.exports = (deps) => {
     }
     const invite = await db.collection("fleetInvites").doc(phone).get();
     if (!invite.exists) return null;
+    // Not for a second account holding someone else's number.
+    const {rival} = await phoneOwners.rivalFor(driverId, phone);
+    if (rival) return null;
     const i = invite.data();
     await driverRef.update({fleetInvite: {fleetId: i.fleetId,
       fleetName: i.fleetName, driverType: i.driverType || "company",
@@ -3270,13 +3309,8 @@ module.exports = (deps) => {
         throw new HttpsError("invalid-argument",
             "Enter a phone number, for example 07700 900123.");
       }
-      const [others, held] = await Promise.all(["drivers", "driverPrivate"]
-          .map((c) => db.collection(c)
-              .where("phoneNumber", "==", phone).limit(2).get()));
-      if (others.docs.concat(held.docs).some((x) => x.id !== driverId)) {
-        throw new HttpsError("already-exists",
-            "Another driver already has that number.");
-      }
+      // One driver account per number, however it was typed.
+      await phoneOwners.claimOrRefuse(driverId, phone);
       update.phoneNumber = phone;
       userUpdate.phoneNumber = phone;
     }
