@@ -107,7 +107,18 @@ function metresApart(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
+/* Set while the account is being deleted: no more position writes, or the
+   last few would re-create the record the server has just removed. */
+let writesStoppedFor = null;
+export function stopDriverWrites(uid) {
+  writesStoppedFor = uid || null;
+}
+export function resumeDriverWrites() {
+  writesStoppedFor = null;
+}
+
 async function writeDriverLocation(driverId, coords, force = false) {
+  if (writesStoppedFor && writesStoppedFor === driverId) return;
   // One at a time, but a save stuck on a dead connection doesn't stop them.
   if (savingSince && Date.now() - savingSince < 30000 && !force) return;
   const now = Date.now();
@@ -339,7 +350,7 @@ export function useDriverLocationPublisher(driverId, enabled = true) {
   const { isFree, vehicleType } = presence;
   const coords = position.coords;
   useEffect(() => {
-    if (!driverId || !enabled) return;
+    if (!driverId || !enabled || writesStoppedFor === driverId) return;
     const ref = doc(db, 'driverLocations', driverId);
 
     if (isFree && coords && Number.isFinite(coords.latitude)) {

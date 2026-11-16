@@ -331,6 +331,14 @@ service cloud.firestore {
         (driver.get("fleetRequest", null) is map && fleetStaffOf(driver.fleetRequest.fleetId));
     }
 
+    /* Membership payments, kept for the books and disputes even after an
+       account is deleted (functions/index.js). Admins read; only the
+       server writes. */
+    match /membershipPayments/{paymentId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     match /driverFiles/{driverId} {
       allow get: if isAdmin() || (
         signedIn() && (

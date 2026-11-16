@@ -10,13 +10,17 @@ import { signOut } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
 import { auth, functions } from '../config/firebase';
 import { Alert } from '../components/ui/alert';
+import { resumeDriverWrites, stopDriverWrites } from './driverLocation';
 
 export function confirmDeleteAccount({ onBusy } = {}) {
   const run = async () => {
     if (onBusy) onBusy(true);
+    // Stop the position updates first, so none lands after the delete.
+    stopDriverWrites(auth.currentUser?.uid);
     try {
       await httpsCallable(functions, 'deleteMyAccount')({});
     } catch (error) {
+      resumeDriverWrites();
       if (onBusy) onBusy(false);
       Alert.alert("Couldn't delete your account", error?.message || 'Please try again.');
       return;

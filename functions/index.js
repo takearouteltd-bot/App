@@ -2983,6 +2983,54 @@ function membershipDue(sub, now) {
   return !!next && next <= now;
 }
 
+/* ======================================
+   MEMBERSHIP PAYMENT RECORDS
+   membershipPayments/{id}: one per membership payment, kept for the books
+   and for disputes. Unlike the wallet (driverWallets/{id}/transactions),
+   it is not removed when the person deletes their account
+   (fleet.js deleteMyAccount marks it accountDeleted). It holds no name or
+   number: phoneHash links it to whoever signs up again with the same
+   number, which is how the dashboard shows a re-registered driver's
+   earlier payments. Admins read it; nobody writes it from an app.
+====================================== */
+
+/**
+ * The phone link on a payment record: a one-way hash of the E.164 number.
+ * Same as phoneHash() in the dashboard (src/web/AdminTools.jsx).
+ * @param {?string} e164 Phone number, +44...
+ * @return {?string} Hex digest, or null without a number.
+ */
+function membershipPhoneHash(e164) {
+  if (!e164) return null;
+  return require("crypto").createHash("sha256")
+      .update(`takearoute-membership:${e164}`).digest("hex");
+}
+
+/**
+ * The record for one membership payment, from the plan collectMembership
+ * charged for.
+ * @param {string} driverId Driver id.
+ * @param {?string} phoneHash membershipPhoneHash of their number.
+ * @param {Object} p {amount, tier, periodStart, periodEnd}.
+ * @param {Object} extra {method, paymentIntentId, walletTransactionId}.
+ * @return {Object} Fields for membershipPayments/{id}.
+ */
+function membershipPaymentRecord(driverId, phoneHash, p, extra) {
+  return {
+    driverId,
+    phoneHash: phoneHash || null,
+    amount: p.amount,
+    plan: p.tier,
+    periodStart: TS.fromDate(p.periodStart),
+    periodEnd: TS.fromDate(p.periodEnd),
+    method: extra.method,
+    paymentIntentId: extra.paymentIntentId || null,
+    walletTransactionId: extra.walletTransactionId || null,
+    accountDeleted: false,
+    createdAt: FV.serverTimestamp(),
+  };
+}
+
 /**
  * Takes one membership payment for a driver: wallet first, then card.
  * The wallet leg runs in a transaction that re-reads the driver, so two
@@ -2996,6 +3044,9 @@ async function collectMembership(driverId, opts = {}) {
   const driverRef = db.collection("drivers").doc(driverId);
   const walletRef = db.collection("driverWallets").doc(driverId);
   const now = FV.serverTimestamp();
+  const phoneHash = membershipPhoneHash(
+      await phoneFor("drivers", driverId).catch(() => null));
+  const records = db.collection("membershipPayments");
 
   /**
    * What is owed and the fields that mark it paid, from a fresh read.
@@ -3063,7 +3114,8 @@ async function collectMembership(driverId, opts = {}) {
         totalFees: FV.increment(p.amount),
         updatedAt: now,
       });
-      tx.set(walletRef.collection("transactions").doc(), {
+      const txRef = walletRef.collection("transactions").doc();
+      tx.set(txRef, {
         amount: -p.amount,
         description: planLabel(p.tier),
         type: "subscription_deduction",
@@ -3072,6 +3124,8 @@ async function collectMembership(driverId, opts = {}) {
         createdAt: now,
         updatedAt: now,
       });
+      tx.set(records.doc(), membershipPaymentRecord(driverId, phoneHash, p,
+          {method: "wallet", walletTransactionId: txRef.id}));
       tx.update(driverRef, p.paidFields);
       return {paid: true, amount: p.amount};
     });
@@ -3112,7 +3166,8 @@ async function collectMembership(driverId, opts = {}) {
     }, {idempotencyKey: `membership_${driverId}_${period}_${amount}_` +
       r.defaultPaymentMethodId});
     await driverRef.update(owed.paidFields);
-    await walletRef.collection("transactions").doc().set({
+    const txRef = walletRef.collection("transactions").doc();
+    await txRef.set({
       amount: 0,
       cardAmount: amount,
       description: `${planLabel(owed.tier)}, paid by card`,
@@ -3123,6 +3178,10 @@ async function collectMembership(driverId, opts = {}) {
       createdAt: now,
       updatedAt: now,
     });
+    // Keyed by the PaymentIntent, so a retry never records it twice.
+    await records.doc(`pi_${intent.id}`).set(membershipPaymentRecord(
+        driverId, phoneHash, owed, {method: "card",
+          paymentIntentId: intent.id, walletTransactionId: txRef.id}));
     return {paid: true, method: "card", amount};
   } catch (error) {
     console.error("Membership card charge failed:", driverId, error.message);
@@ -5486,4 +5545,5 @@ Object.assign(exports, require("./fleet")({
   TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor,
   STRIPE_SECRETS, fleetBilling, shared: fleetShared, stripe, privacy,
   membershipSuspended, positionStale, settleDriverEndedEarly,
+  membershipPhoneHash,
 }));

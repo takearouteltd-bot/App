@@ -1732,6 +1732,71 @@ module.exports = (deps) => {
      UK data law expect deletion to work regardless. What was owed is left
      for an admin in paymentAlerts. The Stripe customer and payout account
      go too; Stripe keeps its own payment records. */
+  /* A phone still sending its position for a few seconds after the account
+     was deleted re-creates an empty drivers/{id} (seen 15 Nov 2026). With
+     no sign-in behind it and nothing that identifies a person, it is
+     removed, with the public location it may have left. */
+  out.removeStrayDriverRecord = functions.firestore.document("drivers/{id}")
+      .onCreate(async (snap, context) => {
+        const d = snap.data() || {};
+        if (d.fullName || d.firstName || d.phoneNumber || d.phone ||
+            d.onboardingStep || d.approved === true || d.fleetId) {
+          return null;
+        }
+        try {
+          await admin.auth().getUser(context.params.id);
+          return null;
+        } catch (e) {
+          if (e.code !== "auth/user-not-found") throw e;
+        }
+        await snap.ref.delete();
+        await db.collection("driverLocations").doc(context.params.id)
+            .delete().catch(() => null);
+        console.log("Removed stray driver record", context.params.id);
+        return null;
+      });
+
+  /**
+   * Keeps a deleted account's membership payments in membershipPayments.
+   * @param {string} uid Account being deleted.
+   * @param {?string} phoneHash Hash of their number (links a new sign-up).
+   * @return {Promise<void>}
+   */
+  async function keepMembershipPayments(uid, phoneHash) {
+    const records = db.collection("membershipPayments");
+    const [kept, tx] = await Promise.all([
+      records.where("driverId", "==", uid).get(),
+      db.collection("driverWallets").doc(uid).collection("transactions")
+          .where("type", "in", ["subscription_deduction",
+            "subscription_card_payment"]).get(),
+    ]);
+    const have = new Set(kept.docs.map((d) => d.get("walletTransactionId"))
+        .filter(Boolean));
+    const batch = db.batch();
+    kept.docs.forEach((d) => batch.update(d.ref, {accountDeleted: true,
+      phoneHash: d.get("phoneHash") || phoneHash || null}));
+    tx.docs.filter((d) => !have.has(d.id)).forEach((d) => {
+      const t = d.data();
+      const card = t.type === "subscription_card_payment";
+      const id = card && t.paymentIntentId ? `pi_${t.paymentIntentId}` :
+        `wallet_${d.id}`;
+      batch.set(records.doc(id), {
+        driverId: uid,
+        phoneHash: phoneHash || null,
+        amount: Math.abs(Number(card ? t.cardAmount : t.amount) || 0),
+        plan: t.plan || null,
+        periodStart: t.periodStart || null,
+        periodEnd: t.periodEnd || null,
+        method: card ? "card" : "wallet",
+        paymentIntentId: t.paymentIntentId || null,
+        walletTransactionId: d.id,
+        accountDeleted: true,
+        createdAt: t.createdAt || FieldValue.serverTimestamp(),
+      }, {merge: true});
+    });
+    await batch.commit();
+  }
+
   const callsWithStripe = functions.runWith({secrets: STRIPE_SECRETS}).https;
   out.deleteMyAccount = callsWithStripe.onCall(async (data, context) => {
     if (!context.auth) throw new HttpsError("unauthenticated", "Sign in.");
@@ -1804,6 +1869,9 @@ module.exports = (deps) => {
         driverId: uid, fleetId: (driver && driver.fleetId) || null,
       });
     }
+    // Read before the records holding the number are deleted.
+    const phoneHash = deps.membershipPhoneHash(
+        await deps.phoneFor("drivers", uid).catch(() => null));
     const stripeIds = {
       customer: riderSnap.exists ? riderSnap.data().stripeCustomerId : null,
       accounts: [...new Set([driver && driver.payoutAccountId,
@@ -1818,6 +1886,11 @@ module.exports = (deps) => {
       db.collection("riderPublic").doc(uid)]) {
       await db.recursiveDelete(ref);
     }
+    // Membership payments outlive the account (membershipPayments, see
+    // index.js): copy any the wallet holds that are not recorded yet
+    // (paid before records were kept), then mark them all as from a
+    // deleted account. They keep no name or number, only the phone hash.
+    await keepMembershipPayments(uid, phoneHash);
     if (walletSnap.exists) await db.recursiveDelete(refs.wallet);
     try {
       const bucket = admin.storage().bucket();
