@@ -11,6 +11,8 @@ import {
   AppState,
   Easing,
   Linking,
+  Modal,
+  ScrollView,
 } from 'react-native';
 import { Alert } from '../../../components/ui/alert';
 import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
@@ -1474,16 +1476,19 @@ export default function DriverHomeScreen() {
         </View>
       ) : null}
 
-      {/* A job offer. */}
-      {currentRide ? (
-        <Animated.View style={[styles.offerWrap, { transform: [{ translateX: slideAnim }] }]}>
-          <Sheet style={[styles.offer, currentRide.bidJob && styles.bidOffer]} grabber={false}>
+      {/* A job offer. A normal job slides up from the bottom; a BID JOB
+          (functions/bidJobs.js) pops up as a small box in the middle of the
+          screen. It is a Modal, so it shows over whichever driver tab is
+          open, and it uses the same Accept and Decline as a normal job. */}
+      {currentRide ? (() => {
+        const body = (
+          <>
             {currentRide.bidJob ? (
               <View style={styles.bidBanner} accessibilityRole="header">
                 <Text style={styles.bidTitle}>BID JOB</Text>
                 <Text style={styles.bidText} numberOfLines={2}>
                   {distanceText(currentRide.pickupDistanceKm)} from you
-                  {bidCounters(currentRide) ? ' · take it or offer your price' : ' · no driver nearer took it'}
+                  {bidCounters(currentRide) ? ' · take it or offer your price' : ' · first to accept gets it'}
                 </Text>
               </View>
             ) : null}
@@ -1599,9 +1604,32 @@ export default function DriverHomeScreen() {
             ) : null}
 
             <Button title="Decline" variant="ghost" onPress={() => declineCurrent(currentRide)} style={styles.decline} />
-          </Sheet>
-        </Animated.View>
-      ) : null}
+          </>
+        );
+        return currentRide.bidJob ? (
+          <Modal
+            visible
+            transparent
+            animationType="fade"
+            statusBarTranslucent
+            onRequestClose={() => declineCurrent(currentRide)}
+          >
+            <View style={styles.bidBackdrop}>
+              <View style={styles.bidBox} accessibilityViewIsModal>
+                <ScrollView bounces={false} showsVerticalScrollIndicator={false}>
+                  {body}
+                </ScrollView>
+              </View>
+            </View>
+          </Modal>
+        ) : (
+          <Animated.View style={[styles.offerWrap, { transform: [{ translateX: slideAnim }] }]}>
+            <Sheet style={styles.offer} grabber={false}>
+              {body}
+            </Sheet>
+          </Animated.View>
+        );
+      })() : null}
     </View>
   );
 }
@@ -1758,7 +1786,25 @@ const styles = StyleSheet.create({
   factText: { ...TYPE.small, fontWeight: '600', color: COLORS.inkSoft },
 
   counterRow: { flexDirection: 'row', gap: SPACE[2], marginTop: SPACE[3] },
-  bidOffer: { borderWidth: 3, borderColor: COLORS.lime },
+  bidBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(10, 15, 30, 0.55)',
+    justifyContent: 'center',
+    paddingHorizontal: SPACE[5],
+  },
+  bidBox: {
+    maxHeight: '82%',
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.lg,
+    borderWidth: 3,
+    borderColor: COLORS.lime,
+    padding: SPACE[4],
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 16,
+  },
   bidBanner: {
     backgroundColor: COLORS.midnight,
     borderRadius: RADIUS.md,

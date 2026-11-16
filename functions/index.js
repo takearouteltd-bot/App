@@ -3792,11 +3792,9 @@ async function offerRideToDrivers(rideId, ride, opts = {}) {
     (ride.bidJob ? " as a BID JOB" : ""));
   if (opts.bidRing) return null;
   // A busy driver about to drop off nearby, if they would be quicker.
+  // Nobody to ask now is not yet a BID JOB: the first offer stays a normal
+  // one, and openBidJobs opens it after bidJobs.afterSeconds.
   await followOn.offerFor(rideId, ride, {cfg, freeKm});
-  // Nobody to ask: a second chance, further out.
-  if (!nearby.length && !ride.bidJob) {
-    await bidJobs.openApp(rideId, "nobody");
-  }
   return null;
 }
 
@@ -4202,11 +4200,19 @@ exports.notifyRideUpdates = functions.firestore
         return null;
       }
 
-      // Driver gave the job back: offer it again.
+      // Driver gave the job back: offer it again. Given back by a driver
+      // who had taken it, it goes straight out as a BID JOB (bidJobs.js);
+      // with BID JOBs switched off, as a normal job.
       if (after.status === "searching" && before.status !== "searching") {
         await sendPush([after.riderId], {...trip,
           title: "Finding you another driver",
           body: "Your driver had to cancel. We are looking for a new one."});
+        const gaveBack = ["accepted", "arrived"].includes(before.status) &&
+          before.driverId && !after.driverId;
+        if (gaveBack &&
+            await bidJobs.openApp(rideId, "given_back", {again: true})) {
+          return null;
+        }
         return offerRideToDrivers(rideId, after);
       }
       if (after.status === "accepted") {

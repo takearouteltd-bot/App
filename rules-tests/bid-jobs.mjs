@@ -1,6 +1,8 @@
 // BID JOBs (functions/bidJobs.js, fleet.js): a job that runs out of drivers
 // is opened to every available driver further out, highlighted, with
-// counter-offers on app jobs when allowed.
+// counter-offers on app jobs when allowed. The first offer is always a
+// normal job; it becomes a BID JOB after a decline that leaves nobody, after
+// the wait, or straight away when a driver who took it gives it back.
 // Against the emulators (auth 9099, firestore 8080, functions 5001, pubsub
 // 8085), project demo-tar, with the fake Routes on :8999 (ROUTES_API_BASE in
 // functions/.env.local): the booking-checks set-up plus pubsub (see README).
@@ -154,11 +156,32 @@ r = await until(async () => { const x = await ride(j2); return x.bidJob ? x : nu
 assert.equal(r.bidJob.reason, 'unanswered');
 await adminSet(`rides/${j2}`, { status: 'cancelled' }, true);
 
-step('nobody in range at booking: a BID JOB straight away');
+step('a driver takes a job, then gives it back: straight out as a BID JOB, without them');
+await place(d3, NEAR);
+const j5 = await book();
+await priced(j5);
+assert.equal((await ride(j5)).bidJob, undefined, 'first offer is a normal job');
+await updateDoc(doc(D3.db, 'rides', j5), claim(d3));
+await until(async () => (await ride(j5)).status === 'accepted', 'taken');
+await updateDoc(doc(D3.db, 'rides', j5), { status: 'searching', driverId: null, acceptedAt: null, declinedBy: arrayUnion(d3), lastDriverCancelAt: serverTimestamp() });
+r = await until(async () => { const x = await ride(j5); return x.bidJob ? x : null; }, 'given-back bid job');
+assert.equal(r.bidJob.reason, 'given_back'); assert.ok(r.declinedBy.includes(d3));
+await adminSet(`rides/${j5}`, { status: 'cancelled' }, true);
+
+step('nobody online at booking: a normal job first, a BID JOB after the wait, then rung again');
 await place(d1, GONE, 'offline'); await place(d3, GONE);
 const j3 = await book();
-r = await until(async () => { const x = await ride(j3); return x.bidJob ? x : null; }, 'nobody bid job');
-assert.equal(r.bidJob.reason, 'nobody');
+await priced(j3);
+await sleep(3000);
+assert.equal((await ride(j3)).bidJob, undefined, 'not straight away');
+await sleep(18000);
+await schedule('openBidJobs');
+r = await until(async () => { const x = await ride(j3); return x.bidJob ? x : null; }, 'bid job after the wait');
+assert.equal(r.bidJob.reason, 'unanswered');
+await sleep(21000);
+await schedule('openBidJobs');
+r = await until(async () => { const x = await ride(j3); return (x.bidJob?.rings || 0) >= 1 ? x : null; }, 'rung again');
+assert.equal(r.status, 'searching');
 await adminSet(`rides/${j3}`, { status: 'cancelled' }, true);
 
 step('switched off: nothing is opened');
@@ -187,6 +210,11 @@ await until(async () => (await adminGet(`fleetJobOffers/${p1.rideId}`))?.bidJob,
 await assert.rejects(setDoc(doc(D2.db, 'rides', p1.rideId, 'offers', d2), { ...offer(9), driverId: d2 }), 'no counters on phone jobs');
 await updateDoc(doc(D2.db, 'rides', p1.rideId), claim(d2));
 assert.equal((await ride(p1.rideId)).driverId, d2);
+
+step('driver 2 gives the phone job back: out again as a BID JOB to the fleet, without them');
+await updateDoc(doc(D2.db, 'rides', p1.rideId), { status: 'dispatching', driverId: null, acceptedAt: null, declinedBy: arrayUnion(d2), lastDriverCancelAt: serverTimestamp() });
+r = await until(async () => { const x = await ride(p1.rideId); return x.bidJob?.reason === 'given_back' ? x : null; }, 'phone given-back bid job');
+assert.equal(r.dispatch.mode, 'all'); assert.ok(r.declinedBy.includes(d2)); assert.ok(r.dispatch.offeredAt, 'rung');
 await O.call('cancelFleetBooking', { rideId: p1.rideId });
 await place(d2, GONE, 'offline');
 

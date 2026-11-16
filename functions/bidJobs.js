@@ -7,18 +7,24 @@
    with how far away it is. Drivers who only let the alert run out count as
    available; a driver who pressed Decline is never asked again.
 
-   When a job counts as having run out of drivers:
+   The first offer of a job is always the normal one (M&S, 16 Nov 2026:
+   "this job should come as normal"), even when nobody is online when it is
+   booked. It becomes a BID JOB the second time round:
    - app jobs (status "searching"):
-       nobody was found when it was booked or sent out again;
        a driver declined it and no other available driver is in range;
-       nobody took it for bidJobs.afterSeconds (openBidJobs, every minute).
+       nobody took it for bidJobs.afterSeconds (openBidJobs, every minute),
+       which also covers nobody being online when it was booked;
+       a driver who had accepted it gave it back (straight away, "given_back").
    - phone jobs sent to the whole fleet, by queue or to the nearest
      (status "dispatching", fleet.js): the queue or nearest steps ran out,
-     nobody in the fleet was in range, a decline left nobody, or the
-     whole-fleet ring went unanswered until its first re-ring. Phone jobs
-     stay at the office's fixed price (no counter-offers), and only that
-     fleet's drivers are asked. A job sent to one driver by name never
-     becomes a BID JOB: it goes back to the office as before.
+     a decline left nobody, the whole-fleet ring went unanswered for
+     bidJobs.afterSeconds, or a driver who had accepted it gave it back.
+     Phone jobs stay at the office's fixed price (no counter-offers), and
+     only that fleet's drivers are asked. A job sent to one driver by name
+     never becomes a BID JOB: it goes back to the office as before.
+   A BID JOB is rung again every bidJobs.afterSeconds until someone takes it
+   (up to MAX_BID_RINGS times for app jobs; it stays on drivers' screens
+   meanwhile). The first driver to accept gets it.
 
    Counter-offers on a BID JOB (bidJobs.allowCounter, app jobs only): the
    driver can ask up to maxCounterPercent above the fare, in
@@ -29,7 +35,8 @@
    clients):
      radiusKm             how far from the pickup drivers are asked
      at                   when it was opened
-     reason               "nobody" | "declined" | "unanswered"
+     reason               "declined" | "unanswered" | "given_back"
+     rings, rungAt        re-rings so far, and the last one (app jobs)
      allowCounter         counter-offers allowed (never on phone jobs)
      maxCounterPercent    the cap on a counter-offer
    ====================================== */
@@ -39,6 +46,8 @@ module.exports = (deps) => {
   const {FieldValue} = require("firebase-admin/firestore");
   const out = {};
   const KM_PER_MILE = 1.609344;
+  // Re-rings of an app BID JOB nobody takes, one every afterSeconds.
+  const MAX_BID_RINGS = 10;
 
   /**
    * This feature's settings, from loadAppConfig().
@@ -72,11 +81,13 @@ module.exports = (deps) => {
    * dispatchFleetJob ring the fleet again (offerFleetJob rings out to
    * bidJob.radiusKm while it is set). App jobs are rung by the caller.
    * @param {Object} ref Ride ref.
-   * @param {string} reason "nobody", "declined" or "unanswered".
+   * @param {string} reason "declined", "unanswered" or "given_back".
+   * @param {Object} opts {again: open afresh even if it was a BID JOB
+   *   before, as when a driver who took it gives it back}.
    * @return {Promise<?Object>} The ride as now stored, or null when it was
    *   not opened (switched off, already open, or no longer waiting).
    */
-  async function open(ref, reason) {
+  async function open(ref, reason, opts = {}) {
     const cfg = await loadAppConfig();
     const s = settings(cfg);
     if (s.enabled !== 1) return null;
@@ -93,7 +104,8 @@ module.exports = (deps) => {
         ride.status === "searching";
       if (!waiting) return null;
       // Once: again only if the circle has been made bigger since.
-      if (ride.bidJob && Number(ride.bidJob.radiusKm) >= s.ringKm) {
+      if (!opts.again && ride.bidJob &&
+          Number(ride.bidJob.radiusKm) >= s.ringKm) {
         return null;
       }
       const bidJob = {
@@ -127,10 +139,12 @@ module.exports = (deps) => {
    * out to its radius.
    * @param {string} rideId Ride id.
    * @param {string} reason Why.
+   * @param {Object} opts As for open().
    * @return {Promise<boolean>} Opened.
    */
-  async function openApp(rideId, reason) {
-    const ride = await open(db.collection("rides").doc(rideId), reason);
+  async function openApp(rideId, reason, opts = {}) {
+    const ride = await open(db.collection("rides").doc(rideId), reason,
+        opts);
     if (!ride) return false;
     console.log(`BID JOB ${rideId} opened (${reason})`);
     await deps.offerRideToDrivers(rideId, ride, {bidRing: true});
@@ -147,8 +161,10 @@ module.exports = (deps) => {
    * @return {Promise<null>} Nothing.
    */
   out.afterDecline = async (rideId, before, after) => {
-    if (after.status !== "searching" || after.source === "phone" ||
-        after.bidJob) {
+    // A driver who had accepted it and gave it back is dealt with by
+    // notifyRideUpdates (straight to a BID JOB), not here.
+    if (after.status !== "searching" || before.status !== "searching" ||
+        after.source === "phone" || after.bidJob) {
       return null;
     }
     const was = new Set(before.declinedBy || []);
@@ -163,8 +179,9 @@ module.exports = (deps) => {
   };
 
   /* Every minute: app jobs nobody has taken for bidJobs.afterSeconds are
-     opened as BID JOBs. Timed like expireSearchingRides, from the latest
-     restart of the search. Phone jobs are done in runFleetQueues. */
+     opened as BID JOBs (timed like expireSearchingRides, from the latest
+     restart of the search), and open BID JOBs nobody has taken are rung
+     again every afterSeconds. Phone jobs are done in runFleetQueues. */
   out.functions = {
     openBidJobs: functions.pubsub.schedule("every 1 minutes")
         .onRun(async () => {
@@ -176,7 +193,21 @@ module.exports = (deps) => {
           let opened = 0;
           for (const doc of waiting.docs) {
             const r = doc.data();
-            if (r.bidJob || r.pricing !== "checked" || r.source === "phone") {
+            if (r.pricing !== "checked" || r.source === "phone") continue;
+            if (r.bidJob) {
+              // Still nobody: ring it again, to drivers who have not
+              // declined it (offerRideToDrivers leaves those out).
+              const last = Math.max(toMillis(r.bidJob.rungAt) || 0,
+                  toMillis(r.bidJob.at) || 0);
+              if ((r.bidJob.rings || 0) >= MAX_BID_RINGS || !last ||
+                  Date.now() - last < s.afterSeconds * 1000) {
+                continue;
+              }
+              await doc.ref.update({
+                "bidJob.rings": FieldValue.increment(1),
+                "bidJob.rungAt": FieldValue.serverTimestamp(),
+              }).catch(() => null);
+              await deps.offerRideToDrivers(doc.id, r, {bidRing: true});
               continue;
             }
             const since = Math.max(

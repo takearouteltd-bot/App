@@ -665,9 +665,13 @@ module.exports = (deps) => {
     // A busy driver about to drop off nearby (or the chosen driver, if they
     // are on a trip) is offered it as their next job.
     await followOn.offerFor(rideId, ride, {cfg, freeKm});
-    // Nobody in the fleet to ask: a second chance, further out.
-    if (!target && !ids.length && !ride.bidJob && outToFleet(ride)) {
-      await bidJobs.open(db.collection("rides").doc(rideId), "nobody");
+    // The queue or nearest steps ran out with nobody left to ask: a
+    // second chance, further out. A job sent to the whole fleet with nobody
+    // in range stays a normal job; runFleetQueues opens it as a BID JOB
+    // once bidJobs.afterSeconds have passed.
+    if (!target && !ids.length && !ride.bidJob && outToFleet(ride) &&
+        (ride.dispatch || {}).mode === "queue") {
+      await bidJobs.open(db.collection("rides").doc(rideId), "declined");
     }
     return ids.length;
   }
@@ -3594,7 +3598,12 @@ module.exports = (deps) => {
                 {declinedBy: FieldValue.arrayUnion(before.driverId)}));
             return null;
           }
-          const toQueue = old.mode === "queue";
+          // Given back after it was taken: out again as a BID JOB to every
+          // available fleet driver in range (bidJobs.js), first to accept
+          // gets it. With BID JOBs off, as before: the queue carries on, or
+          // the whole fleet is rung again.
+          const bidOn = bidJobs.settings(await loadAppConfig()).enabled === 1;
+          const toQueue = old.mode === "queue" && !bidOn;
           await change.after.ref.update({
             "declinedBy": FieldValue.arrayUnion(before.driverId),
             "dispatch.mode": toQueue ? "queue" : "all",
@@ -3607,10 +3616,13 @@ module.exports = (deps) => {
             "dispatch.reRings": 0,
             "dispatch.unansweredAt": FieldValue.delete(),
             // A queue picks the next driver itself; the whole fleet is rung
-            // when offeredAt changes.
-            "dispatch.offeredAt": toQueue ? null :
+            // when offeredAt changes (bidJobs.open sets it for a BID JOB).
+            "dispatch.offeredAt": toQueue || bidOn ? null :
               FieldValue.serverTimestamp(),
           });
+          if (bidOn) {
+            await bidJobs.open(change.after.ref, "given_back", {again: true});
+          }
           return null;
         }
         if (after.status !== "dispatching") return null;
@@ -3784,6 +3796,8 @@ module.exports = (deps) => {
         // Whole-fleet offers nobody answered ring again, a few times, so a
         // job does not sit waiting for the office to notice it. New drivers
         // who came online in the meantime are included.
+        const bidAfterMs = 1000 * (Number(bidJobs.settings(
+            await loadAppConfig()).afterSeconds) || 60);
         const open = await db.collection("rides")
             .where("status", "==", "dispatching")
             .where("source", "==", "phone")
@@ -3804,19 +3818,22 @@ module.exports = (deps) => {
           }
           const toFleet = outToFleet(ride);
           const offered = toMillis(d.offeredAt);
-          if (!toFleet || !offered || (d.reRings || 0) >= MAX_RE_RINGS ||
-              Date.now() - offered < RE_RING_MS) {
+          if (!toFleet || !offered || (d.reRings || 0) >= MAX_RE_RINGS) {
             continue;
           }
-          // Nobody answered the first ring: instead of ringing the same
-          // drivers again, open it as a BID JOB (it rings them, and anyone
-          // who only missed a queue offer, highlighted). Re-rings go on
-          // from there as BID JOBs.
-          if (!ride.bidJob &&
-              await bidJobs.open(doc.ref, "unanswered")) {
-            rung++;
-            continue;
+          // Nobody answered the first ring within bidJobs.afterSeconds
+          // (also when nobody was in range to ring): instead of ringing the
+          // same drivers again, open it as a BID JOB (it rings them, and
+          // anyone who only missed a queue offer, highlighted). Re-rings go
+          // on from there as BID JOBs, every RE_RING_MS.
+          if (!ride.bidJob) {
+            if (Date.now() - offered < bidAfterMs) continue;
+            if (await bidJobs.open(doc.ref, "unanswered")) {
+              rung++;
+              continue;
+            }
           }
+          if (Date.now() - offered < RE_RING_MS) continue;
           await db.runTransaction(async (tx) => {
             const snap = await tx.get(doc.ref);
             const now = snap.exists ? snap.data() : null;
