@@ -185,7 +185,7 @@ assert.ok(rnd.declinedBy.includes(d1.user.uid));
 await assert.rejects(updateDoc(doc(D2.db, 'rides', bnd.rideId), claim(d2.user.uid)), 'held: nobody takes it');
 await O.call('cancelFleetBooking', { rideId: bnd.rideId });
 
-step('a driver with cash jobs off is skipped for a cash job, but still offered a card job or one sent by name');
+step('a job given back after accepting goes out to the fleet as a BID JOB, first to accept gets it; office can still send by name');
 await updateDoc(doc(D2.db, 'drivers', d2.user.uid), { cashJobs: false });
 // Nearest first with driver 2 offline, so driver 1 gets it; driver 2 is
 // back online when driver 1 gives it back and the queue moves on.
@@ -199,12 +199,16 @@ const giveBack = async (extra) => {
   return b.rideId;
 };
 const cashId = await giveBack({});
-const rCash = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', cashId))).data(); return r.dispatch.mode === 'queue' && r.declinedBy?.includes(d1.user.uid) && (r.dispatch.queueDone || r.dispatch.driverId) ? r : null; }, 'cash job moved on');
-assert.notEqual(rCash.dispatch.driverId, d2.user.uid, 'cash-off driver skipped');
+// Given back after accepting: out to the whole fleet as a BID JOB (M&S,
+// 16 Nov 2026), not on down the queue. Cash-off drivers don't see cash jobs
+// in the app (DriverHomeScreen filter); the job itself is open to the fleet.
+const rCash = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', cashId))).data(); return r.dispatch.mode === 'all' && r.bidJob?.reason === 'given_back' && r.declinedBy?.includes(d1.user.uid) ? r : null; }, 'cash job out as BID JOB');
+assert.equal(rCash.dispatch.driverId ?? null, null, 'not sent to one driver');
 await O.call('cancelFleetBooking', { rideId: cashId });
 const cardId = await giveBack({ collectBy: 'card' });
-const rCard = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', cardId))).data(); return r.dispatch.mode === 'queue' && r.declinedBy?.includes(d1.user.uid) && r.dispatch.driverId ? r : null; }, 'card job offered');
-assert.equal(rCard.dispatch.driverId, d2.user.uid, 'card job still offered');
+await until(async () => { const r = (await getDoc(doc(O.db, 'rides', cardId))).data(); return r.dispatch.mode === 'all' && r.bidJob?.reason === 'given_back' ? r : null; }, 'card job out as BID JOB');
+await updateDoc(doc(D2.db, 'rides', cardId), claim(d2.user.uid));
+assert.equal((await getDoc(doc(O.db, 'rides', cardId))).data().driverId, d2.user.uid, 'first to accept gets the BID JOB');
 await O.call('cancelFleetBooking', { rideId: cardId });
 const named = await O.call('createFleetBooking', { customer: { phone: '07700900444', name: 'Nia' }, pickup: T5, dropoff: PAD, driverId: d2.user.uid });
 assert.equal((await getDoc(doc(O.db, 'rides', named.rideId))).data().dispatch.driverId, d2.user.uid, 'office can still send by name');
