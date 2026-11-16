@@ -571,3 +571,13 @@ test('booking for someone else: their mobile is private to the booker', async ()
   await assertFails(updateDoc(doc(as('pass1'), 'rides/forx'), { passengerFor: { name: 'Someone', hasPhone: false } }));
   await assertFails(updateDoc(doc(as('cfree'), 'rides/forx'), { passengerFor: { name: 'Someone', hasPhone: false } }));
 });
+test('phone number owners: no app access, and a driver cannot clear a number clash', async () => {
+  await seed((db) => setDoc(doc(db, 'phoneOwners/+447700900123'), { uid: 'd1', verified: false }));
+  for (const uid of ['d1', 'dind', 'adm']) {
+    await assertFails(getDoc(doc(as(uid), 'phoneOwners/+447700900123')));
+    await assertFails(setDoc(doc(as(uid), 'phoneOwners/+447700900456'), { uid }));
+    await assertFails(deleteDoc(doc(as(uid), 'phoneOwners/+447700900123')));
+  }
+  await seed((db) => updateDoc(doc(db, 'drivers/dind'), { phoneConflict: { phone: '+447700900123' } }));
+  await assertFails(updateDoc(doc(as('dind'), 'drivers/dind'), { phoneConflict: deleteField() }));
+});

@@ -12,11 +12,12 @@ import {
 } from 'react-native';
 import { Alert } from '../../../components/ui/alert';
 import { watchMyDriverRecord } from '../../../utils/driverPrivate';
-import { auth, db } from '../../../config/firebase';
+import { httpsCallable } from 'firebase/functions';
+import { auth, db, functions } from '../../../config/firebase';
 import { submitChangeRequest, useChangeRequests } from '../../../utils/changeRequests';
 import {
   COLORS, TYPE, SPACE, Screen, ScreenHeader, Section, Card, ListRow, StatusPill, Button, Field, Loading,
-  Avatar, formatWhen,
+  Avatar, formatWhen, Banner,
 } from '../../../components/ui/kit';
 
 const DETAILS = [
@@ -67,6 +68,24 @@ export default function DriverPersonalInformationScreen({ navigation }) {
       return;
     }
     setSending(true);
+    // One driver account per number: say so now rather than after review.
+    if (item.field === 'phoneNumber') {
+      try {
+        const res = await httpsCallable(functions, 'checkDriverPhone')({ phone: value });
+        if (res.data && res.data.available === false) {
+          setSending(false);
+          Alert.alert('Number already registered', res.data.message);
+          return;
+        }
+      } catch (error) {
+        if (error?.code === 'functions/invalid-argument') {
+          setSending(false);
+          Alert.alert(item.label, error.message);
+          return;
+        }
+        // Can't check now: TakeARoute checks again before approving.
+      }
+    }
     try {
       await submitChangeRequest(driverId, valueOf(driver, 'fullName'), {
         kind: 'detail',
@@ -110,6 +129,17 @@ export default function DriverPersonalInformationScreen({ navigation }) {
             subtitle="Changes are checked by TakeARoute before they go live."
             onBack={() => navigation.goBack()}
           />
+
+          {driver.phoneConflict?.message ? (
+            <View style={{ marginBottom: SPACE[4] }}>
+              <Banner
+                tone="warning"
+                icon="call-outline"
+                title="Phone number already registered"
+                body={driver.phoneConflict.message}
+              />
+            </View>
+          ) : null}
 
           <Card tone="dark" style={styles.identity}>
             <Avatar

@@ -151,7 +151,8 @@ service cloud.firestore {
         "payoutTermsAcceptance",
         "driverLicenseFrontUrl", "driverLicenseBackUrl", "pcoLicenseUrl",
         "vehicleLicenceUrl", "insuranceUrl", "motUrl", "dbsCertificateUrl",
-        "v5cUrl", "pcoPaperUrl", "companyAgreementUrl", "accountDetails", "vehicleType"
+        "v5cUrl", "pcoPaperUrl", "companyAgreementUrl", "accountDetails", "vehicleType",
+        "phoneConflict"
       ];
     }
 
@@ -329,6 +330,12 @@ service cloud.firestore {
       let driver = get(/databases/$(database)/documents/drivers/$(driverId)).data;
       return (driver.get("fleetId", null) is string && fleetStaffOf(driver.fleetId)) ||
         (driver.get("fleetRequest", null) is map && fleetStaffOf(driver.fleetRequest.fleetId));
+    }
+
+    /* Which driver account holds each phone number (functions/phoneOwners.js).
+       Server only: no app or dashboard reads or writes it. */
+    match /phoneOwners/{e164} {
+      allow read, write: if false;
     }
 
     /* Membership payments, kept for the books and disputes even after an
