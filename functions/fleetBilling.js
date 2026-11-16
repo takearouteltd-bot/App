@@ -84,6 +84,7 @@ module.exports = (deps) => {
         update["billing.status"] = "ok";
         update["billing.graceUntil"] = null;
         update["billing.owed"] = 0;
+        update["billing.lastError"] = null;
       }
       if (fleet.status === "suspended" && fleet.suspendedReason === "unpaid") {
         update.status = "active";
@@ -274,6 +275,24 @@ module.exports = (deps) => {
   }
 
   /**
+   * What the dashboard shows for a saved payment method. Checkout can save a
+   * card or a Stripe Link wallet, which has no card number.
+   * @param {Object} pm Stripe PaymentMethod.
+   * @return {Object} {type, brand, last4, expMonth, expYear, email}.
+   */
+  function methodSummary(pm) {
+    const card = pm.card || {};
+    return {
+      type: pm.type || "card",
+      brand: card.brand || pm.type || "card",
+      last4: card.last4 || "",
+      expMonth: card.exp_month || null,
+      expYear: card.exp_year || null,
+      email: (pm.link && pm.link.email) || null,
+    };
+  }
+
+  /**
    * Saves a card as the fleet's card for monthly bills.
    * @param {string} fleetId Fleet.
    * @param {string} customerId Stripe customer.
@@ -286,11 +305,9 @@ module.exports = (deps) => {
     await stripe.customers.update(customerId, {
       invoice_settings: {default_payment_method: paymentMethodId},
     }).catch(() => null);
-    const card = pm.card || {};
     await fleetRef(fleetId).update({
       "billing.paymentMethodId": paymentMethodId,
-      "billing.card": {brand: card.brand || "card", last4: card.last4 || "",
-        expMonth: card.exp_month || null, expYear: card.exp_year || null},
+      "billing.card": methodSummary(pm),
       "billing.cardSavedAt": FieldValue.serverTimestamp(),
     });
   }

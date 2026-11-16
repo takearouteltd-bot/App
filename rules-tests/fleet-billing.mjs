@@ -21,7 +21,9 @@ const stripe = {
     update: async (id, p) => { calls.push(['customers.update', id, p]); return { id }; },
   },
   paymentMethods: {
-    retrieve: async (id) => ({ id, card: { brand: 'visa', last4: id.endsWith('0002') ? '0002' : '4242', exp_month: 12, exp_year: 2030 } }),
+    // pm_link_*: a Stripe Link wallet, which has no card part.
+    retrieve: async (id) => (id.startsWith('pm_link') ? { id, type: 'link', link: { email: 'owner@link.test' } }
+      : { id, type: 'card', card: { brand: 'visa', last4: id.endsWith('0002') ? '0002' : '4242', exp_month: 12, exp_year: 2030 } }),
   },
   paymentIntents: {
     create: async (p, o) => {
@@ -98,6 +100,8 @@ const conf = await billing.functions.confirmFleetCheckout.run({ sessionId: 'cs_t
 assert.equal(conf.paid, true); assert.equal(conf.status, 'active'); assert.equal(conf.billingStatus, 'ok'); assert.equal(conf.owed, 0);
 f = await fleet('f1');
 assert.equal(f.suspendedReason, undefined); assert.equal(f.billing.card.last4, '4242'); assert.equal(f.billing.paymentMethodId, 'pm_4242');
+assert.equal(f.billing.card.type, 'card'); assert.equal(f.billing.card.brand, 'visa');
+assert.equal(f.billing.lastError, null, 'old "no_card" error cleared once paid');
 assert.equal((await wallet('f1')).availableBalance, 0);
 step('the webhook for the same payment does not credit it twice');
 assert.equal(await billing.handleWebhookPayment(sessions.cs_test_1.payment_intent), true);
@@ -128,6 +132,15 @@ assert.equal((await wallet('f1')).availableBalance, 0);
 const keys = calls.filter((c) => c[0] === 'paymentIntents.create').map((c) => c[2].idempotencyKey);
 assert.ok(keys.at(-1).endsWith('-pm_new_4242'), 'the new card gets its own key');
 assert.ok(keys.some((k) => k.endsWith('-pm_0002')), 'the declined card had a different one');
+
+step('owner saves a Stripe Link wallet: shown as Link with its email, still charged off-session');
+sessions.cs_link = { id: 'cs_link', mode: 'setup', customer: 'cus_test', metadata: { fleetId: 'f1' }, setup_intent: { status: 'succeeded', payment_method: 'pm_link_1' } };
+await billing.functions.confirmFleetCheckout.run({ sessionId: 'cs_link' }, ctxOwner);
+f = await fleet('f1');
+assert.deepEqual(f.billing.card, { type: 'link', brand: 'link', last4: '', expMonth: null, expYear: null, email: 'owner@link.test' });
+await db.doc('fleetWallets/f1').update({ availableBalance: -25 });
+assert.equal(await billing.chargeShortfall('f1'), 'paid');
+assert.equal(calls.filter((c) => c[0] === 'paymentIntents.create').pop()[1].payment_method, 'pm_link_1');
 
 step('a grace setting of 0 means none, not 3 days');
 cfg.subscription.graceDays = 0;

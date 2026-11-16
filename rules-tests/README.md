@@ -12,7 +12,7 @@ declare Stripe secrets stall in the emulator unless `functions/.secret.local` ho
 (STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PAYOUT_WEBHOOK_SECRET); create it for the run and
 delete it after (it is gitignored). Leave Resend and Twilio out: the tests expect them switched off.
 
-Fleet billing (plans, card charge, grace period, pause, pay to resume), with a fake Stripe:
+Fleet billing (plans, card charge, Stripe Link as the saved method, grace period, pause, pay to resume), with a fake Stripe:
 `firebase emulators:exec --only firestore --project demo-tar "node rules-tests/fleet-billing.mjs"`
 
 Deleting an account (deleteMyAccount): same set-up, `node rules-tests/account-delete.mjs`, on a fresh emulator (it creates the same test logins as fleet-e2e).
