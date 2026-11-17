@@ -199,6 +199,11 @@ r = await settled(id);
 assert.equal(val(r.status), 'cancelled'); assert.equal(val(r.cancelReason), 'price_changed');
 assert.match(val(r.cancelMessage), /price for this trip has changed/);
 
+step('price: a discount with no promo code is refused (it would be a free ride)');
+id = await book(R, rider, REDDITCH, { total: 0, discount: 1 });
+r = await settled(id);
+assert.equal(val(r.status), 'cancelled'); assert.equal(val(r.cancelReason), 'price_changed');
+
 step('price: cash while cash is off, and bidding while bidding is off, are refused');
 id = await addDoc(collection(R.db, 'rides'), { riderId: rider, status: 'searching', rideType: 'RouteMini', pickupLocation: REDDITCH, dropoffLocation: REDDITCH, fare: { total: FULL }, paymentMethod: 'cash' }).then((x) => x.id);
 assert.equal(val((await settled(id)).cancelReason), 'bad_payment');

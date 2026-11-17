@@ -4099,8 +4099,11 @@ async function checkAppFare(rideId, ride) {
   const chargesStops = typeof (ride.fare && ride.fare.stopCharge) ===
     "number";
   const fare = chargesStops ? priced.fare : priced.fareNoStopCharge;
-  const discount = Math.min(1, Math.max(0,
-      Number(ride.fare && ride.fare.discount) || 0));
+  // A discount only counts with a promo code (checked below). Without
+  // this, an altered app could book with discount 1 and no code: a free
+  // ride, nothing held, nothing paid to the driver.
+  const discount = ride.fare && ride.fare.promoCode ?
+    Math.min(1, Math.max(0, Number(ride.fare.discount) || 0)) : 0;
   const expected = fare.subtotal * (1 - discount) * (1 + fare.vatPercent / 100);
   const minPercent = numSetting(raw.bidding, "minOfferPercent", 100) / 100;
   const lowest = ride.bidding === true ? expected * minPercent : expected;
