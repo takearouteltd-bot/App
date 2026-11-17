@@ -178,12 +178,46 @@ await O.call('cancelFleetBooking', { rideId: be.rideId });
 step('a job for one named driver who gives it back is held for the office, not passed on');
 const bnd = await O.call('createFleetBooking', { customer: { phone: '07700900444', name: 'Nia' }, pickup: T5, dropoff: PAD, driverId: d1.user.uid });
 await updateDoc(doc(D.db, 'rides', bnd.rideId), claim(d1.user.uid));
-await updateDoc(doc(D.db, 'rides', bnd.rideId), { status: 'dispatching', driverId: null, acceptedAt: null });
+// As the app gives a job back (DriverRideInProgressScreen): it is then
+// never taken for an offer that ran out unanswered (fleet.js offerRanOut).
+const gaveBack = (uid) => ({ status: 'dispatching', driverId: null, acceptedAt: null, declinedBy: arrayUnion(uid), lastDriverCancelAt: serverTimestamp() });
+await updateDoc(doc(D.db, 'rides', bnd.rideId), gaveBack(d1.user.uid));
 let rnd = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', bnd.rideId))).data(); return r.dispatch.mode === 'office' ? r : null; }, 'held for office');
 assert.equal(rnd.dispatch.driverId, null); assert.equal(rnd.dispatch.returnedBy, d1.user.uid); assert.equal(rnd.dispatch.heldReason, 'gave_back');
 assert.ok(rnd.declinedBy.includes(d1.user.uid));
 await assert.rejects(updateDoc(doc(D2.db, 'rides', bnd.rideId), claim(d2.user.uid)), 'held: nobody takes it');
 await O.call('cancelFleetBooking', { rideId: bnd.rideId });
+
+step('a job sent to one driver by name who does not answer: held for the office as "no answer", no longer ringing');
+await adminSet(`fleets/${created.fleetId}`, { queueOfferSeconds: 6 }, true);
+const bna = await O.call('createFleetBooking', { customer: { phone: '07700900445', name: 'Ola' }, pickup: T5, dropoff: PAD, driverId: d1.user.uid });
+const sentAt = Date.now();
+let rna = (await getDoc(doc(O.db, 'rides', bna.rideId))).data();
+assert.equal(rna.dispatch.offerSeconds, 6, 'the answer time is on the job, for the app\'s countdown');
+rna = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', bna.rideId))).data(); return r.dispatch.mode === 'office' ? r : null; }, 'held: no answer', 60000);
+const heldS = (Date.now() - sentAt) / 1000;
+// The scheduler never runs by itself in the emulator, so this was the
+// server's own timer (timeFleetOffers); the emulator's trigger backlog adds
+// a few seconds at times.
+console.log(`    held ${heldS.toFixed(1)} s after it was sent (6 s to answer)`);
+assert.ok(heldS < 60, 'held by the timer, not left ringing');
+assert.equal(rna.dispatch.heldReason, 'no_answer'); assert.equal(rna.dispatch.driverId, null, 'not shown as ringing');
+assert.equal(rna.dispatch.returnedBy, d1.user.uid); assert.deepEqual(rna.dispatch.missed, [d1.user.uid]);
+await until(async () => !(await getDoc(doc(D.db, 'fleetJobOffers', bna.rideId))).exists(), 'offer gone from the app');
+await assert.rejects(updateDoc(doc(D.db, 'rides', bna.rideId), claim(d1.user.uid)), 'held: nobody takes it');
+
+step('sent again by name: refused while the driver is offline or their position is stale, fine once they are back');
+await updateDoc(doc(D2.db, 'drivers', d2.user.uid), { status: 'offline' });
+await assert.rejects(O.call('redispatchFleetBooking', { rideId: bna.rideId, driverId: d2.user.uid }), /is offline/);
+await updateDoc(doc(D2.db, 'drivers', d2.user.uid), { status: 'online' });
+await adminSet(`drivers/${d2.user.uid}`, { lastUpdated: new Date(Date.now() - 20 * 60000) }, true);
+await assert.rejects(O.call('redispatchFleetBooking', { rideId: bna.rideId, driverId: d2.user.uid }), /position/);
+await adminSet(`drivers/${d2.user.uid}`, { lastUpdated: new Date() }, true);
+await O.call('redispatchFleetBooking', { rideId: bna.rideId, driverId: d2.user.uid });
+rna = (await getDoc(doc(O.db, 'rides', bna.rideId))).data();
+assert.equal(rna.dispatch.driverId, d2.user.uid); assert.equal(rna.dispatch.mode, 'driver'); assert.equal(rna.dispatch.heldReason, undefined);
+await O.call('cancelFleetBooking', { rideId: bna.rideId });
+await adminSet(`fleets/${created.fleetId}`, { queueOfferSeconds: 45 }, true);
 
 step('a job given back after accepting goes out to the fleet as a BID JOB, first to accept gets it; office can still send by name');
 await updateDoc(doc(D2.db, 'drivers', d2.user.uid), { cashJobs: false });
@@ -195,7 +229,7 @@ const giveBack = async (extra) => {
   await until(async () => (await getDoc(doc(O.db, 'rides', b.rideId))).data().dispatch.driverId === d1.user.uid, 'offered to driver 1');
   await updateDoc(doc(D.db, 'rides', b.rideId), claim(d1.user.uid));
   await updateDoc(doc(D2.db, 'drivers', d2.user.uid), { status: 'online' });
-  await updateDoc(doc(D.db, 'rides', b.rideId), { status: 'dispatching', driverId: null, acceptedAt: null });
+  await updateDoc(doc(D.db, 'rides', b.rideId), gaveBack(d1.user.uid));
   return b.rideId;
 };
 const cashId = await giveBack({});
@@ -246,6 +280,9 @@ const b3 = await O.call('createFleetBooking', { customer: { phone: '07700900888'
 assert.equal(b3.status, 'scheduled');
 
 step('an app job taken by a fleet driver is tagged with the fleet (cash here: Stripe is not set up in the emulator)');
+// Every driver may take an app job at once (not one at a time, which
+// bid-jobs.mjs covers), so the claims below never race the first offer.
+await adminSet('config/app', { dispatch: { sequentialOffers: 0 } }, true);
 await adminSet('rides/appjob', { riderId: 'r1', driverId: null, status: 'searching', rideType: 'RouteMini', paymentMethod: 'cash', pricing: 'checked', fare: { total: 20 }, pickupLocation: T5, dropoffLocation: PAD });
 await updateDoc(doc(D.db, 'rides', 'appjob'), claim(d1.user.uid));
 await until(async () => (await getDoc(doc(D.db, 'rides', 'appjob'))).data().fleetId === created.fleetId, 'tagFleetRides');

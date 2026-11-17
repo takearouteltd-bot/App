@@ -119,6 +119,11 @@ step('given to driver 1 again, then sent now: it rings driver 1 only, and leaves
 await O.call('redispatchFleetBooking', { rideId: bk.rideId, driverId: d1, keepTime: true });
 r = await ride(bk.rideId);
 assert.equal(r.dispatch.mode, 'driver'); assert.equal(r.dispatch.heldReason, undefined); assert.equal(r.dispatch.returnedBy, undefined);
+// Kept for its time it may go to a driver who is offline; sent now it may not.
+await assert.rejects(O.call('redispatchFleetBooking', { rideId: bk.rideId, driverId: d1 }), /offline/);
+assert.equal((await ride(bk.rideId)).status, 'scheduled', 'refused: left as it was');
+await adminSet(`drivers/${d1}`, { status: 'online' }, true);
+await adminSet(`drivers/${d2}`, { status: 'online' }, true);
 await O.call('redispatchFleetBooking', { rideId: bk.rideId, driverId: d1 });
 assert.equal((await ride(bk.rideId)).status, 'dispatching');
 await until(async () => (await adminGet(`fleetJobOffers/${bk.rideId}`)) !== null, 'offer shown');
@@ -148,6 +153,9 @@ await updateDoc(doc(D1.db, 'rides', all.rideId), { status: 'dispatching', driver
 r = await until(async () => { const x = await ride(all.rideId); return x.dispatch.autoResent ? x : null; }, 'auto resent');
 assert.equal(r.dispatch.mode, 'all');
 await O.call('cancelFleetBooking', { rideId: all.rideId });
+// Nobody free for the follow-on jobs below.
+await adminSet(`drivers/${d1}`, { status: 'offline' }, true);
+await adminSet(`drivers/${d2}`, { status: 'offline' }, true);
 
 /* ---------------------------------------------------- follow-on jobs */
 

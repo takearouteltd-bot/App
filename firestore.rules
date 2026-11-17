@@ -488,11 +488,22 @@ service cloud.firestore {
       );
     }
 
+    /* App jobs one driver at a time (functions/appOffers.js): while the
+       job is offered to one driver (offer.driverId), only that driver can
+       take it. A BID JOB, a job nobody is being asked about, and a job
+       with no offer on it (bidding, or offers switched off) are open to any
+       driver, as before. */
+    function offeredToMe(ride) {
+      return ride.get("bidJob", null) != null ||
+        ride.get("offer", {}).get("driverId", null) in [null, request.auth.uid];
+    }
+
     /* A free driver takes a searching job. */
     function driverClaimsRide(changed) {
       return changed.hasOnly(["status", "driverId", "acceptedAt", "walletProcessed"]) &&
         resource.data.status == "searching" &&
         resource.data.get("pricing", "") == "checked" &&
+        offeredToMe(resource.data) &&
         request.resource.data.status == "accepted" &&
         request.resource.data.driverId == request.auth.uid &&
         request.resource.data.walletProcessed == false &&
@@ -676,8 +687,12 @@ service cloud.firestore {
         !("priceCheck" in request.resource.data) &&
         /* Tips are recorded by the server once paid (functions/tips.js). */
         !("tip" in request.resource.data) &&
-        /* BID JOBs are opened by the server only (functions/bidJobs.js). */
+        /* BID JOBs are opened by the server only (functions/bidJobs.js),
+           and who is offered the job, who was asked and who missed it are
+           the server's too (functions/appOffers.js). */
         !("bidJob" in request.resource.data) &&
+        !request.resource.data.keys().hasAny(["offer", "askedDrivers", "missedBy",
+          "declinedEarlier", "gaveBackBy"]) &&
         /* A booking from the app, nothing else: a phone job or a fleet job
            here would skip the price check and ring a fleet. */
         request.resource.data.status == "searching" &&

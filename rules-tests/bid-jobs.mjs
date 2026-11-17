@@ -3,6 +3,9 @@
 // counter-offers on app jobs when allowed. The first offer is always a
 // normal job; it becomes a BID JOB after a decline that leaves nobody, after
 // the wait, or straight away when a driver who took it gives it back.
+// App jobs go to one driver at a time first (functions/appOffers.js): a no
+// or no answer goes to the next nearest, and the BID JOB that follows asks
+// everyone, those who said no or missed it included.
 // Against the emulators (auth 9099, firestore 8080, functions 5001, pubsub
 // 8085), project demo-tar, with the fake Routes on :8999 (ROUTES_API_BASE in
 // functions/.env.local): the booking-checks set-up plus pubsub (see README).
@@ -157,6 +160,8 @@ assert.equal(r.bidJob.reason, 'unanswered');
 await adminSet(`rides/${j2}`, { status: 'cancelled' }, true);
 
 step('a driver takes a job, then gives it back: straight out as a BID JOB, without them');
+// Driver 3 alone nearby, so the job is offered to them (one at a time).
+await place(d1, GONE, 'offline');
 await place(d3, NEAR);
 const j5 = await book();
 await priced(j5);
@@ -194,6 +199,53 @@ await adminSet(`rides/${j4}`, { status: 'cancelled' }, true);
 await adminSet('config/app', { bidJobs: BID_ON }, true);
 await place(d3, GONE, 'offline');
 
+/* ------------------------------------------- app jobs one at a time */
+
+step('one at a time: nearest first; a no goes to the next driver, and so does no answer (timed by the server)');
+await adminSet('config/app', { dispatch: { searchRadiusKm: 3, requestTimeoutSeconds: 6 } }, true);
+const MID = { latitude: 52.3110, longitude: -1.9500, address: 'Plymouth Road, Redditch' }; // ~1.2 km
+const EDGE = { latitude: 52.3200, longitude: -1.9500, address: 'Mount Pleasant, Redditch' }; // ~2.2 km
+await place(d1, NEAR); await place(d2, MID); await place(d3, EDGE);
+const s1 = await book();
+r = await until(async () => { const x = await ride(s1); return x.offer?.driverId ? x : null; }, 'first offer');
+assert.equal(r.offer.driverId, d1, 'the nearest first'); assert.equal(r.offer.state, 'asking'); assert.equal(r.offer.seconds, 6);
+assert.equal(r.bidJob, undefined, 'a normal job');
+await assert.rejects(updateDoc(doc(D2.db, 'rides', s1), claim(d2)), 'only the driver being asked can take it');
+await updateDoc(doc(D1.db, 'rides', s1), { declinedBy: arrayUnion(d1) });
+r = await until(async () => { const x = await ride(s1); return x.offer?.driverId === d2 ? x : null; }, 'next driver after a no', 60000);
+const askedAt = Date.now();
+r = await until(async () => { const x = await ride(s1); return x.offer?.driverId === d3 ? x : null; }, 'next driver after no answer', 60000);
+const tookS = (Date.now() - askedAt) / 1000;
+// No scheduler run meanwhile (it never runs by itself in the emulator), so
+// the server's own timer (timeAppOffers) moved it on; the emulator's
+// trigger backlog adds a few seconds at times.
+console.log(`    moved on ${tookS.toFixed(1)} s after the offer (6 s to answer)`);
+assert.ok(tookS < 60, 'moved on by the timer, not left with driver 2');
+assert.deepEqual(r.missedBy, [d2], 'the server recorded the miss, so the app does not show it again');
+assert.deepEqual(r.askedDrivers, [d1, d2, d3]);
+assert.equal(r.bidJob, undefined, 'still a normal job');
+await assert.rejects(updateDoc(doc(D2.db, 'rides', s1), claim(d2)), 'a driver who missed it cannot take it now');
+
+step('everyone asked: a BID JOB to all nearby drivers, those who said no or missed it included');
+await updateDoc(doc(D3.db, 'rides', s1), { declinedBy: arrayUnion(d3) });
+r = await until(async () => { const x = await ride(s1); return x.bidJob ? x : null; }, 'BID JOB once everyone was asked', 60000);
+assert.equal(r.bidJob.reason, 'declined'); assert.equal(r.offer.state, 'open'); assert.equal(r.offer.driverId, null);
+assert.deepEqual(r.declinedBy, [], 'those who said no are asked again');
+assert.deepEqual([...r.declinedEarlier].sort(), [d1, d3].sort(), 'their earlier answers are kept');
+await updateDoc(doc(D1.db, 'rides', s1), claim(d1));
+assert.equal((await ride(s1)).driverId, d1, 'a driver who said no before can take the BID JOB');
+await adminSet(`rides/${s1}`, { status: 'cancelled' }, true);
+
+step('one at a time, nobody answers: then a BID JOB ("unanswered")');
+await place(d2, GONE, 'offline'); await place(d3, GONE, 'offline');
+const s2 = await book();
+await until(async () => (await ride(s2)).offer?.driverId === d1, 'offered to driver 1');
+r = await until(async () => { const x = await ride(s2); return x.bidJob ? x : null; }, 'BID JOB after no answer', 60000);
+assert.equal(r.bidJob.reason, 'unanswered'); assert.deepEqual(r.missedBy, [d1]); assert.deepEqual(r.declinedBy, []);
+await adminSet(`rides/${s2}`, { status: 'cancelled' }, true);
+await place(d1, GONE, 'offline');
+await adminSet('config/app', { dispatch: { searchRadiusKm: 3 } }, true);
+
 /* ---------------------------------------------------------- phone jobs */
 
 step('a whole-fleet phone job: driver 1 says no, driver 2 is 8 km out: BID JOB at the office price, no counters');
@@ -205,7 +257,8 @@ await updateDoc(doc(D1.db, 'rides', p1.rideId), { declinedBy: arrayUnion(d1) });
 r = await until(async () => { const x = await ride(p1.rideId); return x.bidJob ? x : null; }, 'phone bid job');
 assert.equal(r.bidJob.reason, 'declined'); assert.equal(r.bidJob.allowCounter, false);
 assert.notEqual(r.dispatch.offeredAt, before.dispatch.offeredAt, 'rung again');
-assert.ok(r.declinedBy.includes(d1), 'driver 1 is not asked again');
+assert.deepEqual(r.declinedBy, [], 'driver 1 is asked again in the BID JOB');
+assert.ok(r.declinedEarlier.includes(d1), 'their no is kept');
 await until(async () => (await adminGet(`fleetJobOffers/${p1.rideId}`))?.bidJob, 'mirror shows it');
 await assert.rejects(setDoc(doc(D2.db, 'rides', p1.rideId, 'offers', d2), { ...offer(9), driverId: d2 }), 'no counters on phone jobs');
 await updateDoc(doc(D2.db, 'rides', p1.rideId), claim(d2));
@@ -232,7 +285,15 @@ const p3 = await O.call('createFleetBooking', { customer: { phone: '07700900497'
 await until(async () => (await ride(p3.rideId)).dispatch.driverId === d1, 'nearest is driver 1');
 await updateDoc(doc(D1.db, 'rides', p3.rideId), { declinedBy: arrayUnion(d1) });
 r = await until(async () => { const x = await ride(p3.rideId); return x.bidJob ? x : null; }, 'nearest bid job');
-assert.equal(r.dispatch.queueDone, true); assert.ok(r.declinedBy.includes(d1));
+assert.equal(r.dispatch.queueDone, true); assert.ok(r.declinedEarlier.includes(d1)); assert.ok(!r.declinedBy.includes(d1), 'driver 1 asked again');
+
+step('the office sends it again: a normal offer first, not a BID JOB');
+await O.call('redispatchFleetBooking', { rideId: p3.rideId, driverId: null });
+r = await ride(p3.rideId);
+assert.equal(r.bidJob, undefined, 'BID JOB cleared'); assert.equal(r.dispatch.mode, 'all');
+await sleep(1500);
+assert.equal((await ride(p3.rideId)).bidJob, undefined, 'and not opened again straight away');
+assert.equal((await adminGet(`fleetJobOffers/${p3.rideId}`)).bidJob, undefined, 'the app sees a normal job');
 await O.call('cancelFleetBooking', { rideId: p3.rideId });
 
 fake.close();

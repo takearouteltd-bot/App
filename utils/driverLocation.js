@@ -91,6 +91,13 @@ export function useDriverPosition() {
 const SAVE_EVERY_MS_ON_JOB = 10000;
 const SAVE_EVERY_MS_IDLE = 20000;
 const SAVE_AFTER_METRES = 150;
+/* A parked phone can go many minutes without a new fix (iPhones report only
+   on a move), and dispatch leaves out a driver whose position is older than
+   15 minutes (functions/index.js OFFER_STALE_MS): a driver waiting on a rank
+   silently stopped getting jobs. So while online the last position is saved
+   again at least this often, even without a move. */
+const HEARTBEAT_MS = 60000;
+const HEARTBEAT_CHECK_MS = 10000;
 let savingSince = 0;
 let lastSave = null;
 // The same for the public position (driverLocations), in the publisher below.
@@ -297,7 +304,7 @@ export async function requestDriverPosition(driverId) {
 export function useDriverLocationPublisher(driverId, enabled = true) {
   // Online, free and vehicle class, from the driver record: decides whether
   // the public position is published.
-  const [presence, setPresence] = useState({ isFree: false, onRide: false, vehicleType: null });
+  const [presence, setPresence] = useState({ isFree: false, onRide: false, online: false, vehicleType: null });
   const position = useDriverPosition();
 
   useEffect(() => {
@@ -319,6 +326,7 @@ export function useDriverLocationPublisher(driverId, enabled = true) {
         setPresence({
           isFree: data.status === 'online' && data.isOnRide !== true,
           onRide: data.isOnRide === true,
+          online: data.status === 'online' || data.status === 'on_ride',
           vehicleType: data.vehicleType || null,
         });
       },
@@ -340,6 +348,20 @@ export function useDriverLocationPublisher(driverId, enabled = true) {
       stopJobSharing();
     };
   }, [driverId, enabled, onRide]);
+
+  // The heartbeat (HEARTBEAT_MS): only when nothing else has saved the
+  // position for a minute, so a driver on the move writes no more than now.
+  const online = presence.online;
+  useEffect(() => {
+    if (!driverId || !enabled || !online) return undefined;
+    const timer = setInterval(() => {
+      const coords = state.coords || (lastSave && lastSave.driverId === driverId ? lastSave.coords : null);
+      if (!coords || !Number.isFinite(coords.latitude)) return;
+      if (lastSave && lastSave.driverId === driverId && Date.now() - lastSave.at < HEARTBEAT_MS - HEARTBEAT_CHECK_MS) return;
+      writeDriverLocation(driverId, coords);
+    }, HEARTBEAT_CHECK_MS);
+    return () => clearInterval(timer);
+  }, [driverId, enabled, online]);
 
   /* Passengers see nearby cars on their home map. They must never read the
      driver record itself (name, phone, documents), so an online driver also

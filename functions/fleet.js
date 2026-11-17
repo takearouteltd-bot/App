@@ -40,9 +40,11 @@
                   sends it again)
 
    A job sent to one driver stays theirs alone. When that driver says no,
-   says they can't do a booked job, or gives it back after accepting, it is
-   held for the office ("office"), never passed to another driver by
-   itself. A booked job with a driver chosen is "allocated": the driver sees
+   does not answer within queueOfferSeconds, says they can't do a booked
+   job, or gives it back after accepting, it is held for the office
+   ("office", dispatch.heldReason "declined", "no_answer", "cannot_do" or
+   "gave_back"), never passed to another driver by itself. A booked job
+   with a driver chosen is "allocated": the driver sees
    it in the app from then on (fleetAllocations/{rideId}, without the
    customer's number) and is told when it is changed, moved or cancelled.
      accepted / arrived / ongoing / completed / cancelled   as app jobs
@@ -83,6 +85,13 @@
    the next. When nobody in the zone is left it goes to the whole fleet.
    dispatch.nearest uses the same steps without zones: it rings the closest
    free driver, then the next closest, then the whole fleet.
+
+   Answer time: every offer to one driver (by name, by queue, to the
+   nearest) is timed by the server (timeFleetOffers, with runFleetQueues as
+   the backstop), never by the phone. The time is the fleet's
+   queueOfferSeconds, copied onto the job as dispatch.offerSeconds so the
+   driver's app counts down the same; who let it run out is kept in
+   dispatch.missed.
 ====================================== */
 
 /* The app's Google Maps key (App/config/maps.js). It ships inside the app,
@@ -160,6 +169,7 @@ module.exports = (deps) => {
   // admin.firestore does not carry FieldValue or Timestamp.
   const {FieldValue, Timestamp} = require("firebase-admin/firestore");
   const {invoiceEmail, balanceEmail} = require("./fleetInvoiceEmail");
+  const {waitThen} = require("./offerTimer");
   const out = {};
 
   /* ------------------------------ helpers ---------------------------- */
@@ -522,11 +532,16 @@ module.exports = (deps) => {
   async function nearestFreeDriver(ride) {
     const cfg = await loadAppConfig();
     let best = null;
-    (await fleetPool(ride)).forEach((p) => {
+    const pool = await fleetPool(ride);
+    pool.forEach((p) => {
       if (p.km <= cfg.dispatch.searchRadiusKm && (!best || p.km < best.km)) {
         best = {driverId: p.id, km: p.km};
       }
     });
+    if (!best) {
+      console.log(`Nearest for ${ride.fleetId}: nobody; ` +
+        deps.poolNote(pool, cfg.dispatch.searchRadiusKm));
+    }
     return best;
   }
 
@@ -541,16 +556,81 @@ module.exports = (deps) => {
     const drivers = await db.collection("drivers")
         .where("fleetId", "==", ride.fleetId).get();
     const pool = [];
+    // Who was left out and why, for the log line (poolNote in index.js).
+    const skipped = {declined: 0, offline: 0, docs: 0, membership: 0,
+      stale: 0, busy: 0, filters: 0};
     drivers.forEach((snap) => {
       const d = snap.data();
-      if (skip.has(snap.id) || d.status !== "online" || positionStale(d) ||
-          d.isOnRide === true || !canTakeFleetJob(d, ride) ||
-          !wantsJob(d, ride)) {
+      const why = skip.has(snap.id) ? "declined" :
+        d.status !== "online" ? "offline" :
+        membershipSuspended(d) ? "membership" :
+        !canWork(d) ? "docs" :
+        positionStale(d) ? "stale" :
+        d.isOnRide === true ? "busy" :
+        !canTakeFleetJob(d, ride) || !wantsJob(d, ride) ? "filters" : null;
+      if (why) {
+        skipped[why]++;
         return;
       }
       pool.push({id: snap.id, km: distanceKm(d.location, ride.pickupLocation)});
     });
+    pool.skipped = skipped;
     return pool;
+  }
+
+  /**
+   * How long a driver has to answer a phone job sent to them alone: the
+   * time on the job, else the fleet's queueOfferSeconds.
+   * @param {Object} ride Ride data.
+   * @param {?Object} fleet Fleet data, when the job has no time on it.
+   * @return {number} Milliseconds.
+   */
+  function offerMsFor(ride, fleet) {
+    const seconds = Number((ride.dispatch || {}).offerSeconds) ||
+      Number(fleet && fleet.queueOfferSeconds) || DEFAULT_QUEUE_OFFER_SECONDS;
+    return 1000 * Math.max(5, seconds);
+  }
+
+  /**
+   * A phone job offered to one driver ran out without an answer, if it is
+   * still that offer (driver and offeredAt). By queue or to the nearest it
+   * counts as a no, and dispatchFleetJob rings the next driver. Sent by
+   * name, it is held for the office ("no_answer"), and the dashboard stops
+   * showing it as ringing. Either way the driver is added to
+   * dispatch.missed, so their app does not show it again.
+   * @param {Object} ref Ride ref.
+   * @param {string} driverId The driver it was offered to.
+   * @param {number} offeredMs dispatch.offeredAt of that offer.
+   * @return {Promise<boolean>} Moved on.
+   */
+  async function offerRanOut(ref, driverId, offeredMs) {
+    return db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const r = snap.exists ? snap.data() : null;
+      const d = (r && r.dispatch) || {};
+      if (!r || r.status !== "dispatching" || r.driverId ||
+          d.driverId !== driverId || toMillis(d.offeredAt) !== offeredMs ||
+          (r.declinedBy || []).includes(driverId) ||
+          // Taken and given back since: not a missed offer.
+          (toMillis(r.lastDriverCancelAt) || 0) > offeredMs) {
+        return false;
+      }
+      if (d.mode === "driver") {
+        tx.update(ref, Object.assign(heldForOffice(driverId, "no_answer"),
+            {"dispatch.missed": FieldValue.arrayUnion(driverId)}));
+      } else if (d.mode === "queue") {
+        tx.update(ref, {
+          "declinedBy": FieldValue.arrayUnion(driverId),
+          "dispatch.missed": FieldValue.arrayUnion(driverId),
+        });
+      } else {
+        return false;
+      }
+      return true;
+    }).catch((error) => {
+      console.error("Offer timeout failed:", ref.id, error.message);
+      return false;
+    });
   }
 
   /**
@@ -570,8 +650,9 @@ module.exports = (deps) => {
    * sends it again (redispatchFleetBooking). The dashboard shows who handed
    * it back and why.
    * @param {string} driverId The driver it was with.
-   * @param {string} why "declined", "gave_back" or "cannot_do" (a booked
-   *   job the driver said they can't do).
+   * @param {string} why "declined", "no_answer" (the time to answer ran
+   *   out), "gave_back" or "cannot_do" (a booked job the driver said they
+   *   can't do).
    * @return {Object} Ride update.
    */
   function heldForOffice(driverId, why) {
@@ -628,12 +709,15 @@ module.exports = (deps) => {
     let ids = [];
     let freeKm = null;
     let near = [];
+    let note = "";
     if (target) {
       ids = [target];
     } else {
-      near = (await fleetPool(ride)).filter((p) => p.km <= radiusKm);
+      const pool = await fleetPool(ride);
+      near = pool.filter((p) => p.km <= radiusKm);
       ids = near.map((p) => p.id);
       if (near.length) freeKm = Math.min(...near.map((p) => p.km));
+      note = `; ${deps.poolNote(pool, radiusKm)}`;
     }
     const kind = ride.collectBy === "account" ?
       `Account job, ${(ride.account || {}).company || "client"}` :
@@ -661,7 +745,7 @@ module.exports = (deps) => {
       }, ring));
     }
     console.log(`Fleet job ${rideId} offered to ${ids.length} driver(s)` +
-      (bid ? " as a BID JOB" : ""));
+      (bid ? " as a BID JOB" : "") + note);
     // A busy driver about to drop off nearby (or the chosen driver, if they
     // are on a trip) is offered it as their next job.
     await followOn.offerFor(rideId, ride, {cfg, freeKm});
@@ -890,6 +974,7 @@ module.exports = (deps) => {
         "dispatch.zoneName": zoneName,
         "dispatch.queueDone": !next,
         "dispatch.offeredAt": FieldValue.serverTimestamp(),
+        "dispatch.offerSeconds": offerMsFor({}, fleetSnap.data()) / 1000,
         "dispatch.queueOffers": FieldValue.increment(next ? 1 : 0),
       });
     });
@@ -2888,6 +2973,8 @@ module.exports = (deps) => {
         driverId,
         leadMinutes: lead,
         offeredAt: later || held ? null : ts,
+        // How long a driver sent it alone has to answer (timeFleetOffers).
+        offerSeconds: offerMsFor({}, me.fleet) / 1000,
         rounds: later || held ? 0 : 1,
       },
       timestamps: {createdAt: ts, acceptedAt: null, startedAt: null,
@@ -2972,6 +3059,23 @@ module.exports = (deps) => {
         throw new HttpsError("failed-precondition",
             "That driver cannot take this job right now.");
       }
+      // Sent now (not a booked job kept for its time): a driver who is
+      // offline, or whose app has stopped reporting where they are, would
+      // only be rung for nothing while the customer waits.
+      const now = !(keepTime && ride.status === "scheduled");
+      const who = [drv.firstName, drv.lastName].filter(Boolean).join(" ") ||
+        drv.name || "That driver";
+      if (now && !["online", "on_ride"].includes(drv.status)) {
+        throw new HttpsError("failed-precondition",
+            `${who} is offline. Ask them to go online in the app, or send ` +
+            "the job to another driver or the whole fleet.");
+      }
+      if (now && positionStale(drv)) {
+        throw new HttpsError("failed-precondition",
+            `${who}'s app has not sent their position for over 15 minutes ` +
+            "(it may be closed or have no signal). Ask them to open " +
+            "TakeARoute, or send the job to another driver.");
+      }
     }
     await db.runTransaction(async (tx) => {
       const snap = await tx.get(rideRef);
@@ -2983,8 +3087,16 @@ module.exports = (deps) => {
         throw new HttpsError("failed-precondition",
             "A driver already has this job, or it has ended.");
       }
+      // Sent again by the office: an ordinary offer, never a BID JOB first
+      // (bidJobs.js: the first offer is always a normal job), with the
+      // fleet's answer time as it is now.
+      const fresh = {
+        "bidJob": FieldValue.delete(),
+        "gaveBackBy": FieldValue.delete(),
+        "dispatch.offerSeconds": offerMsFor({}, me.fleet) / 1000,
+      };
       if (keepTime && ride.status === "scheduled") {
-        tx.update(rideRef, {
+        tx.update(rideRef, Object.assign(fresh, {
           "dispatch.mode": mode,
           "dispatch.nearest": nearest,
           "dispatch.driverId": driverId,
@@ -2993,10 +3105,10 @@ module.exports = (deps) => {
           "dispatch.heldReason": FieldValue.delete(),
           "declinedBy": driverId ?
             (ride.declinedBy || []).filter((id) => id !== driverId) : [],
-        });
+        }));
         return;
       }
-      tx.update(rideRef, {
+      tx.update(rideRef, Object.assign(fresh, {
         "status": "dispatching",
         "dispatchAt": Timestamp.now(),
         "dispatch.mode": mode,
@@ -3014,7 +3126,7 @@ module.exports = (deps) => {
         // before is asked again, since the operator chose to resend.
         "declinedBy": driverId ?
           (ride.declinedBy || []).filter((id) => id !== driverId) : [],
-      });
+      }));
     });
     return {ok: true};
   });
@@ -3305,6 +3417,8 @@ module.exports = (deps) => {
       resend = true;
       update.status = "dispatching";
       update.declinedBy = [];
+      // Offered afresh: an ordinary offer first, not a BID JOB.
+      update.bidJob = FieldValue.delete();
       update["dispatch.missed"] = [];
       update["dispatch.queueDone"] = false;
       update["dispatch.reRings"] = 0;
@@ -3876,6 +3990,8 @@ module.exports = (deps) => {
           const toQueue = old.mode === "queue" && !bidOn;
           await change.after.ref.update({
             "declinedBy": FieldValue.arrayUnion(before.driverId),
+            // Not asked again, even when the BID JOB asks everyone else.
+            "gaveBackBy": FieldValue.arrayUnion(before.driverId),
             "dispatch.mode": toQueue ? "queue" : "all",
             "dispatch.nearest": old.nearest === true,
             "dispatch.driverId": null,
@@ -3891,7 +4007,8 @@ module.exports = (deps) => {
               FieldValue.serverTimestamp(),
           });
           if (bidOn) {
-            await bidJobs.open(change.after.ref, "given_back", {again: true});
+            await bidJobs.open(change.after.ref, "given_back",
+                {again: true, keep: [before.driverId]});
           }
           return null;
         }
@@ -3951,6 +4068,48 @@ module.exports = (deps) => {
           return null;
         }
         await offerFleetJob(rideId, after);
+        return null;
+      });
+
+  /* Each offer of a phone job to one driver (by name, by queue, to the
+     nearest) is timed here: wait out the answer time, then, if it is still
+     the same offer, move it on (offerRanOut). The phone's countdown is for
+     show; this decides. runFleetQueues catches any this misses. */
+  out.timeFleetOffers = functions.runWith({timeoutSeconds: 300}).firestore
+      .document("rides/{rideId}")
+      .onWrite(async (change) => {
+        if (!change.after.exists) return null;
+        const after = change.after.data();
+        if (after.source !== "phone" || after.riderId ||
+            after.status !== "dispatching") {
+          return null;
+        }
+        const d = after.dispatch || {};
+        const offeredMs = toMillis(d.offeredAt);
+        if (!d.driverId || !offeredMs ||
+            !["driver", "queue"].includes(d.mode)) {
+          return null;
+        }
+        const before = change.before.exists ? change.before.data() : null;
+        const b = (before && before.dispatch) || {};
+        // The same offer as before this write. That includes a driver who
+        // took it and gave it back: the hold for the office is
+        // dispatchFleetJob's, not a missed offer.
+        if (before && b.driverId === d.driverId &&
+            toMillis(b.offeredAt) === offeredMs) {
+          return null;
+        }
+        const fleet = d.offerSeconds ? null :
+          (await db.collection("fleets").doc(after.fleetId).get()).data();
+        const left = offeredMs + offerMsFor(after, fleet) - Date.now();
+        // Longer than this function may run: left to runFleetQueues.
+        if (left > 240 * 1000) return null;
+        await waitThen(left + 700, async () => {
+          if (await offerRanOut(change.after.ref, d.driverId, offeredMs)) {
+            console.log(`Fleet job ${change.after.id}: no answer from ` +
+              `${d.driverId} (${d.mode})`);
+          }
+        });
         return null;
       });
 
@@ -4018,48 +4177,46 @@ module.exports = (deps) => {
       .onRun(async () => {
         const fleets = await db.collection("fleets")
             .where("zoneCount", ">", 0).get();
-        const offerMs = {};
+        // Fleets read once per run, for jobs without their own answer time.
+        const fleetCache = {};
         for (const f of fleets.docs) {
           const fleet = f.data();
-          offerMs[f.id] = 1000 * (fleet.queueOfferSeconds ||
-            DEFAULT_QUEUE_OFFER_SECONDS);
+          fleetCache[f.id] = fleet;
           if (fleet.status === "suspended") continue;
           await refreshQueue(f.id, fleet.zones || []).catch((error) => {
             console.error("Queue refresh failed:", f.id, error.message);
           });
         }
 
-        // Equality filters only, so no composite index is needed.
-        const queued = await db.collection("rides")
-            .where("status", "==", "dispatching")
-            .where("dispatch.mode", "==", "queue")
-            .limit(200).get();
+        // Offers to one driver that ran out and timeFleetOffers did not
+        // move on (it was stopped, or the time is too long for it): by
+        // queue or nearest the next driver is rung, by name it is held for
+        // the office. Equality filters only, so no composite index is
+        // needed.
+        const [queued, named] = await Promise.all(["queue", "driver"]
+            .map((mode) => db.collection("rides")
+                .where("status", "==", "dispatching")
+                .where("dispatch.mode", "==", mode)
+                .limit(200).get()));
         let moved = 0;
-        for (const doc of queued.docs) {
+        for (const doc of queued.docs.concat(named.docs)) {
           const ride = doc.data();
+          if (ride.source !== "phone") continue;
           const current = ride.dispatch && ride.dispatch.driverId;
           const offered = toMillis(ride.dispatch && ride.dispatch.offeredAt);
-          const limit = offerMs[ride.fleetId] ||
-            DEFAULT_QUEUE_OFFER_SECONDS * 1000;
-          if (!current || !offered || Date.now() - offered < limit ||
+          if (!current || !offered ||
               (ride.declinedBy || []).includes(current)) {
             continue;
           }
-          // No answer counts as a no: dispatchFleetJob rings the next.
-          await db.runTransaction(async (tx) => {
-            const snap = await tx.get(doc.ref);
-            const now = snap.exists ? snap.data() : null;
-            if (!now || now.status !== "dispatching" ||
-                (now.dispatch && now.dispatch.driverId) !== current) {
-              return;
-            }
-            tx.update(doc.ref, {
-              "declinedBy": FieldValue.arrayUnion(current),
-              "dispatch.missed": FieldValue.arrayUnion(current),
-            });
-          }).then(() => moved++).catch((error) => {
-            console.error("Queue timeout failed:", doc.id, error.message);
-          });
+          if (!ride.dispatch.offerSeconds && !(ride.fleetId in fleetCache)) {
+            fleetCache[ride.fleetId] = (await db.collection("fleets")
+                .doc(ride.fleetId).get()).data() || null;
+          }
+          if (Date.now() - offered < offerMsFor(ride,
+              fleetCache[ride.fleetId])) {
+            continue;
+          }
+          if (await offerRanOut(doc.ref, current, offered)) moved++;
         }
         if (moved) console.log(`Queue: ${moved} unanswered offer(s) moved on`);
 
