@@ -1840,55 +1840,108 @@ module.exports = (deps) => {
     await batch.commit();
   }
 
-  const callsWithStripe = functions.runWith({secrets: STRIPE_SECRETS}).https;
-  out.deleteMyAccount = callsWithStripe.onCall(async (data, context) => {
-    if (!context.auth) throw new HttpsError("unauthenticated", "Sign in.");
-    const uid = context.auth.uid;
+  /* Trips that are booked or under way, as the passenger and as the
+     driver, and payouts that have finished one way or another. */
+  const RIDER_OPEN_TRIPS = ["searching", "scheduled", "dispatching",
+    "accepted", "arrived", "ongoing"];
+  const DRIVER_OPEN_TRIPS = ["accepted", "arrived", "ongoing"];
+  const PAYOUT_DONE = ["completed", "rejected", "failed", "cancelled",
+    "canceled", "paid"];
+
+  /**
+   * Everything deleting an account depends on, read in one go.
+   * @param {string} uid Account.
+   * @return {Promise<Object>} Snapshots, trips and wallet balance.
+   */
+  async function loadAccount(uid) {
     const refs = {
       driver: db.collection("drivers").doc(uid),
       rider: db.collection("riders").doc(uid),
       wallet: db.collection("driverWallets").doc(uid),
     };
-    const [driverSnap, walletSnap, managerSnap, adminSnap, asRider,
-      asDriver, payouts] = await Promise.all([
-      refs.driver.get(), refs.wallet.get(),
+    const [driverSnap, riderSnap, walletSnap, managerSnap, adminSnap,
+      asRider, asDriver, payouts] = await Promise.all([
+      refs.driver.get(), refs.rider.get(), refs.wallet.get(),
       db.collection("fleetManagers").doc(uid).get(),
       db.collection("admins").doc(uid).get(),
       db.collection("rides").where("riderId", "==", uid).get(),
       db.collection("rides").where("driverId", "==", uid).get(),
       db.collection("driverPayouts").where("driverId", "==", uid).get(),
     ]);
-    if (managerSnap.exists || adminSnap.exists) {
-      throw new HttpsError("failed-precondition",
-          "This number is also a fleet or TakeARoute staff login, so it " +
-          "can't be deleted from the app. Please contact TakeARoute.");
-    }
-    const openTrip = (snap, statuses) => snap.docs.some((d) =>
-      statuses.includes(d.data().status));
-    if (openTrip(asRider, ["searching", "scheduled", "dispatching",
-      "accepted", "arrived", "ongoing"]) ||
-        openTrip(asDriver, ["accepted", "arrived", "ongoing"])) {
-      throw new HttpsError("failed-precondition",
-          "You have a trip booked or in progress. Finish or cancel it, " +
-          "then delete your account.");
-    }
     const balance = walletSnap.exists ?
       Number(walletSnap.data().availableBalance) || 0 : 0;
-    if (balance > 0) {
-      throw new HttpsError("failed-precondition",
-          `You still have ${balance.toFixed(2)} in your wallet. Withdraw ` +
-          "it first, or contact TakeARoute.");
-    }
-    const done = ["completed", "rejected", "failed", "cancelled",
-      "canceled", "paid"];
-    if (payouts.docs.some((d) => !done.includes(d.data().status))) {
-      throw new HttpsError("failed-precondition",
-          "A withdrawal is still being paid. Delete your account once it " +
-          "has arrived.");
-    }
+    return {uid, refs, driverSnap, riderSnap, walletSnap, managerSnap,
+      adminSnap, asRider, asDriver, payouts, balance,
+      driver: driverSnap.exists ? driverSnap.data() : null,
+      rider: riderSnap.exists ? riderSnap.data() : null};
+  }
 
+  /**
+   * What stops this account being deleted, most serious first. The person
+   * deleting their own account is spoken to ("you"); an admin is told
+   * about "them". Only a blocker marked canForce may be overridden, and
+   * only by an admin (adminDeleteAccount).
+   * @param {Object} acct From loadAccount.
+   * @param {boolean} byAdmin Worded for an admin.
+   * @return {Array<Object>} {key, message, canForce}
+   */
+  function deleteBlockers(acct, byAdmin) {
+    const found = [];
+    const openTrip = (snap, statuses) => snap.docs.some((d) =>
+      statuses.includes(d.data().status));
+    // Fleet staff and admin logins are managed in the fleet portal and the
+    // admins list; deleting one from here would lock a firm out.
+    if (acct.managerSnap.exists || acct.adminSnap.exists) {
+      found.push({key: "staff_login", canForce: false, message: byAdmin ?
+        "This login is also fleet staff or a TakeARoute admin. Remove " +
+        "that role first, then delete the account." :
+        "This number is also a fleet or TakeARoute staff login, so it " +
+        "can't be deleted from the app. Please contact TakeARoute."});
+    }
+    // A trip under way or booked would be left without its passenger or
+    // driver, so this is never overridden: finish or cancel it first.
+    if (openTrip(acct.asRider, RIDER_OPEN_TRIPS) ||
+        openTrip(acct.asDriver, DRIVER_OPEN_TRIPS)) {
+      found.push({key: "open_trip", canForce: false, message: byAdmin ?
+        "They have a trip booked or in progress. Let it finish or " +
+        "cancel it, then delete the account." :
+        "You have a trip booked or in progress. Finish or cancel it, " +
+        "then delete your account."});
+    }
+    // Money TakeARoute owes them. An admin may delete anyway (say it was
+    // paid by hand, or is a few pence): the amount is kept on the archive
+    // record and left for the Payments page as an alert.
+    if (acct.balance > 0) {
+      found.push({key: "wallet_balance", canForce: true, message: byAdmin ?
+        `They still have ${acct.balance.toFixed(2)} in their wallet. Pay ` +
+        "it out first, or delete anyway and settle it by hand." :
+        `You still have ${acct.balance.toFixed(2)} in your wallet. ` +
+        "Withdraw it first, or contact TakeARoute."});
+    }
+    // A withdrawal still on its way: deleting would strip the bank details
+    // it is being paid to, so this is never overridden.
+    if (acct.payouts.docs.some((d) =>
+      !PAYOUT_DONE.includes(d.data().status))) {
+      found.push({key: "payout_pending", canForce: false, message: byAdmin ?
+        "A withdrawal to their bank is still being paid. Pay or turn it " +
+        "down on the Payments page first." :
+        "A withdrawal is still being paid. Delete your account once it " +
+        "has arrived."});
+    }
+    return found;
+  }
+
+  /**
+   * Removes the account once deleteBlockers has let it through: see the
+   * notes at the top of this section for what goes and what is kept.
+   * Shared by the person's own delete and an admin's.
+   * @param {Object} acct From loadAccount.
+   * @param {string} tag Name for the logs ("deleteMyAccount" etc.).
+   * @return {Promise<void>}
+   */
+  async function wipeAccount(acct, tag) {
+    const {uid, refs, driver, rider, walletSnap, payouts, balance} = acct;
     // A fleet driver's waiting offers go back to the office first.
-    const driver = driverSnap.exists ? driverSnap.data() : null;
     if (driver && driver.fleetId) {
       const {docs} = await openFleetRides(driver.fleetId, uid);
       await returnOffers(driver.fleetId, uid, docs);
@@ -1900,7 +1953,6 @@ module.exports = (deps) => {
           driverDeleted: true});
       }
     }
-    const riderSnap = await refs.rider.get();
     const debt = Number(driver && driver.subscription &&
       driver.subscription.debtAmount) || 0;
     if (balance < 0 || debt > 0) {
@@ -1916,7 +1968,7 @@ module.exports = (deps) => {
     const phoneHash = deps.membershipPhoneHash(
         await deps.phoneFor("drivers", uid).catch(() => null));
     const stripeIds = {
-      customer: riderSnap.exists ? riderSnap.data().stripeCustomerId : null,
+      customer: rider ? rider.stripeCustomerId : null,
       accounts: [...new Set([driver && driver.payoutAccountId,
         driver && driver.stripeAccountId].filter(Boolean))],
     };
@@ -1940,14 +1992,14 @@ module.exports = (deps) => {
       await Promise.all(["drivers", "riders"].map((p) =>
         bucket.deleteFiles({prefix: `${p}/${uid}/`})));
     } catch (e) {
-      console.error("deleteMyAccount storage", uid, e.message);
+      console.error(tag, "storage", uid, e.message);
     }
     try {
       const {customer, accounts} = stripeIds;
       if (customer) await deps.stripe.customers.del(customer);
       for (const id of accounts) await deps.stripe.accounts.del(id);
     } catch (e) {
-      console.error("deleteMyAccount stripe", uid, e.message);
+      console.error(tag, "stripe", uid, e.message);
       await paymentAlerts.raise("stripe_cleanup_failed", uid, {
         title: "Deleted account left behind in Stripe",
         detail: `${stripeIds.customer || "no customer"}, ` +
@@ -1959,10 +2011,193 @@ module.exports = (deps) => {
     await admin.auth().deleteUser(uid).catch((e) => {
       if (e.code !== "auth/user-not-found") throw e;
     });
-    console.log("deleteMyAccount", uid, driver ? "driver" : "",
+    console.log(tag, uid, driver ? "driver" : "",
         driver && driver.fleetId ? `fleet ${driver.fleetId}` : "");
+  }
+
+  const callsWithStripe = functions.runWith({secrets: STRIPE_SECRETS}).https;
+  out.deleteMyAccount = callsWithStripe.onCall(async (data, context) => {
+    if (!context.auth) throw new HttpsError("unauthenticated", "Sign in.");
+    const acct = await loadAccount(context.auth.uid);
+    const [first] = deleteBlockers(acct, false);
+    if (first) throw new HttpsError("failed-precondition", first.message);
+    // No archive record here: the person asked for their data to go (UK
+    // GDPR right to erasure), so only what the books need is kept.
+    await wipeAccount(acct, "deleteMyAccount");
     return {ok: true};
   });
+
+  /* ----------------- an admin deletes a driver or passenger --------------
+     For drivers and passengers TakeARoute no longer wants on the platform.
+     The account goes exactly as with the person's own delete (wipeAccount:
+     sign-in, profiles, documents, wallet, Stripe), and is refused for the
+     same reasons, worded for the admin. Trips stay where they are, still
+     keyed by riderId/driverId, so the history and the books are whole.
+
+     Before anything is removed, archivedAccounts/{uid} keeps who they were,
+     so old trips can still show a name and a complaint or licensing query
+     can be answered: role, name, phone, email, the car (make, model,
+     registration, class), fleet, approval state, rating, trip counts, when
+     they joined, and who deleted them, when and why. Admins read it; no app
+     or dashboard writes it (firestore.rules).
+
+     Data minimisation (UK GDPR art. 5(1)(c)): only what is needed to say
+     who did a trip is archived. Never copied: bank details, National
+     Insurance number, date of birth, home address, emergency contact,
+     document images or links, licence numbers, payout or Stripe ids, saved
+     places, push tokens. Ride ids are not copied either: the rides hold the
+     uid, and the archive is found by it.
+
+     force: true overrides only a blocker marked canForce in deleteBlockers,
+     today just money left in their wallet. The amount is written on the
+     archive record and raised as a payment alert so it is settled by hand.
+     A trip booked or under way, a withdrawal on its way, and fleet staff or
+     admin logins are never overridden. */
+  out.adminDeleteAccount = callsWithStripe.onCall(async (data, context) => {
+    await assertAdmin(context);
+    const uid = text(data && data.uid, 128);
+    const role = data && data.role;
+    const reason = text(data && data.reason, 300);
+    const force = Boolean(data && data.force === true);
+    if (!uid) throw new HttpsError("invalid-argument", "Which account?");
+    if (role !== "driver" && role !== "rider") {
+      throw new HttpsError("invalid-argument",
+          "Say whether this is a driver or a passenger.");
+    }
+    if (reason.length < 3) {
+      throw new HttpsError("invalid-argument",
+          "Give a reason for deleting the account.");
+    }
+    if (uid === context.auth.uid) {
+      throw new HttpsError("failed-precondition",
+          "You can't delete your own admin login here.");
+    }
+    const acct = await loadAccount(uid);
+    if (!(role === "driver" ? acct.driver : acct.rider)) {
+      throw new HttpsError("not-found", role === "driver" ?
+        "No such driver." : "No such passenger.");
+    }
+    const blockers = deleteBlockers(acct, true);
+    const stop = blockers.find((b) => !force || !b.canForce);
+    if (stop) {
+      throw new HttpsError("failed-precondition", stop.message,
+          {reason: stop.key, canForce: stop.canForce});
+    }
+    const forced = blockers.map((b) => b.key);
+
+    const archiveRef = db.collection("archivedAccounts").doc(uid);
+    const existing = await archiveRef.get();
+    // A second go after a delete that stopped half-way keeps the first
+    // record: by now some of the details it was built from may be gone.
+    if (!existing.exists) {
+      await archiveRef.set(await archiveRecord(acct, role, reason, forced,
+          context));
+    }
+    if (forced.includes("wallet_balance")) {
+      await paymentAlerts.raise("account_deleted_in_credit", uid, {
+        title: "Account deleted with money in the wallet",
+        detail: `An admin deleted the account with ` +
+          `${acct.balance.toFixed(2)} still owed to them. Pay it by hand.`,
+        amount: Math.round(acct.balance * 100) / 100,
+        driverId: uid,
+        fleetId: (acct.driver && acct.driver.fleetId) || null,
+      });
+    }
+    await wipeAccount(acct, "adminDeleteAccount");
+    await archiveRef.update({status: "deleted",
+      deletedAt: FieldValue.serverTimestamp()});
+    return {ok: true, archived: true, forced};
+  });
+
+  /**
+   * The archive record for an account an admin is deleting. See the notes
+   * above adminDeleteAccount for what is kept and what is left out.
+   * @param {Object} acct From loadAccount.
+   * @param {string} role "driver" or "rider", the side being deleted.
+   * @param {string} reason The admin's reason.
+   * @param {Array<string>} forced Blockers the admin overrode.
+   * @param {Object} context Callable context (the admin).
+   * @return {Promise<Object>} Record for archivedAccounts/{uid}.
+   */
+  async function archiveRecord(acct, role, reason, forced, context) {
+    const {uid, driver, rider} = acct;
+    const [privateSnap, user, adminSnap, fleetSnap] = await Promise.all([
+      privacy.privateRef(uid).get(),
+      admin.auth().getUser(uid).catch(() => null),
+      db.collection("admins").doc(context.auth.uid).get(),
+      driver && driver.fleetId ?
+        db.collection("fleets").doc(driver.fleetId).get() : null,
+    ]);
+    // Only the phone and email are read from the private record; nothing
+    // else on it is copied.
+    const secret = privateSnap.exists ? privateSnap.data() : {};
+    const nameOf = (p) => !p ? "" : String(p.fullName ||
+      [p.firstName, p.lastName].filter(Boolean).join(" ") ||
+      p.displayName || p.name || "").trim();
+    const name = (role === "driver" ? nameOf(driver) || nameOf(rider) :
+      nameOf(rider) || nameOf(driver)) || (user && user.displayName) || "";
+    const phone = toE164(secret.phoneNumber || secret.phone ||
+      (driver && (driver.phoneNumber || driver.phone)) ||
+      (rider && (rider.phoneNumber || rider.phone)) ||
+      (user && user.phoneNumber)) || null;
+    const email = secret.email || (driver && driver.email) ||
+      (rider && rider.email) || (user && user.email) || null;
+    const by = adminSnap.exists ? adminSnap.data() : {};
+    const count = (snap, status) => snap.docs.filter((d) =>
+      !status || d.data().status === status).length;
+    const joined = user && user.metadata && user.metadata.creationTime ?
+      Timestamp.fromDate(new Date(user.metadata.creationTime)) :
+      (driver && driver.createdAt) || (rider && rider.createdAt) || null;
+    const side = role === "driver" ? driver : rider;
+    const rating = side && side.rating != null ? Number(side.rating) : NaN;
+    return {
+      uid, role,
+      roles: [driver && "driver", rider && "rider"].filter(Boolean),
+      name, phone, email,
+      vehicle: driver ? {
+        makeModel: driver.makeModel || [driver.vehicleMake || driver.make,
+          driver.vehicleModel || driver.model].filter(Boolean).join(" ") ||
+          null,
+        registration: driver.registrationNumber || driver.plateNumber ||
+          null,
+        type: driver.vehicleType || null,
+        colour: driver.vehicleColor || null,
+      } : null,
+      fleetId: (driver && driver.fleetId) || null,
+      fleetName: (driver && driver.fleetName) ||
+        (fleetSnap && fleetSnap.exists ? fleetSnap.data().name : null) ||
+        null,
+      driverType: (driver && driver.driverType) || null,
+      approval: driver ? {
+        approved: driver.approved === true,
+        onboardingStatus: driver.onboardingStatus ||
+          (driver.approved ? "approved" : "pending"),
+        onboardingComplete: driver.onboardingComplete === true,
+        blocked: driver.blocked === true,
+      } : null,
+      riderBlocked: rider ? rider.blocked === true : null,
+      rating: Number.isFinite(rating) ? rating : null,
+      ratingCount: side && Number(side.ratingCount) || 0,
+      trips: {
+        asDriver: count(acct.asDriver),
+        completedAsDriver: count(acct.asDriver, "completed"),
+        asRider: count(acct.asRider),
+        completedAsRider: count(acct.asRider, "completed"),
+      },
+      walletBalance: acct.walletSnap.exists ?
+        Math.round(acct.balance * 100) / 100 : null,
+      forced,
+      createdAt: joined,
+      deletedAt: FieldValue.serverTimestamp(),
+      deletedBy: {
+        uid: context.auth.uid,
+        name: by.name || null,
+        email: by.email || context.auth.token.email || null,
+      },
+      reason,
+      status: "deleting",
+    };
+  }
 
   /* A fleet's plan changes (the admin dashboard writes fleets/{id}
      directly): self-employed drivers' memberships follow it. Onto a flat

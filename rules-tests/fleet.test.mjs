@@ -581,3 +581,22 @@ test('phone number owners: no app access, and a driver cannot clear a number cla
   await seed((db) => updateDoc(doc(db, 'drivers/dind'), { phoneConflict: { phone: '+447700900123' } }));
   await assertFails(updateDoc(doc(as('dind'), 'drivers/dind'), { phoneConflict: deleteField() }));
 });
+test('archived accounts: admins read them, nobody writes them from a browser', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'archivedAccounts/gone1'), { uid: 'gone1', role: 'driver', name: 'Old Driver', reason: 'left' });
+    await setDoc(doc(db, 'admins/oldadm'), { isActive: false });
+  });
+  await assertSucceeds(getDoc(doc(as('adm'), 'archivedAccounts/gone1')));
+  await assertSucceeds(getDocs(collection(as('adm'), 'archivedAccounts')));
+  // Not even an admin may write or remove one: only adminDeleteAccount does.
+  await assertFails(setDoc(doc(as('adm'), 'archivedAccounts/new1'), { uid: 'new1' }));
+  await assertFails(updateDoc(doc(as('adm'), 'archivedAccounts/gone1'), { reason: 'x' }));
+  await assertFails(deleteDoc(doc(as('adm'), 'archivedAccounts/gone1')));
+  // Drivers, passengers, fleet staff, a switched-off admin and the person themselves: no access.
+  for (const uid of ['d1', 'r1', 'own1', 'op1', 'oldadm', 'gone1']) {
+    await assertFails(getDoc(doc(as(uid), 'archivedAccounts/gone1')));
+    await assertFails(getDocs(collection(as(uid), 'archivedAccounts')));
+    await assertFails(setDoc(doc(as(uid), 'archivedAccounts/gone1'), { name: 'x' }));
+  }
+  await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(), 'archivedAccounts/gone1')));
+});

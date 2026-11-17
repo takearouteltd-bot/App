@@ -346,6 +346,15 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    /* Who a driver or passenger was, kept when an admin deletes their
+       account (adminDeleteAccount, functions/fleet.js), so old trips still
+       show a name. Admins read; only the server writes, so nobody can
+       change or remove the record from a browser. */
+    match /archivedAccounts/{uid} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     match /driverFiles/{driverId} {
       allow get: if isAdmin() || (
         signedIn() && (
