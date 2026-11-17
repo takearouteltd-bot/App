@@ -75,7 +75,7 @@ const BID_ON = { enabled: 1, radiusKm: 16, afterSeconds: 20, allowCounter: 1, ma
 const A = mk('admin'), O = mk('owner'), D1 = mk('d1'), D2 = mk('d2'), D3 = mk('d3'), R = mk('rider');
 const adm = await createUserWithEmailAndPassword(A.auth, 'admin-bj@test.dev', 'secret123');
 await adminSet(`admins/${adm.user.uid}`, { isActive: true, role: 'super_admin' });
-await adminSet('config/app', { currency: 'GBP', payments: { cashEnabled: 1 }, dispatch: { searchRadiusKm: 3 }, bidJobs: BID_ON });
+await adminSet('config/app', { currency: 'GBP', payments: { cashEnabled: 1 }, dispatch: { searchRadiusKm: 3, sequentialOffers: 1 }, bidJobs: BID_ON });
 
 step('a fleet with drivers 1 and 2; driver 3 works app jobs only');
 const fleet = await A.call('createFleet', { name: 'Bid Cars', ownerName: 'B', email: 'owner-bj@test.dev', phone: '07700900401', perDriverMonthly: 50 });

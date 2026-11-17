@@ -82,9 +82,12 @@ const CONFIG_DEFAULTS = {
     restHours: 6},
   dispatch: {
     searchRadiusKm: 50, requestTimeoutSeconds: 20, searchTimeoutMinutes: 15,
-    // App jobs go to one driver at a time, nearest first (appOffers.js).
-    // 0 rings everyone in range at once, as before.
-    sequentialOffers: 1,
+    // 1: app jobs go to one driver at a time, nearest first (appOffers.js).
+    // 0 rings everyone in range at once, as before. Off by default: driver
+    // app builds before 1.0.36 list every searching job, and with this on
+    // only the driver being asked may take it. Turn on in config/app once
+    // drivers are on 1.0.36.
+    sequentialOffers: 0,
     // Follow-on jobs (followOn.js): a busy driver is offered a job when they
     // could be at its pickup within this many minutes, and they drop off
     // within followOnKm of it. 0 minutes turns them off.
