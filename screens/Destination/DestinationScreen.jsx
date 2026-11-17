@@ -44,6 +44,9 @@ export default function DestinationSearchScreen({ navigation, route }) {
   // destination: the chosen place goes back there.
   const pickMode = mode === 'pick';
   const pickingPickup = pickMode && target === 'pickup';
+  // Opened from the trip screen's "Change destination", passenger on board:
+  // the chosen place goes back there to be priced and sent to the driver.
+  const changing = mode === 'change';
   const searchRef = useRef(null);
 
   const [currentAddress, setCurrentAddress] = useState('');
@@ -130,6 +133,10 @@ export default function DestinationSearchScreen({ navigation, route }) {
   };
 
   const goToFare = (destination) => {
+    if (changing) {
+      navigation.navigate({ name: 'RideInProgress', params: { changeTo: destination }, merge: true });
+      return;
+    }
     if (pickMode) {
       const place = { ...destination, address: destination.address || destination.description };
       navigation.navigate({ name: 'BookForSomeone', params: { picked: { target, place } }, merge: true });
@@ -172,7 +179,9 @@ export default function DestinationSearchScreen({ navigation, route }) {
 
   // The fare screen knows the pickup address, not how it was chosen.
   const pickup = addingStop ? { label: 'Pickup', icon: 'locate' } : PICKUP[pickupType] || PICKUP.current;
-  const title = pickMode
+  const title = changing
+    ? 'Where to instead?'
+    : pickMode
     ? pickingPickup
       ? `Pickup${who ? ` for ${who}` : ''}`
       : `Where${who ? ` is ${who}` : ''} going?`
@@ -186,7 +195,7 @@ export default function DestinationSearchScreen({ navigation, route }) {
 
       {/* Pickup and destination as one journey, the shape people expect. */}
       <View style={styles.journey}>
-        {pickMode ? null : (
+        {pickMode || changing ? null : (
           <View style={styles.gutter}>
             <View style={styles.dotPickup} />
             <View style={styles.stem} />
@@ -195,7 +204,7 @@ export default function DestinationSearchScreen({ navigation, route }) {
         )}
 
         <View style={{ flex: 1 }}>
-          {pickMode ? null : (
+          {pickMode || changing ? null : (
           <TouchableOpacity
             style={styles.pickup}
             onPress={() => navigation.goBack()}
@@ -218,7 +227,7 @@ export default function DestinationSearchScreen({ navigation, route }) {
               value={search.text}
               onChangeText={search.setText}
               placeholder={
-                pickingPickup ? 'Search their pickup address' : addingStop ? 'Search for a stop' : 'Search a destination'
+                pickingPickup ? 'Search their pickup address' : addingStop ? 'Search for a stop' : changing ? 'Search the new destination' : 'Search a destination'
               }
               placeholderTextColor={COLORS.faint}
               autoFocus

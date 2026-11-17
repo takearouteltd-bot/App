@@ -13,6 +13,7 @@ import StarRating from '../../../components/StarRating';
 import TipCard from '../../../components/TipCard';
 import { paidTip } from '../../../utils/tips';
 import StopRows from '../../../components/trips/StopRows';
+import TripChangeNotes from '../../../components/trips/TripChangeNotes';
 import BookedForLine from '../../../components/BookedForLine';
 import { STATUS_LABEL, STATUS_PILL } from '../../../components/trips/TripsList';
 import {
@@ -341,6 +342,8 @@ export default function RiderTripDetailsScreen() {
           <Text style={styles.totalValue}>{rowMoney(fareTotal + tip)}</Text>
         </View>
       </Card>
+
+      <TripChangeNotes ride={live || trip} driverName={driver?.firstName || driver?.fullName || 'your driver'} />
 
       <TipCard
         ride={live}
