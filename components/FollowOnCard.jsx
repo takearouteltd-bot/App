@@ -2,8 +2,11 @@
    Accept and No thanks and a countdown, or the next job already accepted,
    with a way to give it back. See utils/followOn.js.
 
-   offerOnly: just the offer, for FollowOnPopup, which shows it over any
-   other screen the driver has open. */
+   offerOnly: just the offer, for FollowOnPopup, which pops it up over any
+   screen the driver has open, the trip screen included. nextOnly: just the
+   next job already accepted, for the trip screen (the offer itself pops up
+   there too: M&S, 18 Nov 2026, "follow on job comes in notifications,
+   doesn't pop up"). */
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,7 +24,7 @@ const short = (p) => String(p?.address || '').split(',')[0] || 'Pickup';
 // between screens does not ring for the same offer again.
 let rungFor = null;
 
-export default function FollowOnCard({ driverId, rideId, offerOnly = false, style }) {
+export default function FollowOnCard({ driverId, rideId, offerOnly = false, nextOnly = false, style }) {
   const offer = useFollowOnOffer(driverId);
   const next = useNextJob(offerOnly ? null : driverId, rideId);
   const [busy, setBusy] = useState(null);
@@ -83,7 +86,7 @@ export default function FollowOnCard({ driverId, rideId, offerOnly = false, styl
     );
   }
 
-  if (!offer) return null;
+  if (!offer || nextOnly) return null;
   return (
     <View style={[styles.card, style]}>
       <View style={styles.row}>

@@ -108,9 +108,9 @@ function alreadyThere(data, role) {
   if (!current) return false;
   const type = data?.type;
   if (role === "driver") {
-    // A follow-on offer is answered on the trip screen itself; from any
-    // other screen the tap goes home, which resumes the trip screen (the
-    // pop-up shows the offer meanwhile, components/FollowOnPopup.jsx).
+    // A follow-on offer pops up over any screen (components/
+    // FollowOnPopup.jsx); a tap from outside the trip screens goes home,
+    // which resumes the trip screen with the pop-up over it.
     return DRIVER_JOB_SCREENS.includes(current.name) &&
       ["job_offer", "trip", "chat", "follow_on_offer"].includes(type);
   }

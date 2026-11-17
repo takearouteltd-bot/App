@@ -543,8 +543,9 @@ export default function DriverRideToDropoffScreen() {
       <Animated.View style={[styles.sheet, { transform: [{ translateY: slideAnim }] }]}>
         <View style={styles.handle} />
 
-        {/* A follow-on job on offer, or the next job already accepted. */}
-        {ride?.driverId ? <FollowOnCard driverId={ride.driverId} rideId={rideId} /> : null}
+        {/* The next job already accepted. A follow-on job on offer pops up
+            over the screen (components/FollowOnPopup.jsx). */}
+        {ride?.driverId ? <FollowOnCard driverId={ride.driverId} rideId={rideId} nextOnly /> : null}
 
         <View style={styles.headRow}>
           <View style={{ flex: 1 }}>
