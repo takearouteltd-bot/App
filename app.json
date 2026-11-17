@@ -2,9 +2,9 @@
   "expo": {
     "name": "takearoute",
     "slug": "takearoute",
-    "version": "1.0.36",
+    "version": "1.0.37",
     "orientation": "portrait",
-    "icon": "./assets/myicon.png",
+    "icon": "./assets/app-icon.png",
     "scheme": "takearoute",
     "userInterfaceStyle": "light",
     "newArchEnabled": false,
@@ -27,8 +27,8 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/myicon.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/adaptive-icon-fg.png",
+        "backgroundColor": "#020D1F"
       },
       "edgeToEdgeEnabled": true,
       "googleServicesFile": "./google-services.json",
@@ -42,7 +42,7 @@
         "POST_NOTIFICATIONS",
         "VIBRATE"
       ],
-      "versionCode": 33,
+      "versionCode": 34,
       "blockedPermissions": [
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
       ]
@@ -94,8 +94,8 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#00356D",
-          "image": "./assets/myicon.png",
+          "backgroundColor": "#020D1F",
+          "image": "./assets/splash-logo.png",
           "imageWidth": 200,
           "ios": {
             "image": "./assets/splash-icon.png",
@@ -104,9 +104,9 @@
             "enableFullScreenImage_legacy": true
           },
           "android": {
-            "image": "./assets/myicon.png",
+            "image": "./assets/splash-logo.png",
             "imageWidth": 200,
-            "backgroundColor": "#00356D"
+            "backgroundColor": "#020D1F"
           }
         }
       ],
