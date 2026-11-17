@@ -59,22 +59,51 @@ import { DRIVER_MAP_STYLE } from '../../../utils/driverMapStyle';
 const HIDE_EARNINGS_KEY = 'driver.hideEarnings';
 
 const { width, height } = Dimensions.get('window');
-// A job whose timer ran out stays off the list this long before it can be
-// shown again (it won't ring again).
+// A job whose timer ran out here stays off the list until it is rung again
+// (a new offer, a BID JOB, a re-ring: see ringKey), or for a minute for a
+// job the server does not ring again by itself.
 const MISSED_SNOOZE_MS = 60000;
+const MISSED_RING_SNOOZE_MS = 30 * 60000;
+// A decline is kept off the list for the shift; the server also has it
+// (declinedBy), so this only covers the moment before that arrives.
+const DECLINE_SNOOZE_MS = 12 * 3600 * 1000;
+// Jobs dealt with on this phone, kept across log out, log in and restarts,
+// so an offer still live on the server does not pop up again.
+const SNOOZE_KEY = 'driver.offersDealtWith';
 // The price on the table for a job (the passenger's offer when bidding).
 const fareOf = (ride) => Number(ride?.fareEstimate) || 0;
 /* BID JOBs (functions/bidJobs.js): a job nobody was taking, opened to
-   drivers further out. It is shown out to its own radius, rings again once,
-   and comes back even if its timer ran out here before (not if declined). */
+   drivers further out. It is shown out to its own radius, rings again, and
+   comes back to drivers who declined it or let it run out before. */
 const bidRadiusKm = (ride, normalKm) =>
   ride?.bidJob ? Math.max(normalKm, Number(ride.bidJob.radiusKm) || 0) : normalKm;
-const ringKey = (ride) => (ride?.bidJob ? `${ride.id}#bid` : ride?.id);
-const snoozeHolds = (snooze, ride) =>
-  Boolean(snooze && snooze.until > Date.now() && !(ride?.bidJob && !snooze.bid && snooze.until !== Infinity));
-// A fleet's own answer time for zone-queue jobs is not on the ride or readable
-// by drivers, so the countdown uses the default (functions/fleet.js).
+const ms = (t) => (t?.toMillis ? t.toMillis() : Number(t) || 0);
+/* App jobs one driver at a time (functions/appOffers.js): ride.offer says
+   who is being asked. Not on bidding jobs, BID JOBs, or when switched off. */
+const oneAtATime = (ride) => Boolean(ride?.offer && !ride.bidJob && ride.source !== 'phone');
+/* Each time the server rings a job counts as a new offer: a new driver
+   asked, a BID JOB opened or rung again, a fleet job sent or rung again. A
+   job dealt with here (declined, or its time ran out) stays off the list
+   until then. */
+const ringKey = (ride) => {
+  if (!ride) return null;
+  if (ride.bidJob) return `${ride.id}#bid${ride.bidJob.rings || 0}`;
+  if (oneAtATime(ride)) return `${ride.id}#${ride.offer.n || 0}`;
+  if (ride.source === 'phone') return `${ride.id}#${ms(ride.dispatch?.offeredAt)}`;
+  return ride.id;
+};
+const snoozeHolds = (snooze) => Boolean(snooze && snooze.until > Date.now());
+// A fleet's answer time for jobs sent to one driver is on the job
+// (dispatch.offerSeconds, functions/fleet.js); this is for older jobs.
 const DEFAULT_QUEUE_OFFER_SECONDS = 45;
+/* Seconds left on an offer the server times. Counted from the server's end
+   time when the phone's clock agrees with it, otherwise from the full time
+   (a phone clock running fast would otherwise hide the offer at once). The
+   server moves the job on itself, so a slow count does no harm. */
+const secondsLeft = (endMs, total) => {
+  const left = Math.ceil((endMs - Date.now()) / 1000);
+  return left > 0 && left <= total + 5 ? Math.min(left, total) : total;
+};
 
 // "14:30" today, or "Tue 4 Nov, 14:30" for a booking on another day.
 /* 1st, 2nd, 3rd, 4th… 11th, 12th, 13th, 21st. */
@@ -177,8 +206,10 @@ export default function DriverHomeScreen() {
   // Jobs already rung for, so each offer rings once, not on every update.
   // Jobs on screen now, for the edge-of-radius allowance.
   const shownIds = useRef(new Set());
-  // Jobs kept off the list until a time (ms): declined, or just missed.
-  // Each keeps the price it had, so a passenger raising it brings it back.
+  // Jobs kept off the list until a time (ms): declined, or just missed, by
+  // ringKey. Each keeps the price it had, so a passenger raising it brings
+  // it back. Saved on the phone (SNOOZE_KEY), so logging out and in, or a
+  // restart, does not bring back an offer already dealt with.
   const snoozed = useRef(new Map());
   // Jobs this phone has rung for, with the price at the time.
   const rungFor = useRef(new Map());
@@ -208,6 +239,27 @@ export default function DriverHomeScreen() {
     AsyncStorage.getItem(HIDE_EARNINGS_KEY)
       .then((v) => setHideEarnings(v === '1'))
       .catch(() => {});
+  }, []);
+
+  // Offers dealt with before this screen opened (see snoozed).
+  const [snoozesLoaded, setSnoozesLoaded] = useState(false);
+  useEffect(() => {
+    AsyncStorage.getItem(SNOOZE_KEY)
+      .then((raw) => {
+        const saved = raw ? JSON.parse(raw) : {};
+        Object.entries(saved || {}).forEach(([key, v]) => {
+          if (v && v.until > Date.now() && !snoozed.current.has(key)) snoozed.current.set(key, v);
+        });
+      })
+      .catch(() => {})
+      .finally(() => setSnoozesLoaded(true));
+  }, []);
+  const saveSnoozes = useCallback(() => {
+    const keep = {};
+    snoozed.current.forEach((v, key) => {
+      if (v.until > Date.now()) keep[key] = v;
+    });
+    AsyncStorage.setItem(SNOOZE_KEY, JSON.stringify(keep)).catch(() => {});
   }, []);
 
   const toggleHideEarnings = () => {
@@ -585,7 +637,9 @@ export default function DriverHomeScreen() {
   // the jobs or the driver's position change.
   useEffect(() => {
     // No jobs for anyone who is not approved, whatever their status says.
-    if (!isOnline || !location || !isApproved) return;
+    // Not before the offers already dealt with are loaded, or they would
+    // flash up again for a moment.
+    if (!isOnline || !location || !isApproved || !snoozesLoaded) return;
 
     const rides = [];
     // Phone bookings from this driver's fleet: one sent to this driver comes
@@ -598,7 +652,7 @@ export default function DriverHomeScreen() {
       // Cash jobs off: only one the office sent to this driver by name.
       if (!cashJobs && !target && !['account', 'card', 'online'].includes(data.collectBy)) return;
       if (Array.isArray(data.declinedBy) && data.declinedBy.includes(driverId)) return;
-      if (snoozeHolds(snoozed.current.get(data.id), data)) return;
+      if (snoozeHolds(snoozed.current.get(ringKey(data)))) return;
       if (!canServe(vehicleType, data.rideType)) return;
       // Unticked categories: only one the office sent to this driver by name.
       if (!target && !wantsJobType(jobTypes, data.rideType)) return;
@@ -616,14 +670,22 @@ export default function DriverHomeScreen() {
       // Shown once the server has checked the price (a second or two after
       // booking); before that the job cannot be taken (firestore.rules).
       if (data.pricing !== 'checked') return;
+      // One driver at a time: the server says who is being asked now. Shown
+      // to that driver only; a job nobody is being asked about is open to
+      // anyone who has not already said no or let it run out.
+      if (oneAtATime(data)) {
+        const askedNow = data.offer.driverId || null;
+        if (askedNow && askedNow !== driverId) return;
+        if (!askedNow && Array.isArray(data.missedBy) && data.missedBy.includes(driverId)) return;
+      }
       // Declined here, or its timer just ran out: don't put it straight back,
       // unless the passenger has raised the price since.
-      const snooze = snoozed.current.get(data.id);
+      const snooze = snoozed.current.get(ringKey(data));
       const raised = Boolean(snooze && fareOf(data) > snooze.fare);
       // Jobs this driver already cancelled or declined are not offered
       // again, unless the passenger has raised their price since.
       if (Array.isArray(data.declinedBy) && data.declinedBy.includes(driverId) && !raised) return;
-      if (snoozeHolds(snooze, data) && !raised) return;
+      if (snoozeHolds(snooze) && !raised) return;
       // Passengers who asked not to be matched with this driver.
       if (Array.isArray(data.blockedDriverIds) && data.blockedDriverIds.includes(driverId)) return;
       // Somebody who booked and paid for Executive does not get a Mini.
@@ -680,12 +742,13 @@ export default function DriverHomeScreen() {
       if (next) animateCard();
       return next;
     });
-  }, [searchingRides, fleetRides, fleetId, isOnline, location, isApproved, searchRadiusKm, driverId, vehicleType, workingCityId, femaleVerified, cashJobs, jobTypes, animateCard]);
+  }, [searchingRides, fleetRides, fleetId, isOnline, location, isApproved, searchRadiusKm, driverId, vehicleType, workingCityId, femaleVerified, cashJobs, jobTypes, animateCard, snoozesLoaded]);
 
-  // Going offline takes the offer card down with it.
+  // Going offline takes the offer card down with it. What was declined or
+  // missed stays dealt with (snoozed): the offer may still be live on the
+  // server, and coming back online must not bring it up again.
   useEffect(() => {
     if (isOnline) return;
-    snoozed.current.clear();
     lastJobs.current = null;
     stopJobRing();
     setRideRequests([]);
@@ -699,7 +762,9 @@ export default function DriverHomeScreen() {
   const advanceQueue = useCallback((snoozeMs = 0) => {
     if (snoozeMs > 0 && currentRideIdRef.current) {
       const ride = rideRequests.find((r) => r.id === currentRideIdRef.current);
-      snoozed.current.set(currentRideIdRef.current, { until: Date.now() + snoozeMs, fare: fareOf(ride), bid: Boolean(ride?.bidJob) });
+      const key = ride ? ringKey(ride) : currentRideIdRef.current;
+      snoozed.current.set(key, { until: Date.now() + snoozeMs, fare: fareOf(ride) });
+      saveSnoozes();
     }
     // The driver has dealt with this offer (declined it, or it went), so the
     // ring and its notification stop with it. Later new jobs ring again.
@@ -714,7 +779,7 @@ export default function DriverHomeScreen() {
       setRideRequests([]);
       return null;
     });
-  }, [rideRequests, animateCard]);
+  }, [rideRequests, animateCard, saveSnoozes]);
   // The countdown below keeps one interval per card, so it calls the latest
   // advanceQueue through this rather than the one from when it started.
   const advanceRef = useRef(advanceQueue);
@@ -851,26 +916,39 @@ export default function DriverHomeScreen() {
   /* The offer countdown. When it runs out the job moves on, rather than
      sitting at "1s" forever as it used to. */
   const waitingOnCounter = !!(currentRideId && sentOffers[currentRideId]);
+  // The same job offered afresh (opened as a BID JOB, or rung again) starts
+  // a new countdown.
+  const currentKey = ringKey(rideRequests.find((r) => r.id === currentRideId));
   useEffect(() => {
     if (!currentRideId) return undefined;
 
-    // A zone-queue job sent to this driver is timed by the server, which moves
-    // it on after the fleet's own answer time (runFleetQueues). The phone used
-    // to pass it on at its shorter countdown, capping that time.
+    // An offer to this driver alone is timed by the server, which moves it
+    // on when its time is up: a fleet job sent by name, by queue or to the
+    // nearest (functions/fleet.js timeFleetOffers), or an app job asked one
+    // driver at a time (functions/appOffers.js). The phone used to pass it
+    // on at its own shorter countdown, and bring it back a minute later.
     const ride = rideRequests.find((r) => r.id === currentRideId);
-    const queueJob = !waitingOnCounter && ride?.source === 'phone' &&
-      ride.dispatch?.mode === 'queue' && ride.dispatch?.driverId === driverId;
-    const offeredAt = ride?.dispatch?.offeredAt?.toMillis?.();
-    const queueSeconds = Math.max(1, Math.min(DEFAULT_QUEUE_OFFER_SECONDS,
-      offeredAt ? Math.ceil((offeredAt + DEFAULT_QUEUE_OFFER_SECONDS * 1000 - Date.now()) / 1000) : DEFAULT_QUEUE_OFFER_SECONDS));
+    const fleetJobForMe = ride?.source === 'phone' && ['queue', 'driver'].includes(ride.dispatch?.mode) &&
+      ride.dispatch?.driverId === driverId;
+    const appJobForMe = oneAtATime(ride) && ride.offer.driverId === driverId;
+    const queueJob = !waitingOnCounter && (fleetJobForMe || appJobForMe);
+    let serverTotal = 0;
+    let serverEnd = 0;
+    if (fleetJobForMe) {
+      serverTotal = Math.max(5, Number(ride.dispatch.offerSeconds) || DEFAULT_QUEUE_OFFER_SECONDS);
+      serverEnd = ms(ride.dispatch.offeredAt) + serverTotal * 1000;
+    } else if (appJobForMe) {
+      serverTotal = Math.max(5, Number(ride.offer.seconds) || Math.round(dispatchConfig.requestTimeoutSeconds || 15));
+      serverEnd = ms(ride.offer.expiresAt);
+    }
 
     const startAt = waitingOnCounter
       ? offerSeconds(appConfig)
       : queueJob
-      ? queueSeconds
+      ? secondsLeft(serverEnd, serverTotal)
       : Math.max(5, Math.round(dispatchConfig.requestTimeoutSeconds || 15));
     setTimer(startAt);
-    setTimerTotal(queueJob ? DEFAULT_QUEUE_OFFER_SECONDS : startAt);
+    setTimerTotal(queueJob ? serverTotal : startAt);
 
     const interval = setInterval(() => {
       setTimer((prev) => {
@@ -888,7 +966,7 @@ export default function DriverHomeScreen() {
               return next;
             });
           }
-          advanceRef.current(MISSED_SNOOZE_MS);
+          advanceRef.current(ringKey(ride) === currentRideId ? MISSED_SNOOZE_MS : MISSED_RING_SNOOZE_MS);
           return 0;
         }
         return prev - 1;
@@ -896,10 +974,10 @@ export default function DriverHomeScreen() {
     }, 1000);
 
     return () => clearInterval(interval);
-    // Restart only for a new card or a counter-offer on it, not on every
-    // change to the list behind it.
+    // Restart only for a new card, a new offer of it or a counter-offer on
+    // it, not on every change to the list behind it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentRideId, waitingOnCounter, dispatchConfig.requestTimeoutSeconds, appConfig]);
+  }, [currentRideId, currentKey, waitingOnCounter, dispatchConfig.requestTimeoutSeconds, appConfig]);
 
   /* Bidding: offer the passenger a higher price instead of accepting theirs. */
   const handleCounter = async (ride, price) => {
@@ -970,12 +1048,12 @@ export default function DriverHomeScreen() {
         return next;
       });
     }
-    // App jobs too: when nobody else is left the server opens it as a BID
-    // JOB for drivers further out (functions/bidJobs.js).
+    // App jobs too: the server asks the next driver, and when nobody else is
+    // left opens it as a BID JOB (functions/appOffers.js, bidJobs.js).
     if (ride?.id && driverId) {
       updateDoc(doc(db, 'rides', ride.id), { declinedBy: arrayUnion(driverId) }).catch(() => {});
     }
-    advanceQueue(Infinity);
+    advanceQueue(DECLINE_SNOOZE_MS);
   };
 
   const handleAcceptRide = async (ride) => {
@@ -1029,6 +1107,12 @@ export default function DriverHomeScreen() {
         const target = rideDoc.data().dispatch?.driverId;
         if (phoneJob && target && target !== driverId) {
           throw new Error('The office has sent this job to another driver.');
+        }
+        // One driver at a time: its time with this driver may have run out
+        // (firestore.rules lets only the driver being asked take it).
+        const asking = oneAtATime({ ...rideDoc.data(), id: ride.id }) ? rideDoc.data().offer.driverId : null;
+        if (asking && asking !== driverId) {
+          throw new Error('This job has gone to the next driver.');
         }
         // Re-checked here because the list is only a filter: the class could
         // have changed, or the job could have arrived from a stale render.
