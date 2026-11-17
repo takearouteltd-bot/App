@@ -217,6 +217,8 @@ export default function DriverHomeScreen() {
   const lastJobs = useRef(null);
   const [searchingRides, setSearchingRides] = useState([]);
   const [fleetRides, setFleetRides] = useState([]);
+  // Phone jobs a fleet sent to the whole TakeARoute network (any driver).
+  const [networkRides, setNetworkRides] = useState([]);
   // This driver's place in their fleet's zone queue, if any.
   const [queueSpot, setQueueSpot] = useState(null);
 
@@ -610,6 +612,22 @@ export default function DriverHomeScreen() {
     );
   }, [isOnline, isApproved, fleetId]);
 
+  // Any approved driver also gets phone jobs a fleet sent out to the whole
+  // TakeARoute network (functions/fleet.js onNetwork): nearest first, then
+  // a BID JOB, as app jobs are.
+  useEffect(() => {
+    if (!isOnline || !isApproved) {
+      setNetworkRides([]);
+      return undefined;
+    }
+    const q = query(collection(db, 'fleetJobOffers'), where('network', '==', true));
+    return onSnapshot(
+      q,
+      (snapshot) => setNetworkRides(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      () => setNetworkRides([])
+    );
+  }, [isOnline, isApproved]);
+
   // Fleets with zones keep a queue per zone (functions/fleet.js
   // runFleetQueues); show the driver where they stand.
   useEffect(() => {
@@ -645,8 +663,11 @@ export default function DriverHomeScreen() {
     // Phone bookings from this driver's fleet: one sent to this driver comes
     // whatever the distance (the operator chose them); one sent to the whole
     // fleet follows the usual radius.
-    fleetRides.forEach((data) => {
-      if (!data.pickupLocation || data.fleetId !== fleetId) return;
+    // The fleet's own jobs, and network jobs from any fleet (a job of this
+    // driver's fleet sent to the network comes through both: once only).
+    const phoneJobs = [...fleetRides, ...networkRides.filter((n) => !fleetRides.some((f) => f.id === n.id))];
+    phoneJobs.forEach((data) => {
+      if (!data.pickupLocation || (data.fleetId !== fleetId && data.network !== true)) return;
       const target = data.dispatch?.driverId || null;
       if (target && target !== driverId) return;
       // Cash jobs off: only one the office sent to this driver by name.
@@ -732,8 +753,8 @@ export default function DriverHomeScreen() {
     // redrawn every few seconds while the driver waits or uses other tabs.
     const sig = rides.map((r) => `${ringKey(r)}@${r.pickupDistanceKm.toFixed(1)}`).join('|');
     const last = lastJobs.current;
-    const same = last && last.searching === searchingRides && last.fleet === fleetRides && last.sig === sig;
-    lastJobs.current = { searching: searchingRides, fleet: fleetRides, sig };
+    const same = last && last.searching === searchingRides && last.fleet === fleetRides && last.network === networkRides && last.sig === sig;
+    lastJobs.current = { searching: searchingRides, fleet: fleetRides, network: networkRides, sig };
     if (!same) setRideRequests(rides);
     // Keep the card the driver is reading; only start again when it is gone.
     setCurrentRideId((current) => {
@@ -742,7 +763,7 @@ export default function DriverHomeScreen() {
       if (next) animateCard();
       return next;
     });
-  }, [searchingRides, fleetRides, fleetId, isOnline, location, isApproved, searchRadiusKm, driverId, vehicleType, workingCityId, femaleVerified, cashJobs, jobTypes, animateCard, snoozesLoaded]);
+  }, [searchingRides, fleetRides, networkRides, fleetId, isOnline, location, isApproved, searchRadiusKm, driverId, vehicleType, workingCityId, femaleVerified, cashJobs, jobTypes, animateCard, snoozesLoaded]);
 
   // Going offline takes the offer card down with it. What was declined or
   // missed stays dealt with (snoozed): the offer may still be live on the
@@ -1605,7 +1626,9 @@ export default function DriverHomeScreen() {
               <View style={styles.fleetBanner}>
                 <Ionicons name="call-outline" size={16} color={COLORS.midnight} />
                 <Text style={styles.fleetBannerText} numberOfLines={2}>
-                  {currentRide.forMe && currentRide.dispatch?.mode === 'queue'
+                  {currentRide.network && currentRide.fleetId !== fleetId
+                    ? 'TakeARoute network job from '
+                    : currentRide.forMe && currentRide.dispatch?.mode === 'queue'
                     ? `Your turn${currentRide.dispatch?.zoneName ? ` in the ${currentRide.dispatch.zoneName} queue` : ''} · `
                     : currentRide.forMe
                     ? 'Sent to you by '

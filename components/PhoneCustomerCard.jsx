@@ -20,7 +20,7 @@ export default function PhoneCustomerCard({ ride, rideId, compact }) {
         <View style={{ flex: 1 }}>
           <Text style={TYPE.subhead} numberOfLines={1}>{name}</Text>
           <Text style={TYPE.small} numberOfLines={1}>
-            Phone booking · {ride?.fleetName || 'your fleet'}
+            {ride?.dispatch?.network === true ? 'Network job' : 'Phone booking'} · {ride?.fleetName || 'your fleet'}
           </Text>
         </View>
         {customer.phone && id ? (

@@ -462,14 +462,62 @@ module.exports = (deps) => {
       wantsJobType(d.jobTypes, ride.rideType);
   }
 
+  /* THE TAKEAROUTE NETWORK (M&S, 18 Nov 2026): "If no one in the fleet is
+     available, job will go to the Network, all fleet and TakeARoute
+     drivers, nearest driver available ... operator will dispatch outside
+     fleet if required"; "Everyone, nearest driver, then BID".
+     - The operator chooses it ("Offer to the network" when sending a job),
+       never automatically, and only if an admin switched it on for the
+       fleet (fleets/{id}.networkAllowed).
+     - Only jobs paid in the car: cash, or card on the driver's machine.
+       Account and paid-online jobs stay with the fleet's own drivers.
+     - Every available driver is asked, of any fleet or none: nearest first,
+       one at a time, then a BID JOB to everyone nearby (the "nearest" run
+       with dispatch.network set, so fleetPool asks everyone).
+     - Money, as for an app job: a driver outside the booking fleet keeps
+       the fare and the booking fleet gets nothing. A company driver of
+       another fleet does it for that fleet: it settles there, as their app
+       cash jobs do, and is listed in fleets/{theirs}/networkJobs, not on
+       the booking fleet's ride, which keeps the customer's number. */
+  const NETWORK_COLLECT = ["cash", "card"];
+
   /**
-   * Whether a driver can be sent a fleet job right now.
+   * Whether a phone job is out to the whole TakeARoute network.
+   * @param {Object} ride Ride data.
+   * @return {boolean} On the network.
+   */
+  function onNetwork(ride) {
+    return Boolean(ride && ride.dispatch && ride.dispatch.network === true);
+  }
+
+  /**
+   * Refuses a job the network may not take: the fleet is not allowed to
+   * use it, or the job is not paid in the car.
+   * @param {Object} fleet Fleet data.
+   * @param {string} collectBy How the job is paid.
+   */
+  function assertNetworkJob(fleet, collectBy) {
+    if (fleet.networkAllowed !== true) {
+      throw new HttpsError("failed-precondition", "Offering jobs to the " +
+        "TakeARoute network is not switched on for your fleet. Ask " +
+        "TakeARoute to switch it on.");
+    }
+    if (!NETWORK_COLLECT.includes(collectBy || "cash")) {
+      throw new HttpsError("failed-precondition", "Only cash jobs and card " +
+        "jobs taken on the driver's machine can go to the network. Account " +
+        "and paid-online jobs stay with your own drivers.");
+    }
+  }
+
+  /**
+   * Whether a driver can be sent a fleet job right now: a driver of the
+   * fleet, or any driver once it is out to the network.
    * @param {Object} d Driver data.
    * @param {Object} ride Ride data.
    * @return {boolean} Eligible.
    */
   function canTakeFleetJob(d, ride) {
-    return d.fleetId === ride.fleetId && canWork(d) &&
+    return (d.fleetId === ride.fleetId || onNetwork(ride)) && canWork(d) &&
       canServe(d.vehicleType, ride.rideType);
   }
 
@@ -511,21 +559,27 @@ module.exports = (deps) => {
 
   /**
    * How a phone job should be sent, from the dashboard's choice.
-   * @param {*} raw "queue", "nearest" or anything else for the whole fleet.
+   * @param {*} raw "queue", "nearest", "network" or anything else for the
+   *   whole fleet.
    * @param {?string} driverId A driver chosen by name, if any.
    * @param {Object} fleet Fleet data.
-   * @return {{mode: string, nearest: boolean}} dispatch.mode and whether the
-   *   queue steps through the closest drivers rather than a zone's line.
+   * @return {{mode: string, nearest: boolean, network: boolean}}
+   *   dispatch.mode, whether the queue steps through the closest drivers
+   *   rather than a zone's line, and whether it is out to every TakeARoute
+   *   driver (checked with assertNetworkJob by the caller).
    */
   function dispatchChoice(raw, driverId, fleet) {
-    if (driverId) return {mode: "driver", nearest: false};
-    if (raw === "nearest") return {mode: "queue", nearest: true};
-    if (raw !== "queue") return {mode: "all", nearest: false};
+    if (driverId) return {mode: "driver", nearest: false, network: false};
+    if (raw === "network") return {mode: "queue", nearest: true, network: true};
+    if (raw === "nearest") {
+      return {mode: "queue", nearest: true, network: false};
+    }
+    if (raw !== "queue") return {mode: "all", nearest: false, network: false};
     if (!(fleet.zones || []).length) {
       throw new HttpsError("failed-precondition",
           "Add your zones in Settings before sending jobs by queue.");
     }
-    return {mode: "queue", nearest: false};
+    return {mode: "queue", nearest: false, network: false};
   }
 
   /**
@@ -551,15 +605,19 @@ module.exports = (deps) => {
   }
 
   /**
-   * Every free online driver of the job's fleet who may take it and has not
-   * turned it down, with how far they are from the pickup (no radius).
+   * Every free online driver of the job's fleet (of any fleet, once it is
+   * out to the network) who may take it and has not turned it down, with
+   * how far they are from the pickup (no radius).
    * @param {Object} ride Ride data.
    * @return {Promise<Array<{id: string, km: number}>>} Drivers.
    */
   async function fleetPool(ride) {
     const skip = new Set(ride.declinedBy || []);
-    const drivers = await db.collection("drivers")
-        .where("fleetId", "==", ride.fleetId).get();
+    // Out to the network: every online driver, of any fleet or none.
+    const drivers = onNetwork(ride) ?
+      await db.collection("drivers").where("status", "==", "online").get() :
+      await db.collection("drivers").where("fleetId", "==", ride.fleetId)
+          .get();
     const pool = [];
     // Who was left out and why, for the log line (poolNote in index.js).
     const skipped = {declined: 0, offline: 0, docs: 0, membership: 0,
@@ -744,8 +802,10 @@ module.exports = (deps) => {
       }, ring)).catch(() => null)));
     } else {
       await sendPush(ids, Object.assign({
-        title: target ? `Job from ${ride.fleetName || "your fleet"}` :
-          "New fleet job",
+        title: onNetwork(ride) ?
+          `Network job from ${ride.fleetName || "a fleet"}` :
+          target ? `Job from ${ride.fleetName || "your fleet"}` :
+            "New fleet job",
         body: `${kind}. Pickup at ${pickup}. Open TakeARoute to accept.`,
       }, ring));
     }
@@ -961,6 +1021,12 @@ module.exports = (deps) => {
         }
       }
     }
+    // On the network, the time every driver has for an app job; otherwise
+    // the fleet's own.
+    const offerSeconds = onNetwork(ride) ?
+      Math.max(5, Math.round((await loadAppConfig()).dispatch
+          .requestTimeoutSeconds || 20)) :
+      offerMsFor({}, fleetSnap.data()) / 1000;
     // Nobody anywhere: name every zone tried, for the office.
     const zoneName = next && zone ? zone.name :
       tried.map((z) => z.name).join(", ") || null;
@@ -979,7 +1045,7 @@ module.exports = (deps) => {
         "dispatch.zoneName": zoneName,
         "dispatch.queueDone": !next,
         "dispatch.offeredAt": FieldValue.serverTimestamp(),
-        "dispatch.offerSeconds": offerMsFor({}, fleetSnap.data()) / 1000,
+        "dispatch.offerSeconds": offerSeconds,
         "dispatch.queueOffers": FieldValue.increment(next ? 1 : 0),
       });
     });
@@ -2870,7 +2936,8 @@ module.exports = (deps) => {
 
     // The chosen driver must be in this fleet and able to do the job.
     const driverId = text(d.driverId, 128) || null;
-    const {mode, nearest} = dispatchChoice(d.dispatchMode, driverId, me.fleet);
+    const {mode, nearest, network} = dispatchChoice(d.dispatchMode, driverId,
+        me.fleet);
     if (driverId) {
       const snap = await db.collection("drivers").doc(driverId).get();
       const drv = snap.exists ? snap.data() : null;
@@ -2904,6 +2971,7 @@ module.exports = (deps) => {
     // it, so paymentMethod stays "cash" and nothing is charged or credited.
     const collectBy = o.paidOnline ? "online" :
       ["card", "account"].includes(d.collectBy) ? d.collectBy : "cash";
+    if (network) assertNetworkJob(me.fleet, collectBy);
     const notes = text(d.notes, 500);
     // An account job goes on the client's bill: the driver takes no money.
     let account = null;
@@ -2972,6 +3040,7 @@ module.exports = (deps) => {
       dispatch: {
         mode,
         nearest,
+        network,
         driverId,
         leadMinutes: lead,
         offeredAt: later || held ? null : ts,
@@ -3049,8 +3118,8 @@ module.exports = (deps) => {
     const rideId = text(data && data.rideId, 128);
     const driverId = text(data && data.driverId, 128) || null;
     const keepTime = Boolean(data && data.keepTime);
-    const {mode, nearest} = dispatchChoice(data && data.mode, driverId,
-        me.fleet);
+    const {mode, nearest, network} = dispatchChoice(data && data.mode,
+        driverId, me.fleet);
     const rideRef = db.collection("rides").doc(rideId);
     if (driverId) {
       const [snap, rideSnap] = await Promise.all([
@@ -3089,6 +3158,7 @@ module.exports = (deps) => {
         throw new HttpsError("failed-precondition",
             "A driver already has this job, or it has ended.");
       }
+      if (network) assertNetworkJob(me.fleet, ride.collectBy);
       // Sent again by the office: an ordinary offer, never a BID JOB first
       // (bidJobs.js: the first offer is always a normal job), with the
       // fleet's answer time as it is now.
@@ -3101,6 +3171,7 @@ module.exports = (deps) => {
         tx.update(rideRef, Object.assign(fresh, {
           "dispatch.mode": mode,
           "dispatch.nearest": nearest,
+          "dispatch.network": network,
           "dispatch.driverId": driverId,
           "dispatch.returnedBy": FieldValue.delete(),
           "dispatch.returnedAt": FieldValue.delete(),
@@ -3115,6 +3186,7 @@ module.exports = (deps) => {
         "dispatchAt": Timestamp.now(),
         "dispatch.mode": mode,
         "dispatch.nearest": nearest,
+        "dispatch.network": network,
         "dispatch.driverId": driverId,
         "dispatch.offeredAt": FieldValue.serverTimestamp(),
         "dispatch.rounds": FieldValue.increment(1),
@@ -3360,6 +3432,11 @@ module.exports = (deps) => {
     // Payment and notes.
     const collectBy = d.collectBy === undefined ? ride.collectBy || "cash" :
       ["card", "account"].includes(d.collectBy) ? d.collectBy : "cash";
+    if (onNetwork(ride) && !NETWORK_COLLECT.includes(collectBy)) {
+      throw new HttpsError("failed-precondition", "This job is out to the " +
+        "TakeARoute network, where only cash and card-machine jobs can go. " +
+        "Send it to your own drivers first, then change how it is paid.");
+    }
     let account = ride.account || null;
     if (collectBy === "account" && (d.accountId !== undefined || !account)) {
       const accountId = text(d.accountId, 128) || (account && account.id);
@@ -3884,7 +3961,14 @@ module.exports = (deps) => {
           const snap = driverId ?
             await db.collection("drivers").doc(driverId).get() : null;
           const drv = snap && snap.exists ? snap.data() : null;
-          if (!drv || drv.fleetId !== me.fleetId) {
+          // A driver from outside who has one of this fleet's network jobs
+          // may be called about it, through the office line as usual.
+          const job = drv && drv.fleetId !== me.fleetId && drv.currentRideId ?
+            await db.collection("rides").doc(drv.currentRideId).get() : null;
+          const onOurJob = Boolean(job && job.exists &&
+            job.data().fleetId === me.fleetId &&
+            job.data().driverId === driverId);
+          if (!drv || (drv.fleetId !== me.fleetId && !onOurJob)) {
             throw new HttpsError("not-found", "Not one of your drivers.");
           }
           other = await phoneFor("drivers", driverId);
@@ -4313,6 +4397,37 @@ module.exports = (deps) => {
         return null;
       });
 
+  /* A network job (onNetwork) was taken: record whether the driver is
+     outside the booking fleet, and which fleet's books it goes in (another
+     fleet's company driver's), for settleFleetJob. Written on every
+     acceptance, so a job given back and taken by someone else is right. */
+  out.tagNetworkJobs = functions.firestore
+      .document("rides/{rideId}")
+      .onUpdate(async (change) => {
+        const before = change.before.data();
+        const after = change.after.data();
+        if (after.source !== "phone" || !onNetwork(after) ||
+            !after.driverId || before.driverId === after.driverId ||
+            after.status !== "accepted") {
+          return null;
+        }
+        const snap = await db.collection("drivers").doc(after.driverId).get();
+        const d = snap.exists ? snap.data() : {};
+        const outside = (d.fleetId || null) !== after.fleetId;
+        const fleetId = outside && d.fleetId &&
+          fleetTypeOf(d) === "company" ? d.fleetId : null;
+        await change.after.ref.update({networkDriver: outside ? {
+          outside: true, fleetId,
+          fleetName: fleetId ? d.fleetName || null : null,
+          at: FieldValue.serverTimestamp(),
+        } : FieldValue.delete()});
+        console.log(`Network job ${change.after.id} taken by ` +
+          `${after.driverId}` + (outside ? (fleetId ?
+            ` (company driver of ${fleetId})` : " (their own fare)") :
+            " (the fleet's own driver)"));
+        return null;
+      });
+
   /* Daily: a fleet on a flat monthly plan pays its price on its billing
      date, from its wallet and then its saved card. A per-driver fleet is
      billed nothing: its drivers pay their own memberships. */
@@ -4481,6 +4596,9 @@ module.exports = (deps) => {
     if (!ride.fleetId || !ride.driverId) return null;
     if (ride.source === "phone") {
       if (ride.status !== "completed") return null;
+      // A network job done by a driver outside the booking fleet: theirs,
+      // unless they are another fleet's company driver (settleFleetOf).
+      if (outsideDriver(ride) && !settleFleetOf(ride)) return null;
       // Paid online through TakeARoute: counts once the money is taken.
       if (ride.collectBy === "online") {
         return ride.webPayment && ride.webPayment.status === "captured" ?
@@ -4496,6 +4614,27 @@ module.exports = (deps) => {
     }
     return ride.cancellationFeePaid &&
       Number(ride.cancellationFeeDriverShare) > 0 ? "cancelFee" : null;
+  }
+
+  /**
+   * Whether a phone job was done by a driver outside the booking fleet (it
+   * was out to the network; tagNetworkJobs).
+   * @param {Object} ride Ride document.
+   * @return {boolean} Outside driver.
+   */
+  function outsideDriver(ride) {
+    return Boolean(ride.networkDriver && ride.networkDriver.outside);
+  }
+
+  /**
+   * The fleet whose books a finished job goes in: the booking fleet, or for
+   * a network job done by another fleet's company driver, that fleet.
+   * @param {Object} ride Ride document.
+   * @return {?string} Fleet id.
+   */
+  function settleFleetOf(ride) {
+    return outsideDriver(ride) ? ride.networkDriver.fleetId || null :
+      ride.fleetId;
   }
 
   /**
@@ -4561,8 +4700,13 @@ module.exports = (deps) => {
             seen.settlement.farePence === settledPence(seen, kind)) {
           return null;
         }
-        const accountRef = fleetDoc(seen.fleetId).collection("driverAccounts")
+        const settleFleet = settleFleetOf(seen);
+        const accountRef = fleetDoc(settleFleet).collection("driverAccounts")
             .doc(seen.driverId);
+        // Another fleet's company driver did a network job: it is listed in
+        // their fleet's books here (the ride stays the booking fleet's).
+        const listRef = outsideDriver(seen) ? fleetDoc(settleFleet)
+            .collection("networkJobs").doc(change.after.id) : null;
         await db.runTransaction(async (tx) => {
           const [rideSnap, accountSnap] = await Promise.all([
             tx.get(change.after.ref), tx.get(accountRef)]);
@@ -4579,6 +4723,24 @@ module.exports = (deps) => {
           const next = settlementOf(ride, nowKind, percent);
           tx.update(change.after.ref, {settlement: Object.assign({}, next, {
             settledAt: FieldValue.serverTimestamp()})});
+          if (listRef) {
+            const at = (x) => (x && x.address) || "";
+            tx.set(listRef, {
+              rideId: change.after.id, driverId: ride.driverId,
+              source: "phone", network: true, status: ride.status,
+              bookedBy: {fleetId: ride.fleetId,
+                fleetName: ride.fleetName || ""},
+              pickupLocation: {address: at(ride.pickupLocation)},
+              dropoffLocation: {address: at(ride.dropoffLocation)},
+              fare: {total: Number((ride.fare || {}).total) || 0},
+              finalTotal: ride.finalTotal || null,
+              collectBy: ride.collectBy || "cash",
+              rideType: ride.rideType || null,
+              timestamps: ride.timestamps || {},
+              settlement: Object.assign({}, next,
+                  {settledAt: FieldValue.serverTimestamp()}),
+            });
+          }
           tx.set(accountRef, {
             driverId: seen.driverId,
             owedPence: FieldValue.increment(

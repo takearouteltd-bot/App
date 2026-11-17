@@ -50,6 +50,9 @@ export default function DriverStatementScreen() {
   const [driver, setDriver] = useState(undefined);
   const [account, setAccount] = useState({});
   const [rides, setRides] = useState(null);
+  // Network jobs another fleet booked that this driver did for their own
+  // fleet (functions/fleet.js settleFleetJob).
+  const [net, setNet] = useState([]);
   const [payments, setPayments] = useState([]);
   const [filter, setFilter] = useState('all');
   const fleetId = driver?.fleetId;
@@ -67,6 +70,11 @@ export default function DriverStatementScreen() {
         query(collection(db, 'rides'), where('fleetId', '==', fleetId), where('driverId', '==', uid), orderBy('timestamps.createdAt', 'desc'), limit(100)),
         (s) => setRides(s.docs.map((d) => ({ id: d.id, ...d.data() })).filter((r) => r.settlement)),
         () => setRides([])
+      ),
+      onSnapshot(
+        query(collection(db, 'fleets', fleetId, 'networkJobs'), where('driverId', '==', uid), limit(100)),
+        (s) => setNet(s.docs.map((d) => ({ id: d.id, ...d.data() })).filter((r) => r.settlement)),
+        () => setNet([])
       ),
       onSnapshot(
         query(collection(db, 'fleets', fleetId, 'driverPayments'), where('driverId', '==', uid), limit(100)),
@@ -89,7 +97,8 @@ export default function DriverStatementScreen() {
 
   const fleetName = driver.fleetName || 'Your fleet';
   const banner = balanceBanner(account.owedPence || 0, fleetName);
-  const shown = (rides || []).filter((r) => matches(r.settlement.kind, filter));
+  const at = (r) => r.timestamps?.createdAt?.toMillis?.() || 0;
+  const shown = (rides || []).concat(net).sort((a, b) => at(b) - at(a)).filter((r) => matches(r.settlement.kind, filter));
 
   return (
     <Screen>
@@ -121,6 +130,7 @@ export default function DriverStatementScreen() {
                   <Text style={[TYPE.body, { marginTop: SPACE[1] }]} numberOfLines={2}>{place(r.pickupLocation)} to {place(r.dropoffLocation)}</Text>
                   <Text style={[TYPE.small, { marginTop: SPACE[1] }]}>
                     {s.kind === 'account' && r.account?.company ? `Account job: ${r.account.company}` : KIND_WORDS[s.kind]}
+                    {r.network && r.bookedBy ? ` · network job for ${r.bookedBy.fleetName || 'another fleet'}` : ''}
                   </Text>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: SPACE[1] }}>
                     <Text style={TYPE.small}>{pounds(s.farePence)}, commission {pounds(s.commissionPence)}</Text>

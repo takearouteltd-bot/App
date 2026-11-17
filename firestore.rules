@@ -575,7 +575,10 @@ service cloud.firestore {
       return changed.hasOnly(["status", "driverId", "acceptedAt", "walletProcessed"]) &&
         resource.data.status == "dispatching" &&
         resource.data.get("fleetId", null) is string &&
-        driver.get("fleetId", null) == resource.data.fleetId &&
+        /* The fleet's drivers; anyone once the office sent it to the
+           TakeARoute network (functions/fleet.js onNetwork). */
+        (driver.get("fleetId", null) == resource.data.fleetId ||
+          resource.data.dispatch.get("network", false) == true) &&
         resource.data.dispatch.get("driverId", null) in [null, request.auth.uid] &&
         /* Held for the office: nobody takes it until it is sent again. */
         resource.data.dispatch.get("mode", "") != "office" &&
@@ -598,7 +601,9 @@ service cloud.firestore {
       let driver = get(/databases/$(database)/documents/drivers/$(request.auth.uid)).data;
       return changed.hasOnly(["declinedBy"]) &&
         ((resource.data.status == "dispatching" &&
-          driver.get("fleetId", null) == resource.data.get("fleetId", "")) ||
+          (driver.get("fleetId", null) == resource.data.get("fleetId", "") ||
+            (resource.data.dispatch.get("network", false) == true &&
+              driver.get("approved", false) == true))) ||
          (resource.data.status == "searching" &&
           driver.get("approved", false) == true)) &&
         request.resource.data.declinedBy.toSet() ==
@@ -837,6 +842,12 @@ service cloud.firestore {
         (fleetStaffOf(resource.data.fleetId) ||
           get(/databases/$(database)/documents/drivers/$(request.auth.uid))
             .data.get("fleetId", null) == resource.data.fleetId)
+      ) || (
+        /* Out to the TakeARoute network: every approved driver. */
+        signedIn() &&
+        resource.data.get("network", false) == true &&
+        get(/databases/$(database)/documents/drivers/$(request.auth.uid))
+          .data.get("approved", false) == true
       );
       allow write: if false;
     }
@@ -1092,6 +1103,14 @@ service cloud.firestore {
         allow read: if isAdmin() || fleetStaffOf(fleetId) ||
           (signedIn() && resource.data.driverId == request.auth.uid);
         allow write: if isAdmin();
+      }
+      /* Network jobs another fleet booked that this fleet's company drivers
+         did (functions/fleet.js settleFleetJob): the fare and commission,
+         without that fleet's customer. Written by the server only. */
+      match /networkJobs/{rideId} {
+        allow read: if isAdmin() || fleetStaffOf(fleetId) ||
+          (signedIn() && resource.data.driverId == request.auth.uid);
+        allow write: if false;
       }
       match /invoices/{invoiceId} {
         allow read: if isAdmin() || fleetStaffOf(fleetId);

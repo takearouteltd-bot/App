@@ -126,6 +126,9 @@ const makePrivacy = ({functions, db}) => {
         }
         const next = pick(after, OFFER_FIELDS);
         next.customer = {name: (after.customer && after.customer.name) || ""};
+        // Out to the TakeARoute network (functions/fleet.js): every approved
+        // driver may see it, not only the fleet's (firestore.rules).
+        next.network = (after.dispatch || {}).network === true;
         const before = change.before.exists ?
           pick(change.before.data(), OFFER_FIELDS) : null;
         if (before && before.status === "dispatching") {

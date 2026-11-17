@@ -289,7 +289,9 @@ export default function DriverRideInProgressScreen() {
      server decides any penalty (functions/driverPenalty.js). */
   const handleCancel = useCallback(() => {
     const penalty = driverCancelPenalty(appConfig.cancellation, driverLocation, ride?.pickupLocation);
-    let message = ride?.source === 'phone'
+    let message = ride?.source === 'phone' && ride?.dispatch?.network === true
+      ? `It will go back out to other drivers for ${ride?.fleetName || 'the fleet'}.`
+      : ride?.source === 'phone'
       ? 'It will go back to your fleet.'
       : 'It will be offered to another driver.';
     if (penalty?.type === 'money') {
