@@ -82,6 +82,9 @@ const CONFIG_DEFAULTS = {
     restHours: 6},
   dispatch: {
     searchRadiusKm: 50, requestTimeoutSeconds: 20, searchTimeoutMinutes: 15,
+    // App jobs go to one driver at a time, nearest first (appOffers.js).
+    // 0 rings everyone in range at once, as before.
+    sequentialOffers: 1,
     // Follow-on jobs (followOn.js): a busy driver is offered a job when they
     // could be at its pickup within this many minutes, and they drop off
     // within followOnKm of it. 0 minutes turns them off.
@@ -195,6 +198,8 @@ async function loadAppConfig() {
           d.dispatch.followOnMinutes),
       followOnKm: numSetting(data.dispatch, "followOnKm",
           d.dispatch.followOnKm),
+      sequentialOffers: numSetting(data.dispatch, "sequentialOffers",
+          d.dispatch.sequentialOffers) === 1 ? 1 : 0,
     },
     tips: {
       enabled: numSetting(data.tips, "enabled", d.tips.enabled) === 1 ? 1 : 0,
@@ -756,7 +761,8 @@ null,
               paymentStatus: "pending",
               lastDriverCancelAt: admin.firestore.FieldValue.serverTimestamp(),
             });
-            await offerRideToDrivers(rideDoc.id, rideDoc.data());
+            await offerRideToDrivers(rideDoc.id, rideDoc.data(),
+                {restart: true});
           }
         } catch (error) {
           console.error("Could not resume search after new card:", error);
@@ -3712,56 +3718,92 @@ function wantsJobType(jobTypes, rideType) {
  * Every available online driver who may take this app job, with how far
  * they are from the pickup (no radius applied). Drivers who declined it,
  * blocked ones and those the passenger blocked are left out. Used by
- * offerRideToDrivers and BID JOBs (bidJobs.js).
+ * offerRideToDrivers, appOffers.js and BID JOBs (bidJobs.js).
+ * The list carries `skipped`, how many online drivers were left out and
+ * why, for poolNote: only online drivers are read, so offline ones are not
+ * counted.
  * @param {Object} ride Ride document.
  * @return {Promise<Array<{id: string, km: number}>>} Drivers.
  */
 async function appDriverPool(ride) {
-  const skip = new Set([
-    ...(ride.declinedBy || []),
-    ...(ride.blockedDriverIds || []),
-  ]);
+  const declined = new Set(ride.declinedBy || []);
+  const blockedByRider = new Set(ride.blockedDriverIds || []);
   const online = await db.collection("drivers")
       .where("status", "==", "online").get();
   const pool = [];
+  const skipped = {declined: 0, blocked: 0, docs: 0, membership: 0,
+    stale: 0, busy: 0, filters: 0};
   online.forEach((snap) => {
     const d = snap.data();
-    if (skip.has(snap.id) || d.blocked === true || d.approved !== true ||
-        hasExpiredDocument(d) || membershipSuspended(d) ||
-        positionStale(d) ||
-        d.isOnRide === true) {
+    const why = declined.has(snap.id) ? "declined" :
+      blockedByRider.has(snap.id) || d.blocked === true ? "blocked" :
+      d.approved !== true || hasExpiredDocument(d) ? "docs" :
+      membershipSuspended(d) ? "membership" :
+      positionStale(d) ? "stale" :
+      d.isOnRide === true ? "busy" :
+      // The vehicle can't do it; job categories the driver unticked in
+      // the app; a driver who chose a working city only gets that city's
+      // jobs (same rule as servesCity() in the app's utils/cities.js); a
+      // passenger who asked for a female driver gets verified female
+      // drivers only; the driver switched cash jobs off.
+      !canServe(d.vehicleType, ride.rideType) ||
+      !wantsJobType(d.jobTypes, ride.rideType) ||
+      (d.workingCityId && d.workingCityId !== ride.cityId) ||
+      (ride.femaleDriverOnly === true && d.femaleVerified !== true) ||
+      (d.cashJobs === false && ride.paymentMethod === "cash") ? "filters" :
+      null;
+    if (why) {
+      skipped[why]++;
       return;
     }
-    if (!canServe(d.vehicleType, ride.rideType)) return;
-    // Job categories the driver unticked in the app.
-    if (!wantsJobType(d.jobTypes, ride.rideType)) return;
-    // A driver who chose a working city only gets that city's jobs.
-    // Same rule as servesCity() in the app's utils/cities.js.
-    if (d.workingCityId && d.workingCityId !== ride.cityId) return;
-    // Passenger asked for a female driver: verified female drivers only.
-    if (ride.femaleDriverOnly === true && d.femaleVerified !== true) return;
-    // The driver switched cash jobs off in the app.
-    if (d.cashJobs === false && ride.paymentMethod === "cash") return;
     pool.push({id: snap.id, km: distanceKm(d.location, ride.pickupLocation)});
   });
+  pool.skipped = skipped;
   return pool;
 }
 
 /**
- * Rings every eligible online driver near the pickup. A BID JOB
- * (ride.bidJob) rings out to its own radius, saying how far away it is.
- * Nobody in range for an ordinary job opens it as a BID JOB.
+ * One line on who could be offered a job, so a job "offered to 0 drivers"
+ * in the logs says why: "2 in range; skipped busy 1, stale 3, distance 4".
+ * @param {Array} pool From appDriverPool or fleet.js fleetPool.
+ * @param {number} radiusKm The radius asked out to.
+ * @return {string} Summary.
+ */
+function poolNote(pool, radiusKm) {
+  const counts = Object.assign({}, pool.skipped || {});
+  counts.distance = pool.filter((p) => !(p.km <= radiusKm)).length;
+  const parts = Object.keys(counts).filter((k) => counts[k] > 0)
+      .map((k) => `${k} ${counts[k]}`);
+  return `${pool.length - counts.distance} in range` +
+    (parts.length ? `; skipped ${parts.join(", ")}` : "");
+}
+
+/**
+ * Offers an app job. Ordinarily to one driver at a time, nearest first
+ * (appOffers.js). A BID JOB, a bidding job, or any job with
+ * dispatch.sequentialOffers off rings every eligible online driver near
+ * the pickup at once; a BID JOB (ride.bidJob) rings out to its own radius,
+ * saying how far away it is.
  * @param {string} rideId Ride id.
  * @param {Object} ride Ride document.
- * @param {Object} opts {bidRing: rung by bidJobs.openApp}.
+ * @param {Object} opts {bidRing: rung by bidJobs.openApp; open: rung to
+ *   everyone because the one-at-a-time offers ran out with BID JOBs off;
+ *   skip: driver ids left out of that ring; restart: the search starts
+ *   again (given back, or a new card), so everyone may be asked again}.
  * @return {Promise<null>} Nothing.
  */
 async function offerRideToDrivers(rideId, ride, opts = {}) {
   const cfg = await loadAppConfig();
+  if (!opts.bidRing && !opts.open && appOffers.sequentialFor(ride, cfg)) {
+    await appOffers.offerNext(rideId, {cfg, restart: opts.restart === true});
+    return null;
+  }
   const radiusKm = ride.bidJob ?
     Math.max(cfg.dispatch.searchRadiusKm, Number(ride.bidJob.radiusKm) || 0) :
     cfg.dispatch.searchRadiusKm;
-  const nearby = (await appDriverPool(ride)).filter((p) => p.km <= radiusKm);
+  const pool = await appDriverPool(ride);
+  const skip = new Set(opts.skip || []);
+  const nearby = pool.filter((p) => p.km <= radiusKm && !skip.has(p.id));
   const freeKm = nearby.length ?
     Math.min(...nearby.map((p) => p.km)) : null;
 
@@ -3792,8 +3834,8 @@ async function offerRideToDrivers(rideId, ride, opts = {}) {
     });
   }
   console.log(`Job ${rideId} offered to ${nearby.length} driver(s)` +
-    (ride.bidJob ? " as a BID JOB" : ""));
-  if (opts.bidRing) return null;
+    (ride.bidJob ? " as a BID JOB" : "") + `; ${poolNote(pool, radiusKm)}`);
+  if (opts.bidRing || opts.open) return null;
   // A busy driver about to drop off nearby, if they would be quicker.
   // Nobody to ask now is not yet a BID JOB: the first offer stays a normal
   // one, and openBidJobs opens it after bidJobs.afterSeconds.
@@ -4150,8 +4192,16 @@ exports.reofferWhenPreferenceDropped = functions.firestore
       const dropped = before.femaleDriverOnly === true &&
         after.femaleDriverOnly !== true;
       if (!dropped) {
+        // One at a time: the driver being asked said no, so the next one
+        // is asked (appOffers.js). Otherwise the BID JOB check.
+        if (await appOffers.afterDecline(context.params.rideId, before,
+            after)) {
+          return null;
+        }
         return bidJobs.afterDecline(context.params.rideId, before, after);
       }
+      // One at a time, this asks the next driver once nobody is being
+      // asked, now from everyone the preference held back.
       return offerRideToDrivers(context.params.rideId, after);
     });
 
@@ -4212,11 +4262,14 @@ exports.notifyRideUpdates = functions.firestore
           body: "Your driver had to cancel. We are looking for a new one."});
         const gaveBack = ["accepted", "arrived"].includes(before.status) &&
           before.driverId && !after.driverId;
+        // The driver who gave it back is not asked again, even in the BID
+        // JOB that puts everyone else who said no back in.
         if (gaveBack &&
-            await bidJobs.openApp(rideId, "given_back", {again: true})) {
+            await bidJobs.openApp(rideId, "given_back",
+                {again: true, keep: [before.driverId]})) {
           return null;
         }
-        return offerRideToDrivers(rideId, after);
+        return offerRideToDrivers(rideId, after, {restart: true});
       }
       if (after.status === "accepted") {
         // The passenger took this driver's counter-offer: the driver may
@@ -5546,8 +5599,16 @@ Object.assign(exports, followOn.functions);
 // BID JOBs; used by offerRideToDrivers, reofferWhenPreferenceDropped, fleet.
 const bidJobs = require("./bidJobs")({
   functions, db, loadAppConfig, toMillis, appDriverPool, offerRideToDrivers,
+  sweepSequential: (...a) => appOffers.sweep(...a),
 });
 Object.assign(exports, bidJobs.functions);
+// App jobs one driver at a time; used by offerRideToDrivers,
+// reofferWhenPreferenceDropped and openBidJobs.
+const appOffers = require("./appOffers")({
+  functions, db, loadAppConfig, toMillis, appDriverPool, poolNote, sendPush,
+  followOn, bidJobs, ringAll: offerRideToDrivers,
+});
+Object.assign(exports, appOffers.functions);
 Object.assign(exports, require("./fleet")({
   functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
   wantsJobType, followOn, bidJobs,
@@ -5555,5 +5616,5 @@ Object.assign(exports, require("./fleet")({
   TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor,
   STRIPE_SECRETS, fleetBilling, shared: fleetShared, stripe, privacy,
   membershipSuspended, positionStale, settleDriverEndedEarly,
-  membershipPhoneHash, phoneOwners,
+  membershipPhoneHash, phoneOwners, poolNote,
 }));

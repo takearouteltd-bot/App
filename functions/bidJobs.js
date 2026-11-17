@@ -2,18 +2,25 @@
    BID JOBS
    A second chance for a job nobody is taking. When a job runs out of
    drivers it is opened as a "BID JOB": every available driver within
-   bidJobs.radiusKm (or the normal search radius, whichever is bigger) who
-   has not turned it down is rung again, and the app shows it highlighted,
-   with how far away it is. Drivers who only let the alert run out count as
-   available; a driver who pressed Decline is never asked again.
+   bidJobs.radiusKm (or the normal search radius, whichever is bigger) is
+   rung again, and the app shows it highlighted, with how far away it is.
+   That includes drivers who declined it or let it run out before (M&S,
+   17 Nov 2026: "back as BID JOB to all nearby drivers"); their earlier
+   answers move to declinedEarlier. Only a driver who took the job and gave
+   it back (gaveBackBy) is left out. A driver who declines the BID JOB
+   itself is not asked again.
 
    The first offer of a job is always the normal one (M&S, 16 Nov 2026:
    "this job should come as normal"), even when nobody is online when it is
    booked. It becomes a BID JOB the second time round:
    - app jobs (status "searching"):
-       a driver declined it and no other available driver is in range;
-       nobody took it for bidJobs.afterSeconds (openBidJobs, every minute),
-       which also covers nobody being online when it was booked;
+       one at a time (appOffers.js, the usual way): everyone in range was
+       asked and nobody took it ("declined" if any of them said no,
+       "unanswered" if they all let it run out);
+       all at once (bidding jobs, or dispatch.sequentialOffers off): a
+       driver declined it and no other available driver is in range;
+       nobody could be asked for bidJobs.afterSeconds (openBidJobs, every
+       minute), which covers nobody being online when it was booked;
        a driver who had accepted it gave it back (straight away, "given_back").
    - phone jobs sent to the whole fleet, by queue or to the nearest
      (status "dispatching", fleet.js): the queue or nearest steps ran out,
@@ -31,8 +38,8 @@
    rides/{id}/offers/{driverId} as with bidding, and the passenger picks.
    firestore.rules refuses a counter above the cap.
 
-   rides/{id}.bidJob (written here only; firestore.rules keeps it from
-   clients):
+   rides/{id}.bidJob, declinedEarlier and gaveBackBy are written here only
+   (firestore.rules keeps them from clients). bidJob:
      radiusKm             how far from the pickup drivers are asked
      at                   when it was opened
      reason               "declined" | "unanswered" | "given_back"
@@ -76,14 +83,17 @@ module.exports = (deps) => {
   out.milesText = milesText;
 
   /**
-   * Opens a job as a BID JOB, once. Phone jobs also get their drivers who
-   * only missed it (queue timeouts) back, and a fresh offeredAt, which makes
-   * dispatchFleetJob ring the fleet again (offerFleetJob rings out to
-   * bidJob.radiusKm while it is set). App jobs are rung by the caller.
+   * Opens a job as a BID JOB, once. Drivers who declined it or let it run
+   * out are asked again (declinedBy is emptied, the old answers kept in
+   * declinedEarlier); drivers who took it and gave it back are not. Phone
+   * jobs also get a fresh offeredAt, which makes dispatchFleetJob ring the
+   * fleet again (offerFleetJob rings out to bidJob.radiusKm while it is
+   * set). App jobs are rung by the caller.
    * @param {Object} ref Ride ref.
    * @param {string} reason "declined", "unanswered" or "given_back".
    * @param {Object} opts {again: open afresh even if it was a BID JOB
-   *   before, as when a driver who took it gives it back}.
+   *   before, as when a driver who took it gives it back; keep: drivers
+   *   who just gave it back, left out of it (added to gaveBackBy)}.
    * @return {Promise<?Object>} The ride as now stored, or null when it was
    *   not opened (switched off, already open, or no longer waiting).
    */
@@ -116,11 +126,19 @@ module.exports = (deps) => {
         maxCounterPercent: s.maxCounterPercent,
       };
       const update = {bidJob};
+      // Everyone nearby is asked, whatever they said before; only a driver
+      // who took the job and gave it back stays out.
+      const keep = new Set([...(ride.gaveBackBy || []), ...(opts.keep || [])]);
+      const before = ride.declinedBy || [];
+      update.declinedBy = before.filter((id) => keep.has(id));
+      const earlier = before.filter((id) => !keep.has(id));
+      if (earlier.length) {
+        update.declinedEarlier = FieldValue.arrayUnion(...earlier);
+      }
+      if ((opts.keep || []).length) {
+        update.gaveBackBy = FieldValue.arrayUnion(...opts.keep);
+      }
       if (phone) {
-        // A queue timeout is not a no: those drivers may take it now.
-        const missed = new Set(d.missed || []);
-        update.declinedBy = (ride.declinedBy || [])
-            .filter((id) => !missed.has(id));
         update["dispatch.offeredAt"] = FieldValue.serverTimestamp();
         update["dispatch.reRings"] = 0;
       }
@@ -178,7 +196,10 @@ module.exports = (deps) => {
     return null;
   };
 
-  /* Every minute: app jobs nobody has taken for bidJobs.afterSeconds are
+  /* Every minute: app jobs asked one driver at a time are checked
+     (appOffers.sweep: an offer whose timer was missed moves on, and a job
+     nobody could be asked about goes to anyone who has come online since).
+     App jobs nobody could be asked about for bidJobs.afterSeconds are
      opened as BID JOBs (timed like expireSearchingRides, from the latest
      restart of the search), and open BID JOBs nobody has taken are rung
      again every afterSeconds. Phone jobs are done in runFleetQueues. */
@@ -187,13 +208,15 @@ module.exports = (deps) => {
         .onRun(async () => {
           const cfg = await loadAppConfig();
           const s = settings(cfg);
-          if (s.enabled !== 1) return null;
           const waiting = await db.collection("rides")
               .where("status", "==", "searching").limit(300).get();
           let opened = 0;
           for (const doc of waiting.docs) {
             const r = doc.data();
             if (r.pricing !== "checked" || r.source === "phone") continue;
+            // Someone is being asked, or was just asked, one at a time.
+            if (await deps.sweepSequential(doc.id, r, cfg)) continue;
+            if (s.enabled !== 1) continue;
             if (r.bidJob) {
               // Still nobody: ring it again, to drivers who have not
               // declined it (offerRideToDrivers leaves those out).

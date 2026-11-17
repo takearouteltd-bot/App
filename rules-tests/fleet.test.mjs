@@ -581,3 +581,31 @@ test('phone number owners: no app access, and a driver cannot clear a number cla
   await seed((db) => updateDoc(doc(db, 'drivers/dind'), { phoneConflict: { phone: '+447700900123' } }));
   await assertFails(updateDoc(doc(as('dind'), 'drivers/dind'), { phoneConflict: deleteField() }));
 });
+
+/* App jobs one driver at a time (functions/appOffers.js). */
+test('one at a time: only the driver being asked takes the job; others can still decline', async () => {
+  await seed((db) => setDoc(doc(db, 'rides/cseq'), cAppJob({ offer: { driverId: 'cfree', n: 1, state: 'asking' } })));
+  await assertFails(updateDoc(doc(as('dind'), 'rides/cseq'), claim('dind')));
+  await assertSucceeds(updateDoc(doc(as('dind'), 'rides/cseq'), { declinedBy: arrayUnion('dind') }));
+  await assertSucceeds(updateDoc(doc(as('cfree'), 'rides/cseq'), claim('cfree')));
+});
+test('one at a time: a BID JOB, or a job nobody is being asked about, is open to any driver', async () => {
+  await seed((db) => setDoc(doc(db, 'rides/cbid'), cAppJob({ offer: { driverId: 'cfree', n: 3, state: 'open' }, bidJob: { radiusKm: 16 } })));
+  await seed((db) => setDoc(doc(db, 'rides/cwait'), cAppJob({ offer: { driverId: null, n: 1, state: 'waiting' } })));
+  await assertSucceeds(updateDoc(doc(as('dind'), 'rides/cbid'), claim('dind')));
+  await assertSucceeds(updateDoc(doc(as('dind'), 'rides/cwait'), claim('dind')));
+});
+test('one at a time: a passenger cannot book with an offer, or who was asked or missed it, already on', async () => {
+  const mine = { riderId: 'r1', status: 'searching' };
+  await assertFails(setDoc(doc(as('r1'), 'rides/seq1'), { ...mine, offer: { driverId: 'cfree', n: 1, state: 'asking' } }));
+  await assertFails(setDoc(doc(as('r1'), 'rides/seq2'), { ...mine, askedDrivers: ['dind', 'd1'] }));
+  await assertFails(setDoc(doc(as('r1'), 'rides/seq3'), { ...mine, missedBy: [] }));
+  await assertFails(setDoc(doc(as('r1'), 'rides/seq4'), { ...mine, gaveBackBy: [] }));
+  await assertSucceeds(setDoc(doc(as('r1'), 'rides/seq5'), mine));
+});
+test('one at a time: nobody but the server moves the offer on or records a miss', async () => {
+  await seed((db) => setDoc(doc(db, 'rides/cseq2'), cAppJob({ offer: { driverId: 'cfree', n: 1, state: 'asking' } })));
+  await assertFails(updateDoc(doc(as('dind'), 'rides/cseq2'), { 'offer.driverId': 'dind' }));
+  await assertFails(updateDoc(doc(as('cfree'), 'rides/cseq2'), { missedBy: ['dind'] }));
+  await assertFails(updateDoc(doc(as('r1'), 'rides/cseq2'), { offer: { driverId: null } }));
+});
