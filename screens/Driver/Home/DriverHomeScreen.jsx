@@ -1060,8 +1060,8 @@ export default function DriverHomeScreen() {
   /* Decline: off this driver's list for the rest of the shift. A fleet's
      phone booking also records it, so the office sees the answer at once. A
      counter-offer already sent is taken back, so the passenger can't pick it. */
-  /* More than one job waiting: look at the next one without declining this
-     one (Sarfaraz, 18 Nov 2026: "the other job's hiding behind it"). The
+  /* More than one job waiting: "Next job" shows the next one without
+     declining this one (Sarfaraz, 18 Nov 2026: "the other job's hiding behind it"). The
      job left stays on the list as it was, and comes round again. */
   const showNextJob = () => {
     if (rideRequests.length < 2) return;
@@ -1627,21 +1627,6 @@ export default function DriverHomeScreen() {
         const nextJob = rideRequests.length > 1 ? rideRequests[(at + 1) % rideRequests.length] : null;
         const body = (
           <>
-            {nextJob ? (
-              <TouchableOpacity
-                style={styles.moreJobs}
-                onPress={showNextJob}
-                accessibilityRole="button"
-                accessibilityLabel={`Job ${at + 1} of ${rideRequests.length}. See the next job, ${currencySymbol()}${Number(nextJob.fareEstimate || 0).toFixed(2)}, ${distanceText(nextJob.pickupDistanceKm)} away`}
-              >
-                <Text style={styles.moreJobsText} numberOfLines={1}>
-                  {at + 1} of {rideRequests.length} jobs · next: {currencySymbol()}
-                  {Number(nextJob.fareEstimate || 0).toFixed(2)}, {distanceText(nextJob.pickupDistanceKm)}
-                </Text>
-                <Text style={styles.moreJobsLink}>See next job</Text>
-                <Ionicons name="chevron-forward" size={14} color={COLORS.midnight} />
-              </TouchableOpacity>
-            ) : null}
             {currentRide.bidJob ? (
               <View style={styles.bidBanner} accessibilityRole="header">
                 <Text style={styles.bidTitle}>BID JOB</Text>
@@ -1764,7 +1749,20 @@ export default function DriverHomeScreen() {
               )
             ) : null}
 
-            <Button title="Decline" variant="ghost" onPress={() => declineCurrent(currentRide)} style={styles.decline} />
+            {nextJob ? (
+              <View style={styles.declineRow}>
+                <Button title="Decline" variant="ghost" onPress={() => declineCurrent(currentRide)} style={[styles.decline, styles.declineHalf]} />
+                <Button
+                  title={`Next job (${at + 1} of ${rideRequests.length})`}
+                  variant="secondary"
+                  onPress={showNextJob}
+                  style={[styles.decline, styles.declineHalf]}
+                  accessibilityLabel={`Next job. This is job ${at + 1} of ${rideRequests.length}. The next one is ${currencySymbol()}${Number(nextJob.fareEstimate || 0).toFixed(2)}, ${distanceText(nextJob.pickupDistanceKm)} away`}
+                />
+              </View>
+            ) : (
+              <Button title="Decline" variant="ghost" onPress={() => declineCurrent(currentRide)} style={styles.decline} />
+            )}
           </>
         );
         return currentRide.bidJob ? (
@@ -1992,17 +1990,7 @@ const styles = StyleSheet.create({
     marginBottom: SPACE[3],
   },
   fleetBannerText: { flex: 1, color: COLORS.midnight, fontWeight: '600' },
-  moreJobs: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SPACE[1],
-    backgroundColor: COLORS.surface,
-    borderRadius: 12,
-    paddingVertical: SPACE[2],
-    paddingHorizontal: SPACE[3],
-    marginBottom: SPACE[3],
-    minHeight: 44,
-  },
-  moreJobsText: { flex: 1, color: COLORS.midnight, fontWeight: '600' },
-  moreJobsLink: { color: COLORS.midnight, fontWeight: '700', textDecorationLine: 'underline' },
+  // Decline and Next job side by side when more than one job is waiting.
+  declineRow: { flexDirection: 'row', gap: SPACE[2] },
+  declineHalf: { flex: 1 },
 });
