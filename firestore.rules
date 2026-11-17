@@ -541,9 +541,14 @@ service cloud.firestore {
         request.resource.data.startedAt == request.time;
     }
 
+    /* One stop at a time, and no further than the stops booked: how many
+       are behind the car is part of the price of a destination change
+       (functions/destinationChange.js). */
     function driverReachesStop(changed) {
       return changed.hasOnly(["stopsCompleted"]) &&
-        resource.data.status == "ongoing";
+        resource.data.status == "ongoing" &&
+        request.resource.data.stopsCompleted == resource.data.get("stopsCompleted", 0) + 1 &&
+        request.resource.data.stopsCompleted <= resource.data.get("stops", []).size();
     }
 
     function driverCompletes(changed) {
@@ -693,6 +698,12 @@ service cloud.firestore {
         !("bidJob" in request.resource.data) &&
         !request.resource.data.keys().hasAny(["offer", "askedDrivers", "missedBy",
           "declinedEarlier", "gaveBackBy"]) &&
+        /* A destination change, an extended trip and what they do to the
+           card hold are the server's (functions/destinationChange.js): a
+           booking that arrived with them would be charged by them. */
+        !request.resource.data.keys().hasAny(["destinationChange", "destinationChanges",
+          "originalDropoffLocation", "fareBasis", "bookedBasis", "extraHolds", "cashExtraDue",
+          "holdRaise", "reachedDropoffAt", "reachedDropoffPoint", "extendedTrip"]) &&
         /* A booking from the app, nothing else: a phone job or a fleet job
            here would skip the price check and ring a fleet. */
         request.resource.data.status == "searching" &&

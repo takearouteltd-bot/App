@@ -107,6 +107,12 @@ const CONFIG_DEFAULTS = {
   // Passenger tips after a trip (tips.js).
   tips: {enabled: 1, preset1: 1, preset2: 2, preset3: 5, maxAmount: 50,
     windowHours: 24},
+  // A passenger changing the destination mid-trip: how long the driver has
+  // to accept (destinationChange.js).
+  destinationChange: {acceptSeconds: 20},
+  // Trips completed well past the drop-off are charged for the extra miles
+  // and flagged for the office (destinationChange.js). 0 turns it off.
+  extendedTrips: {enabled: 1},
 };
 
 /**
@@ -211,6 +217,16 @@ async function loadAppConfig() {
       preset3: numSetting(data.tips, "preset3", d.tips.preset3),
       maxAmount: numSetting(data.tips, "maxAmount", d.tips.maxAmount),
       windowHours: numSetting(data.tips, "windowHours", d.tips.windowHours),
+    },
+    destinationChange: {
+      // The same floor as job offers: under 10 s nobody can read it.
+      acceptSeconds: Math.min(120, Math.max(10, Math.round(numSetting(
+          data.destinationChange, "acceptSeconds",
+          d.destinationChange.acceptSeconds)))),
+    },
+    extendedTrips: {
+      enabled: numSetting(data.extendedTrips, "enabled",
+          d.extendedTrips.enabled) === 1 ? 1 : 0,
     },
     bidJobs: {
       enabled: numSetting(data.bidJobs, "enabled", d.bidJobs.enabled) === 1 ?
@@ -517,8 +533,9 @@ async function settleDriverEndedEarly(rideId, ride) {
     const snap = await tx.get(rideRef);
     const fresh = snap.exists ? snap.data() : ride;
     const fare = fresh.fare || {};
+    // An extended trip went past the drop-off; it did not end early.
     if (fresh.endedEarlyBy || fare.fullTotal !== undefined ||
-        !fresh.completedAwayFromDropoff) {
+        !fresh.completedAwayFromDropoff || fresh.extendedTrip) {
       return fare;
     }
     const early = endedEarlyFare(fresh, endPoint, cfg.fares.minimumFare,
@@ -531,6 +548,30 @@ async function settleDriverEndedEarly(rideId, ride) {
     });
     return merged;
   });
+}
+
+/**
+ * Settles the fare of a trip just completed, before it is charged: an
+ * extended trip (completed well past the drop-off after reaching it,
+ * destinationChange.js) or a trip the driver ended before the drop-off.
+ * @param {string} rideId Ride id.
+ * @param {Object} ride Ride data from the trigger.
+ * @return {Promise<?Object>} {fare, cashExtraDue?, extraHolds?} when the
+ *     fare was changed here, else null.
+ */
+async function settleCompletedFare(rideId, ride) {
+  try {
+    const extended = await destinationChange.settleExtendedTrip(rideId, ride);
+    if (extended) return extended;
+  } catch (error) {
+    // Charge the agreed fare rather than nothing.
+    console.error("❌ Extended trip failed, agreed fare:", rideId, error);
+  }
+  if (ride.completedAwayFromDropoff && !ride.endedEarlyBy &&
+      ride.fare && ride.fare.fullTotal === undefined) {
+    return {fare: await settleDriverEndedEarly(rideId, ride)};
+  }
+  return null;
 }
 
 /* ======================================
@@ -1013,16 +1054,33 @@ exports.chargeOnRideCompletion = functions
       // The driver ended the trip away from the drop-off because the
       // passenger got out: charge the fare so far (as when the passenger
       // ends it early), using how far from the drop-off the driver's app
-      // said they were. A passenger's early end already set its fare.
-      if (after.completedAwayFromDropoff && !after.endedEarlyBy &&
-          after.fare && after.fare.fullTotal === undefined) {
-        try {
-          after.fare = await settleDriverEndedEarly(rideId, after);
-          console.log("🛑 Ended away from drop-off:", rideId, after.fare.total);
-        } catch (error) {
-          // Charge the agreed fare rather than nothing.
-          console.error("❌ Fare so far failed, full fare:", rideId, error);
+      // said they were. A passenger's early end already set its fare. Or
+      // the trip went on past the drop-off: an extended trip, charged for
+      // the extra miles (destinationChange.js).
+      try {
+        const settled = await settleCompletedFare(rideId, after);
+        if (settled && settled.fare) {
+          after.fare = settled.fare;
+          console.log("🛑 Fare settled at completion:", rideId,
+              after.fare.total);
         }
+      } catch (error) {
+        // Charge the agreed fare rather than nothing.
+        console.error("❌ Fare so far failed, full fare:", rideId, error);
+      }
+      // A destination change accepted during the trip may have added a
+      // second card hold, or cash for the driver to collect, after the
+      // trigger's copy was taken.
+      try {
+        const fresh = await db.collection("rides").doc(rideId).get();
+        if (fresh.exists) {
+          const f = fresh.data();
+          after.fare = f.fare || after.fare;
+          after.extraHolds = f.extraHolds || [];
+          after.cashExtraDue = f.cashExtraDue || 0;
+        }
+      } catch (error) {
+        console.error("Could not re-read ride before charging:", rideId);
       }
 
       // Taxi firm jobs paid online are taken by fleetWeb.js, not here.
@@ -1076,7 +1134,7 @@ exports.chargeOnRideCompletion = functions
       // =========================
         await db.collection("payments").doc(paymentIntentId).update({
           status: "processing",
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: FV.serverTimestamp(),
         });
 
         let finalAmount = 0;
@@ -1088,8 +1146,15 @@ exports.chargeOnRideCompletion = functions
         const waitingFee = computeWaitingCharge(after, appConfig.waiting);
         const finalTotal = Math.round((baseTotal + waitingFee) * 100) / 100;
 
+        // Part of a raised fare the card would not cover is paid to the
+        // driver in cash (cashExtraDue, destinationChange.js): the card is
+        // charged the rest.
+        const cashMinor = Math.max(0,
+            Math.round((Number(after.cashExtraDue) || 0) * 100));
+        const extraHolds = Array.isArray(after.extraHolds) ?
+          after.extraHolds : [];
         if (baseTotal > 0) {
-          finalAmount = Math.round(finalTotal * 100);
+          finalAmount = Math.max(0, Math.round(finalTotal * 100) - cashMinor);
         }
 
         if (finalAmount <= 0) {
@@ -1098,9 +1163,10 @@ exports.chargeOnRideCompletion = functions
           await stripe.paymentIntents.cancel(paymentIntentId).catch((e) => {
             console.error("Could not release hold:", rideId, e.message);
           });
+          await destinationChange.releaseExtraHolds(rideId, extraHolds);
           await db.collection("payments").doc(paymentIntentId).update({
             status: "canceled",
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: FV.serverTimestamp(),
           });
           await db.collection("rides").doc(rideId).update({
             "paymentStatus": "no_charge",
@@ -1139,6 +1205,8 @@ exports.chargeOnRideCompletion = functions
                 idempotencyKey: `capture_${rideId}`,
               },
           );
+          // Any second hold is not needed.
+          await destinationChange.releaseExtraHolds(rideId, extraHolds);
         } else {
         // =========================
         // OVERAGE HANDLING
@@ -1152,30 +1220,36 @@ exports.chargeOnRideCompletion = functions
               {idempotencyKey: `capture_base_${rideId}`},
           );
 
-          const extraAmount = finalAmount - paymentIntent.amount;
+          // A second hold placed when the fare went up mid-trip covers the
+          // next part; only what is still left is charged on its own.
+          const fromHolds = await destinationChange.captureExtraHolds(rideId,
+              extraHolds, finalAmount - paymentIntent.amount);
+          const extraAmount = finalAmount - paymentIntent.amount - fromHolds;
           const pm = paymentIntent.payment_method &&
             paymentIntent.payment_method.id ?
             paymentIntent.payment_method.id : paymentIntent.payment_method;
 
           try {
-            const extra = await stripe.paymentIntents.create(
-                {
-                  amount: extraAmount,
-                  currency: rideCurrency(after),
-                  customer: paymentIntent.customer,
-                  payment_method: pm,
-                  confirm: true,
-                  off_session: true,
-                  metadata: {
-                    rideId,
-                    type: "extra_charge",
+            if (extraAmount > 0) {
+              const extra = await stripe.paymentIntents.create(
+                  {
+                    amount: extraAmount,
+                    currency: rideCurrency(after),
+                    customer: paymentIntent.customer,
+                    payment_method: pm,
+                    confirm: true,
+                    off_session: true,
+                    metadata: {
+                      rideId,
+                      type: "extra_charge",
+                    },
                   },
-                },
-                {
-                  idempotencyKey: `extra_${rideId}`,
-                },
-            );
-            capturedIntent = extra;
+                  {
+                    idempotencyKey: `extra_${rideId}`,
+                  },
+              );
+              capturedIntent = extra;
+            }
           } catch (extraError) {
             // The hold amount was taken; only the waiting charge failed.
             // Never mark a ride the passenger paid for as failed.
@@ -1183,7 +1257,7 @@ exports.chargeOnRideCompletion = functions
                 extraError.message);
             extraChargeFailed = true;
             extraChargeError = extraError.message || "declined";
-            finalAmount = paymentIntent.amount;
+            finalAmount = paymentIntent.amount + fromHolds;
           }
         }
 
@@ -1192,12 +1266,12 @@ exports.chargeOnRideCompletion = functions
         // =========================
         await db.collection("payments").doc(paymentIntentId).update({
           status: "captured",
-          capturedAt: admin.firestore.FieldValue.serverTimestamp(),
+          capturedAt: FV.serverTimestamp(),
           amount: finalAmount,
           transactionId: capturedIntent.id,
           extraChargeFailed,
           extraChargeError,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: FV.serverTimestamp(),
         });
 
         // =========================
@@ -1209,7 +1283,12 @@ exports.chargeOnRideCompletion = functions
           "paymentStatus": "captured",
           "fare.waitingCharge": waitingFee,
           "fare.finalTotal": extraChargeFailed ?
-            Math.round(finalAmount) / 100 : finalTotal,
+            Math.round(finalAmount + cashMinor) / 100 : finalTotal,
+          // The card and cash parts, when the driver collected some in cash.
+          ...(cashMinor > 0 ? {
+            "fare.cashExtra": cashMinor / 100,
+            "fare.cardTotal": finalAmount / 100,
+          } : {}),
           "extraChargeFailed": extraChargeFailed,
           "extraChargeError": extraChargeError,
           "cardLast4": cardLast4,
@@ -1233,7 +1312,7 @@ exports.chargeOnRideCompletion = functions
         await db.collection("payments").doc(paymentIntentId).update({
           status: "failed",
           error: error.message,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: FV.serverTimestamp(),
         });
 
         await db.collection("rides").doc(rideId).update({
@@ -1447,6 +1526,12 @@ exports.cancelRidePayment = functions
       // chargeTripEndedEarly charges the fare so far from this hold.
       if (passengerEndedEarly(before, after)) return null;
 
+      // A second hold placed when the fare went up mid-trip
+      // (destinationChange.js) is released with the trip.
+      if (Array.isArray(after.extraHolds) && after.extraHolds.length) {
+        await destinationChange.releaseExtraHolds(rideId, after.extraHolds);
+      }
+
       const paymentIntentId = after.paymentIntentId;
       if (!paymentIntentId) return null;
 
@@ -1598,6 +1683,13 @@ exports.createWalletOnOnboardingComplete = functions.firestore
       const before = change.before.data();
       const after = change.after.data();
 
+      // This trigger already runs on every position the driver's phone
+      // saves, so it also notes when a car on a trip reaches the drop-off
+      // (extended trips, destinationChange.js) without another function.
+      await destinationChange.notePosition(context.params.driverId, before,
+          after).catch((error) => console.error("Drop-off check failed:",
+          context.params.driverId, error.message));
+
       const driverId = context.params.driverId;
 
       if (
@@ -1668,8 +1760,14 @@ exports.creditDriverWalletOnRideCompletion = functions.firestore
       }
 
       // Final total includes any waiting charge; older rides only have total.
+      // Part the passenger paid the driver in cash (the card would not cover
+      // a raised fare, destinationChange.js) is already in the driver's
+      // hand, so only the card part is credited.
+      const cashExtra = after && after.fare ?
+        Math.max(0, Number(after.fare.cashExtra) || 0) : 0;
       const driverEarning = after && after.fare ?
-        Number(after.fare.finalTotal || after.fare.total || 0) : 0;
+        Math.round((Number(after.fare.finalTotal || after.fare.total || 0) -
+          cashExtra) * 100) / 100 : 0;
       if (driverEarning <= 0) {
         console.error("❌ Invalid fare amount:", driverEarning);
         return null;
@@ -1734,6 +1832,7 @@ exports.creditDriverWalletOnRideCompletion = functions.firestore
           transaction.update(rideRef, {
             "walletProcessed": true,
             "earnings.driverEarning": driverEarning,
+            "earnings.cashExtra": cashExtra,
             "earnings.paidTo": fleetId ? "fleet" : "driver",
             "earnings.creditedAt": admin.firestore.FieldValue.serverTimestamp(),
           });
@@ -4363,6 +4462,9 @@ exports.notifyRideUpdates = functions.firestore
 exports.expireSearchingRides = functions
     .pubsub.schedule("every 2 minutes")
     .onRun(async () => {
+      // Also closes a destination change the driver never answered, if its
+      // timer missed it (destinationChange.js).
+      await destinationChange.sweep();
       const cfg = await loadAppConfig();
       const limitMs = cfg.dispatch.searchTimeoutMinutes * 60 * 1000;
       const cutoff = admin.firestore.Timestamp
@@ -4746,6 +4848,15 @@ function paidLine(ride) {
   }
   if (ride.collectBy === "card") return "Paid by card to the driver.";
   if (ride.paymentMethod === "cash") return "Paid in cash to the driver.";
+  // The card did not cover a raised fare: the rest went to the driver in
+  // cash (destinationChange.js).
+  const fare = ride.fare || {};
+  if (Number(fare.cashExtra) > 0) {
+    const code = ride.currency || fare.currency;
+    return `Paid by card ending ${ride.cardLast4 || "on file"} ` +
+      `(${emailMoney(fare.cardTotal, code)}) and ` +
+      `${emailMoney(fare.cashExtra, code)} in cash to the driver.`;
+  }
   return `Paid by card ending ${ride.cardLast4 || "on file"}.`;
 }
 
@@ -4824,6 +4935,19 @@ function buildReceipt(ride, rideId, extra) {
     add("Cancellation fee", emailMoney(total, currency));
   } else {
     addFareLines(fare, add, currency);
+    // A trip that went past the drop-off, or whose destination the
+    // passenger changed on the way (destinationChange.js).
+    if (ride.extendedTrip) {
+      const miles = (Number(ride.extendedTrip.extraKm) || 0) * 0.621371;
+      add("Extended trip", `${miles.toFixed(1)} mi past the drop-off`);
+    }
+    const changes = (ride.destinationChanges || [])
+        .filter((c) => c && c.outcome === "accepted");
+    if (changes.length && ride.originalDropoffLocation) {
+      add("Destination changed", "from " + String(
+          ride.originalDropoffLocation.address || "the booked drop-off")
+          .split(",")[0]);
+    }
     // A waiting charge the card refused was not paid, so it is not listed.
     if (Number(fare.waitingCharge) > 0 && !ride.extraChargeFailed) {
       add("Waiting time", emailMoney(fare.waitingCharge, currency));
@@ -5621,3 +5745,14 @@ Object.assign(exports, require("./fleet")({
   membershipSuspended, positionStale, settleDriverEndedEarly,
   membershipPhoneHash, phoneOwners, poolNote,
 }));
+// The passenger changing the destination mid-trip, and extended trips;
+// used by chargeOnRideCompletion, cancelRidePayment and the driver
+// position trigger. Prices with fleet.js's Routes and fare sums (shared).
+const destinationChange = require("./destinationChange")({
+  functions, db, stripe, STRIPE_SECRETS, sendPush, loadAppConfig, toMillis,
+  distanceKm, rideCurrency, emailMoney, shared: fleetShared, paymentAlerts,
+});
+Object.assign(exports, destinationChange.functions, {
+  requestDestinationChange: destinationChange.requestDestinationChange,
+  answerDestinationChange: destinationChange.answerDestinationChange,
+});

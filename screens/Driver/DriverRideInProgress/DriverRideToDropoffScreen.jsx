@@ -183,6 +183,14 @@ export default function DriverRideToDropoffScreen() {
     }
   }, []);
 
+  // A destination change the driver accepted (DestinationChangePopup) moves
+  // the drop-off: redraw the route now rather than at the next refresh.
+  const dropLat = ride?.dropoffLocation?.latitude;
+  const dropLng = ride?.dropoffLocation?.longitude;
+  useEffect(() => {
+    lastRouteAt.current = 0;
+  }, [dropLat, dropLng]);
+
   // Redrawn from where the driver is now, but not on every GPS tick.
   useEffect(() => {
     if (!isCoord(driverLocation) || !isCoord(ride?.dropoffLocation)) return;
@@ -233,6 +241,20 @@ export default function DriverRideToDropoffScreen() {
 
   // Cash rides: the driver confirms they have been paid before the trip closes.
   const finish = (extra) => {
+    // A card ride whose fare went up mid-trip by more than the card would
+    // hold: the rest is paid in cash (functions/destinationChange.js).
+    const cashExtra = Number(ride?.cashExtraDue) || 0;
+    if (ride?.paymentMethod !== 'cash' && cashExtra > 0) {
+      Alert.alert(
+        `Collect ${money(cashExtra, ride?.currency)} in cash`,
+        "The passenger's card covers the rest of the fare. Take the extra in cash, then confirm.",
+        [
+          { text: 'Not yet', style: 'cancel' },
+          { text: 'Cash received', onPress: () => completeRide({ ...extra, cashCollected: true }) },
+        ]
+      );
+      return;
+    }
     // An account job goes on the client's bill, so there is nothing to collect.
     if (ride?.paymentMethod !== 'cash' || ride?.collectBy === 'account') return completeRide(extra);
     const leftKm = extra?.completedAwayFromDropoff ? extra.completeDistanceKm : null;
@@ -253,6 +275,31 @@ export default function DriverRideToDropoffScreen() {
     if (completing) return;
     const awayM = metresBetween(driverLocation, ride?.dropoffLocation);
     const awayKm = awayM === null ? null : awayM / 1000;
+
+    // Past the drop-off after being there: an extended trip. The server
+    // works out the extra miles from where the car really went and flags it
+    // for the office (functions/destinationChange.js), so there is no fare
+    // so far here; a cash fare is shown to collect once it is worked out.
+    const extended =
+      Number(getAppConfig().extendedTrips?.enabled) === 1 && Boolean(ride?.reachedDropoffAt);
+    if (awayKm !== null && awayKm > COMPLETE_RADIUS_KM && extended) {
+      Alert.alert(
+        'You went past the drop-off',
+        `You are ${distanceText(awayKm)} past it. If the passenger asked to go on, complete here: the extra miles are added to the fare, and the office checks extended trips.`,
+        [
+          { text: 'Keep driving', style: 'cancel' },
+          {
+            text: 'Complete here',
+            onPress: () =>
+              completeRide({
+                completedAwayFromDropoff: true,
+                completeDistanceKm: Number(awayKm.toFixed(2)),
+              }),
+          },
+        ]
+      );
+      return;
+    }
 
     if (awayKm !== null && awayKm > COMPLETE_RADIUS_KM) {
       const shown = distanceText(awayKm);
@@ -461,6 +508,16 @@ export default function DriverRideToDropoffScreen() {
         <SafetyButton role="driver" rideId={rideId} />
       </SafeAreaView>
 
+      {Number(ride.cashExtraDue) > 0 ? (
+        <View style={styles.cashWarning}>
+          <Banner
+            tone="warning"
+            title={`Collect ${money(ride.cashExtraDue, ride.currency)} extra in cash`}
+            body="The passenger changed the destination and their card didn't cover the new price."
+          />
+        </View>
+      ) : null}
+
       {position.jobSharing === 'failed' ? (
         <View style={styles.shareWarning}>
           <Banner
@@ -632,6 +689,7 @@ const styles = StyleSheet.create({
   },
 
   shareWarning: { position: 'absolute', top: 120, left: SPACE[5], right: SPACE[5] },
+  cashWarning: { position: 'absolute', top: 200, left: SPACE[5], right: SPACE[5] },
   topBar: {
     position: 'absolute', top: 0, left: SPACE[5], right: SPACE[5],
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

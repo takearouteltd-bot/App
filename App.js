@@ -16,6 +16,7 @@ import SplashScreen from "./Splash/SplashScreen";
 import { AlertHost } from "./components/ui/alert";
 import AppErrorBoundary from "./components/AppErrorBoundary";
 import FollowOnPopup from "./components/FollowOnPopup";
+import DestinationChangePopup from "./components/DestinationChangePopup";
 import { installGlobalErrorLogging } from "./utils/errorLog";
 import { confirmDeleteAccount } from "./utils/deleteAccount";
 import * as NativeSplash from "expo-splash-screen";
@@ -438,6 +439,10 @@ export default function App() {
       </NavigationContainer>
       {userRole === "driver" && auth.currentUser?.uid ? (
         <FollowOnPopup driverId={auth.currentUser.uid} routeName={routeName} />
+      ) : null}
+      {/* The passenger asking to go somewhere else, over any screen. */}
+      {userRole === "driver" && auth.currentUser?.uid ? (
+        <DestinationChangePopup driverId={auth.currentUser.uid} />
       ) : null}
       </AppErrorBoundary>
       <AlertHost />

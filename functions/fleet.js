@@ -431,6 +431,11 @@ module.exports = (deps) => {
   if (deps.shared) {
     deps.shared.priceAppRide = priceAppRide;
     deps.shared.RIDE_TYPES = RIDE_TYPES;
+    // A destination change and an extended trip are priced the same way
+    // (destinationChange.js).
+    deps.shared.routeFor = routeFor;
+    deps.shared.fareFor = fareFor;
+    deps.shared.rawConfig = rawConfig;
   }
 
   /**
@@ -4498,8 +4503,13 @@ module.exports = (deps) => {
    * @return {number} Pence.
    */
   function settledPence(ride, kind) {
-    // What actually reached the fleet's wallet, which never changes afterwards.
-    if (kind === "appCard") return toPence(ride.earnings.driverEarning);
+    // What actually reached the fleet's wallet, which never changes
+    // afterwards, plus any part the passenger paid the driver in cash
+    // because their card would not cover a raised fare (destinationChange.js).
+    if (kind === "appCard") {
+      return toPence(ride.earnings.driverEarning) +
+        toPence(ride.earnings.cashExtra);
+    }
     if (kind === "cancelFee") return toPence(ride.cancellationFeeDriverShare);
     if (kind === "online") return toPence(ride.webPayment.capturedAmount);
     return fareOf(ride);
@@ -4520,10 +4530,14 @@ module.exports = (deps) => {
     const commissionPence = Math.round(farePence * percent / 100);
     const fleetHoldsIt = ["account", "appCard", "cancelFee", "online"]
         .includes(kind);
+    // Commission is on the whole fare; the cash part is already with the
+    // driver, so it is not owed on to them.
+    const driverHolds = kind === "appCard" ?
+      toPence(ride.earnings.cashExtra) : 0;
     return {
       kind, farePence, commissionPercent: percent, commissionPence,
-      balancePence: fleetHoldsIt ? farePence - commissionPence :
-        -commissionPence,
+      balancePence: fleetHoldsIt ?
+        farePence - driverHolds - commissionPence : -commissionPence,
     };
   }
 

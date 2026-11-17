@@ -122,6 +122,16 @@ export const DEFAULT_APP_CONFIG = {
     maxAmount: 50,
     windowHours: 24,
   },
+  // A passenger changing the destination mid-trip: how long the driver has
+  // to accept (the server keeps the time, functions/destinationChange.js).
+  destinationChange: {
+    acceptSeconds: 20,
+  },
+  // 1: a trip completed well past the drop-off is charged for the extra
+  // miles and flagged for the office.
+  extendedTrips: {
+    enabled: 1,
+  },
 };
 
 function mergeSection(defaults, incoming) {
@@ -152,6 +162,8 @@ export function normaliseAppConfig(raw) {
     bidding: mergeSection(DEFAULT_APP_CONFIG.bidding, data.bidding),
     tips: mergeSection(DEFAULT_APP_CONFIG.tips, data.tips),
     bidJobs: mergeSection(DEFAULT_APP_CONFIG.bidJobs, data.bidJobs),
+    destinationChange: mergeSection(DEFAULT_APP_CONFIG.destinationChange, data.destinationChange),
+    extendedTrips: mergeSection(DEFAULT_APP_CONFIG.extendedTrips, data.extendedTrips),
   };
 }
 

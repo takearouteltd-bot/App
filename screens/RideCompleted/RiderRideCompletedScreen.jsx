@@ -10,6 +10,7 @@ import EmailReceiptButton from '../../components/EmailReceiptButton';
 import StarRating from '../../components/StarRating';
 import TipCard from '../../components/TipCard';
 import StopRows from '../../components/trips/StopRows';
+import TripChangeNotes from '../../components/trips/TripChangeNotes';
 import { COLORS, TYPE, SPACE, Screen, Card, Button, Loading, RouteLine } from '../../components/ui/kit';
 import { distanceText } from '../../utils/routes';
 
@@ -146,6 +147,9 @@ export default function RiderRideCompletedScreen() {
           </View>
         </Card>
       ) : null}
+
+      {/* Extended trip, destination changed, part paid in cash. */}
+      <TripChangeNotes ride={ride} driverName={driverName} />
 
       {/* Rating */}
       {ride.driverId ? (

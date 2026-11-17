@@ -21,12 +21,21 @@ import { db } from '../../config/firebase';
 import SafetyButton from '../../components/SafetyButton';
 import DriverPhotoPlate from '../../components/DriverPhotoPlate';
 import { confirmMaskedCall } from '../../utils/calling';
-import { currencySymbol } from '../../utils/appConfig';
+import { currencySymbol, money } from '../../utils/appConfig';
+import {
+  canChangeDestination,
+  isPending,
+  latestChange,
+  quoteChange,
+  requestChange,
+  secondsLeft,
+} from '../../utils/destinationChange';
 import {
   COLORS,
   TYPE,
   SPACE,
   RADIUS,
+  Banner,
   Screen,
   Sheet,
   Card,
@@ -57,6 +66,12 @@ export default function RideInProgressScreen() {
   const [following, setFollowing] = useState(false);
   const [etaMinutes, setEtaMinutes] = useState(null);
   const [sheetHeight, setSheetHeight] = useState(360);
+  // Changing the destination (utils/destinationChange.js): pricing or
+  // sending a request, the request whose outcome the passenger closed, and a
+  // clock for the driver's countdown.
+  const [changeBusy, setChangeBusy] = useState(false);
+  const [seenChange, setSeenChange] = useState(null);
+  const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
     if (!rideId) return undefined;
@@ -187,6 +202,73 @@ export default function RideInProgressScreen() {
   // Masked call through Twilio. Neither side sees a real number.
   const handleCall = () => confirmMaskedCall(rideId, 'your driver');
 
+  /* ================= CHANGE DESTINATION =================
+     The passenger picks a place on the search screen, sees the new price,
+     and it goes to the driver to accept. The server prices it from where
+     the car is and does the rest (functions/destinationChange.js). */
+  const shortName = (p) => String(p?.address || p?.description || '').split(',')[0] || 'the new place';
+
+  const sendChange = async (place, total) => {
+    setChangeBusy(true);
+    try {
+      const result = await requestChange(rideId, place, total);
+      if (result?.priceChanged) {
+        // The car moved on while they decided: show the new price first.
+        confirmChange(place, result.quote);
+      }
+    } catch (error) {
+      Alert.alert('Could not change the destination', error?.message || 'Please try again.');
+    } finally {
+      setChangeBusy(false);
+    }
+  };
+
+  const confirmChange = (place, quote) => {
+    Alert.alert(
+      'Change destination?',
+      `Go to ${shortName(place)} instead. New price ${money(quote.total, quote.currency)} ` +
+        `(was ${money(quote.was, quote.currency)}). Your driver has to accept the change.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Send to driver', onPress: () => sendChange(place, quote.total) },
+      ]
+    );
+  };
+
+  // The place chosen on the search screen arrives as a route param. It is
+  // cleared straight away so it is priced once; clearing it must not cancel
+  // the pricing already on its way, so only leaving the screen does.
+  const changeTo = route.params?.changeTo;
+  const mounted = useRef(true);
+  useEffect(() => () => {
+    mounted.current = false;
+  }, []);
+  useEffect(() => {
+    if (!changeTo) return;
+    navigation.setParams({ changeTo: undefined });
+    setChangeBusy(true);
+    quoteChange(rideId, changeTo)
+      .then((result) => {
+        if (mounted.current && result?.quote) confirmChange(changeTo, result.quote);
+      })
+      .catch((error) => {
+        if (mounted.current) Alert.alert('Could not change the destination', error?.message || 'Please try again.');
+      })
+      .finally(() => {
+        if (mounted.current) setChangeBusy(false);
+      });
+    // confirmChange only reads state through its arguments.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [changeTo, rideId, navigation]);
+
+  const change = latestChange(ride);
+  const changePending = isPending(change, now);
+  useEffect(() => {
+    if (!changePending) return undefined;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [changePending]);
+
   /* Ending a trip that is already under way. The ride is marked cancelled
      with endedEarly; the chargeTripEndedEarly function then completes it at
      the fare so far (the share of the journey done), so the passenger pays
@@ -236,6 +318,19 @@ export default function RideInProgressScreen() {
   }
 
   const { pickupLocation, dropoffLocation } = ride;
+  // How the latest request ended, until the passenger closes it (or for two
+  // minutes, so coming back to the screen later doesn't show it again). A
+  // request left pending past its time reads as not taken: the server
+  // closes it.
+  const answeredMs = change?.answeredAt?.toMillis?.() || change?.expiresAt?.toMillis?.() || 0;
+  const changeOutcome =
+    change && change.n !== seenChange && !changePending && now - answeredMs < 120000
+      ? change.state === 'accepted'
+        ? 'accepted'
+        : ['declined', 'expired', 'pending'].includes(change.state)
+        ? 'declined'
+        : null
+      : null;
   const fare = ride.fare?.finalTotal ?? ride.fare?.total ?? ride.fareEstimate;
   const rating = driverData?.rating ? Number(driverData.rating).toFixed(1) : null;
 
@@ -396,6 +491,29 @@ export default function RideInProgressScreen() {
           </View>
         ) : null}
 
+        {changePending ? (
+          <View style={styles.changeBanner}>
+            <Banner
+              tone="info"
+              title="Waiting for your driver to accept…"
+              body={`${shortName(change.to)} for ${money(change.newTotal, change.currency)}. ${secondsLeft(change, now)} s left.`}
+            />
+          </View>
+        ) : changeOutcome ? (
+          <View style={styles.changeBanner}>
+            <Banner
+              tone={changeOutcome === 'accepted' ? 'success' : 'warning'}
+              title={changeOutcome === 'accepted' ? 'Destination changed' : 'Destination not changed'}
+              body={
+                changeOutcome === 'accepted'
+                  ? `Your driver accepted. You're now going to ${shortName(dropoffLocation)}. New price ${money(change.newTotal, change.currency)}.`
+                  : `Your driver couldn't take the change. Your trip continues to ${shortName(dropoffLocation)}.`
+              }
+              action={<Button size="small" variant="secondary" title="OK" onPress={() => setSeenChange(change.n)} />}
+            />
+          </View>
+        ) : null}
+
         <View style={styles.journey}>
           <RouteLine
             compact
@@ -415,6 +533,18 @@ export default function RideInProgressScreen() {
               lastFollow.current = 0;
               setFollowing(true);
             }}
+          />
+        ) : null}
+
+        {canChangeDestination(ride, now) ? (
+          <Button
+            title={changeBusy ? 'Working out the price…' : 'Change destination'}
+            icon="swap-horizontal"
+            variant="secondary"
+            style={{ marginTop: SPACE[3] }}
+            disabled={changeBusy || ending}
+            loading={changeBusy}
+            onPress={() => navigation.navigate('DestinationSearch', { mode: 'change', origin: driverLocation || pickupLocation })}
           />
         ) : null}
 
@@ -467,6 +597,8 @@ const styles = StyleSheet.create({
   rating: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   ratingText: { ...TYPE.caption, color: COLORS.inkSoft, fontWeight: '700' },
   contact: { flexDirection: 'row', gap: SPACE[2], marginTop: SPACE[3] },
+
+  changeBanner: { marginTop: SPACE[4] },
 
   journey: {
     marginTop: SPACE[4], paddingTop: SPACE[4],

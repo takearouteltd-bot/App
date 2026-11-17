@@ -8,9 +8,10 @@ import { doc, onSnapshot, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
 import { money } from '../../../utils/appConfig';
 import StarRating from '../../../components/StarRating';
-import { COLORS, TYPE, SPACE, SHADOW, Card, Button, Loading, RouteLine, StatRow } from '../../../components/ui/kit';
+import { COLORS, TYPE, SPACE, SHADOW, Banner, Card, Button, Loading, RouteLine, StatRow } from '../../../components/ui/kit';
 import { distanceText } from '../../../utils/routes';
 import { useNextJob } from '../../../utils/followOn';
+import { acceptedChanges, extraMiles } from '../../../utils/destinationChange';
 
 export default function RideCompletedScreen() {
   const route = useRoute();
@@ -71,7 +72,21 @@ export default function RideCompletedScreen() {
     fare.fullTotal > fare.total ? ['Full journey', show(fare.fullTotal)] : null,
     fare.fullTotal > fare.total ? ['Ended early, fare so far', show(fare.total)] : null,
     fare.waitingCharge > 0 ? ['Waiting time', show(fare.waitingCharge)] : null,
+    // Went past the drop-off, or the passenger changed where they were going
+    // (functions/destinationChange.js).
+    ride.extendedTrip ? ['Extended trip', `${extraMiles(ride.extendedTrip.extraKm)} mi past the drop-off`] : null,
+    acceptedChanges(ride).length ? ['Destination changed', `from ${String(ride.originalDropoffLocation?.address || 'the booking').split(',')[0]}`] : null,
+    fare.cashExtra > 0 ? ['Paid by card', show(fare.cardTotal)] : null,
+    fare.cashExtra > 0 ? ['Paid to you in cash', show(fare.cashExtra)] : null,
   ].filter(Boolean);
+
+  // Cash to collect that the driver may not have been asked for before they
+  // completed: an extended cash trip is priced once it ends, and a card that
+  // didn't cover a raised fare leaves the rest in cash.
+  const inCash = ride.paymentMethod === 'cash' && !['account', 'card', 'online'].includes(ride.collectBy);
+  const collect = ride.extendedTrip && inCash
+    ? earned
+    : Number(fare.cashExtra || ride.cashExtraDue) || 0;
 
   const riderName = ride.passengerFor?.name || rider?.fullName || rider?.firstName || ride.customer?.name || 'the passenger';
 
@@ -104,6 +119,20 @@ export default function RideCompletedScreen() {
             </Text>
           </Card>
         </Animated.View>
+
+        {collect > 0 && (ride.extendedTrip || !ride.cashCollected) ? (
+          <View style={{ marginTop: SPACE[4] }}>
+            <Banner
+              tone="warning"
+              title={`Collect ${money(collect, currency)} in cash`}
+              body={
+                ride.extendedTrip && inCash
+                  ? `Extended trip: the passenger went past the drop-off, so the fare is now ${money(collect, currency)} (was ${money(ride.extendedTrip.previousFare, currency)}).`
+                  : "The passenger's card didn't cover the new price. Take the rest in cash."
+              }
+            />
+          </View>
+        ) : null}
 
         <Card style={{ marginTop: SPACE[4] }}>
           <RouteLine
