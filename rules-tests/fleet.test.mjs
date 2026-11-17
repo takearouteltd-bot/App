@@ -628,3 +628,59 @@ test('one at a time: nobody but the server moves the offer on or records a miss'
   await assertFails(updateDoc(doc(as('cfree'), 'rides/cseq2'), { missedBy: ['dind'] }));
   await assertFails(updateDoc(doc(as('r1'), 'rides/cseq2'), { offer: { driverId: null } }));
 });
+
+/* Changing the destination mid-trip and extended trips
+   (functions/destinationChange.js): only the server moves the drop-off or
+   the fare, records a request, the car reaching the drop-off, the cash due
+   or the card holds. */
+const onTrip = (extra = {}) => ({
+  riderId: 'r1', driverId: 'cfree', status: 'ongoing', rideType: 'RouteMini', paymentMethod: 'card',
+  pickupLocation: { latitude: 52.3, longitude: -1.9, address: 'A' },
+  dropoffLocation: { latitude: 52.31, longitude: -1.94, address: 'B' },
+  stops: [{ latitude: 52.305, longitude: -1.92, address: 'S1' }], stopsCompleted: 0,
+  fare: { total: 10 }, fareEstimate: 10, ...extra,
+});
+const serverTripFields = () => ({
+  dropoffLocation: { latitude: 52.4, longitude: -1.8, address: 'Somewhere else' },
+  fare: { total: 99 },
+  fareEstimate: 99,
+  destinationChange: { n: 1, state: 'accepted' },
+  destinationChanges: [{ n: 1, outcome: 'accepted' }],
+  originalDropoffLocation: { latitude: 1, longitude: 1 },
+  fareBasis: { distanceKm: 99 },
+  bookedBasis: { distanceKm: 1 },
+  extraHolds: [{ id: 'pi_x', amount: 100 }],
+  cashExtraDue: 5,
+  holdRaise: { how: 'cash' },
+  reachedDropoffAt: serverTimestamp(),
+  reachedDropoffPoint: { latitude: 52.31, longitude: -1.94 },
+  extendedTrip: { flagged: false },
+});
+test('destination change: neither the passenger nor the driver can move the drop-off, the fare or the change records mid-trip', async () => {
+  await seed((db) => setDoc(doc(db, 'rides/trip1'), onTrip()));
+  for (const [key, value] of Object.entries(serverTripFields())) {
+    await assertFails(updateDoc(doc(as('r1'), 'rides/trip1'), { [key]: value }));
+    await assertFails(updateDoc(doc(as('cfree'), 'rides/trip1'), { [key]: value }));
+  }
+  // Nor tucked into a completion or a stop.
+  await assertFails(updateDoc(doc(as('cfree'), 'rides/trip1'), { status: 'completed', completedAt: serverTimestamp(), reachedDropoffAt: serverTimestamp() }));
+  await assertFails(updateDoc(doc(as('cfree'), 'rides/trip1'), { stopsCompleted: 1, cashExtraDue: 0 }));
+  // The office marks an extended trip as checked.
+  await assertSucceeds(updateDoc(doc(as('adm'), 'rides/trip1'), { extendedTrip: { flagged: true, reviewedBy: 'adm' } }));
+});
+test('destination change: a booking cannot arrive with any of the server\'s trip-change fields', async () => {
+  const mine = { riderId: 'r1', status: 'searching' };
+  for (const [key, value] of Object.entries(serverTripFields())) {
+    if (['dropoffLocation', 'fare', 'fareEstimate'].includes(key)) continue;
+    await assertFails(setDoc(doc(as('r1'), `rides/dcnew_${key}`), { ...mine, [key]: value }));
+  }
+  await assertSucceeds(setDoc(doc(as('r1'), 'rides/dcnew_ok'), mine));
+});
+test('stops: the driver ticks off one stop at a time, never past the stops booked', async () => {
+  await seed((db) => setDoc(doc(db, 'rides/trip2'), onTrip()));
+  await assertFails(updateDoc(doc(as('cfree'), 'rides/trip2'), { stopsCompleted: 2 }));
+  await assertFails(updateDoc(doc(as('r1'), 'rides/trip2'), { stopsCompleted: 1 }));
+  await assertSucceeds(updateDoc(doc(as('cfree'), 'rides/trip2'), { stopsCompleted: 1 }));
+  await assertFails(updateDoc(doc(as('cfree'), 'rides/trip2'), { stopsCompleted: 2 }));
+  await assertFails(updateDoc(doc(as('cfree'), 'rides/trip2'), { stopsCompleted: 0 }));
+});
