@@ -48,7 +48,7 @@ const isValidDob = (value) => {
   return true;
 };
 
-export default function PersonalInformationScreen({ navigation, setOnboardingStatus }) {
+export default function PersonalInformationScreen({ navigation, route, setOnboardingStatus }) {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [dob, setDob] = useState("");
@@ -109,11 +109,16 @@ export default function PersonalInformationScreen({ navigation, setOnboardingSta
         setGender(data.gender || null);
 
         const reached = Math.min(Number(data.onboardingStep) || 1, DRIVER_STEPS.length);
-        if (reached > 1 && !resumed.current) {
+        if (reached > 1 && !resumed.current && !route?.params?.resumed) {
           resumed.current = true;
+          // Keep this screen as step 1 (same key, marked resumed). Without the
+          // key the reset mounted a fresh step 1, which resumed again, and the
+          // app flicked between step 1 and the last step for ever.
           navigation.reset({
             index: reached - 1,
-            routes: DRIVER_STEPS.slice(0, reached).map((s) => ({ name: s.route })),
+            routes: DRIVER_STEPS.slice(0, reached).map((s, i) =>
+              i === 0 ? { key: route?.key, name: s.route, params: { ...(route?.params || {}), resumed: true } } : { name: s.route }
+            ),
           });
         }
       } catch (error) {
