@@ -82,21 +82,17 @@ const CONFIG_DEFAULTS = {
     restHours: 6},
   dispatch: {
     searchRadiusKm: 50, requestTimeoutSeconds: 20, searchTimeoutMinutes: 15,
-    // 1: app jobs go to one driver at a time, nearest first (appOffers.js).
-    // 0 rings everyone in range at once, as before. Off by default: driver
-    // app builds before 1.0.36 list every searching job, and with this on
-    // only the driver being asked may take it. Turn on in config/app once
-    // drivers are on 1.0.36.
-    sequentialOffers: 0,
     // Follow-on jobs (followOn.js): a busy driver is offered a job when they
     // could be at its pickup within this many minutes, and they drop off
     // within followOnKm of it. 0 minutes turns them off.
     followOnMinutes: 10, followOnKm: 3.2,
   },
   // BID JOBs (bidJobs.js): a job nobody is taking is opened to every
-  // available driver within radiusKm, after afterSeconds unanswered.
+  // available driver within radiusKm, after afterSeconds unanswered, and
+  // rung again to all of them (decliners too) every ringEverySeconds until
+  // someone takes it.
   bidJobs: {enabled: 1, radiusKm: 8.05, afterSeconds: 60, allowCounter: 0,
-    maxCounterPercent: 30},
+    maxCounterPercent: 30, ringEverySeconds: 20},
   fares: {minimumFare: 6},
   cancellation: {fee: 0, freeMinutes: 2, arrivedFee: 0, noShowWaitMinutes: 5,
     driverSharePercent: 100,
@@ -207,8 +203,6 @@ async function loadAppConfig() {
           d.dispatch.followOnMinutes),
       followOnKm: numSetting(data.dispatch, "followOnKm",
           d.dispatch.followOnKm),
-      sequentialOffers: numSetting(data.dispatch, "sequentialOffers",
-          d.dispatch.sequentialOffers) === 1 ? 1 : 0,
     },
     tips: {
       enabled: numSetting(data.tips, "enabled", d.tips.enabled) === 1 ? 1 : 0,
@@ -234,6 +228,10 @@ async function loadAppConfig() {
       radiusKm: numSetting(data.bidJobs, "radiusKm", d.bidJobs.radiusKm),
       afterSeconds: Math.max(20, numSetting(data.bidJobs, "afterSeconds",
           d.bidJobs.afterSeconds)),
+      // M&S, 17 Nov 2026: "minimum 10 seconds". 120 at most, so the
+      // trigger that waits for it (bidJobs.js timeBidJobs) can.
+      ringEverySeconds: Math.min(120, Math.max(10, numSetting(data.bidJobs,
+          "ringEverySeconds", d.bidJobs.ringEverySeconds))),
       allowCounter: numSetting(data.bidJobs, "allowCounter",
           d.bidJobs.allowCounter) === 1 ? 1 : 0,
       maxCounterPercent: Math.min(300, numSetting(data.bidJobs,
@@ -3882,10 +3880,9 @@ function poolNote(pool, radiusKm) {
 
 /**
  * Offers an app job. Ordinarily to one driver at a time, nearest first
- * (appOffers.js). A BID JOB, a bidding job, or any job with
- * dispatch.sequentialOffers off rings every eligible online driver near
- * the pickup at once; a BID JOB (ride.bidJob) rings out to its own radius,
- * saying how far away it is.
+ * (appOffers.js). A BID JOB or a bidding job rings every eligible online
+ * driver near the pickup at once; a BID JOB (ride.bidJob) rings out to its
+ * own radius, saying how far away it is.
  * @param {string} rideId Ride id.
  * @param {Object} ride Ride document.
  * @param {Object} opts {bidRing: rung by bidJobs.openApp; open: rung to
@@ -3896,7 +3893,7 @@ function poolNote(pool, radiusKm) {
  */
 async function offerRideToDrivers(rideId, ride, opts = {}) {
   const cfg = await loadAppConfig();
-  if (!opts.bidRing && !opts.open && appOffers.sequentialFor(ride, cfg)) {
+  if (!opts.bidRing && !opts.open && appOffers.sequentialFor(ride)) {
     await appOffers.offerNext(rideId, {cfg, restart: opts.restart === true});
     return null;
   }

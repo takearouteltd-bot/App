@@ -71,11 +71,11 @@ const ride = (id) => adminGet(`rides/${id}`);
 const claim = (uid) => ({ status: 'accepted', driverId: uid, acceptedAt: serverTimestamp(), walletProcessed: false });
 
 // Normal search radius 3 km; BID JOBs out to 16 km, after 20 s, counters up to 30%.
-const BID_ON = { enabled: 1, radiusKm: 16, afterSeconds: 20, allowCounter: 1, maxCounterPercent: 30 };
+const BID_ON = { enabled: 1, radiusKm: 16, afterSeconds: 20, allowCounter: 1, maxCounterPercent: 30, ringEverySeconds: 10 };
 const A = mk('admin'), O = mk('owner'), D1 = mk('d1'), D2 = mk('d2'), D3 = mk('d3'), R = mk('rider');
 const adm = await createUserWithEmailAndPassword(A.auth, 'admin-bj@test.dev', 'secret123');
 await adminSet(`admins/${adm.user.uid}`, { isActive: true, role: 'super_admin' });
-await adminSet('config/app', { currency: 'GBP', payments: { cashEnabled: 1 }, dispatch: { searchRadiusKm: 3, sequentialOffers: 1 }, bidJobs: BID_ON });
+await adminSet('config/app', { currency: 'GBP', payments: { cashEnabled: 1 }, dispatch: { searchRadiusKm: 3 }, bidJobs: BID_ON });
 
 step('a fleet with drivers 1 and 2; driver 3 works app jobs only');
 const fleet = await A.call('createFleet', { name: 'Bid Cars', ownerName: 'B', email: 'owner-bj@test.dev', phone: '07700900401', perDriverMonthly: 50 });
@@ -202,7 +202,7 @@ await place(d3, GONE, 'offline');
 /* ------------------------------------------- app jobs one at a time */
 
 step('one at a time: nearest first; a no goes to the next driver, and so does no answer (timed by the server)');
-await adminSet('config/app', { dispatch: { searchRadiusKm: 3, requestTimeoutSeconds: 6, sequentialOffers: 1 } }, true);
+await adminSet('config/app', { dispatch: { searchRadiusKm: 3, requestTimeoutSeconds: 6 } }, true);
 const MID = { latitude: 52.3110, longitude: -1.9500, address: 'Plymouth Road, Redditch' }; // ~1.2 km
 const EDGE = { latitude: 52.3200, longitude: -1.9500, address: 'Mount Pleasant, Redditch' }; // ~2.2 km
 await place(d1, NEAR); await place(d2, MID); await place(d3, EDGE);
@@ -236,6 +236,45 @@ await updateDoc(doc(D1.db, 'rides', s1), claim(d1));
 assert.equal((await ride(s1)).driverId, d1, 'a driver who said no before can take the BID JOB');
 await adminSet(`rides/${s1}`, { status: 'cancelled' }, true);
 
+step('both say no to the BID JOB: it comes back to both every 10 s (server timer), until one takes it');
+await place(d3, GONE, 'offline');
+const s3 = await book();
+await until(async () => (await ride(s3)).offer?.driverId === d1, 'asked driver 1');
+await updateDoc(doc(D1.db, 'rides', s3), { declinedBy: arrayUnion(d1) });
+await until(async () => (await ride(s3)).offer?.driverId === d2, 'asked driver 2', 60000);
+await updateDoc(doc(D2.db, 'rides', s3), { declinedBy: arrayUnion(d2) });
+r = await until(async () => { const x = await ride(s3); return x.bidJob ? x : null; }, 'BID JOB', 60000);
+const ring0 = r.bidJob.rings || 0;
+await updateDoc(doc(D1.db, 'rides', s3), { declinedBy: arrayUnion(d1) });
+await updateDoc(doc(D2.db, 'rides', s3), { declinedBy: arrayUnion(d2) });
+assert.deepEqual([...(await ride(s3)).declinedBy].sort(), [d1, d2].sort(), 'both said no to the BID JOB');
+const bidAt = Date.now();
+r = await until(async () => { const x = await ride(s3); return (x.bidJob.rings || 0) > ring0 ? x : null; }, 'rung again by the timer', 60000);
+console.log(`    rung again ${((Date.now() - bidAt) / 1000).toFixed(1)} s after both said no (every 10 s)`);
+assert.deepEqual(r.declinedBy, [], 'both are asked again');
+assert.ok(r.bidJob.rungAt, 'ring time kept');
+await updateDoc(doc(D1.db, 'rides', s3), { declinedBy: arrayUnion(d1) });
+r = await until(async () => { const x = await ride(s3); return (x.bidJob.rings || 0) > ring0 + 1 ? x : null; }, 'and again', 60000);
+assert.deepEqual(r.declinedBy, [], 'and again');
+await updateDoc(doc(D2.db, 'rides', s3), claim(d2));
+const rings = (await ride(s3)).bidJob.rings;
+await sleep(13000);
+r = await ride(s3);
+assert.equal(r.driverId, d2); assert.equal(r.bidJob.rings, rings, 'no more rings once taken');
+await adminSet(`rides/${s3}`, { status: 'cancelled' }, true);
+await place(d2, MID);
+
+step('two jobs at once: one to each driver, not both to the nearest');
+await adminSet('config/app', { dispatch: { searchRadiusKm: 3, requestTimeoutSeconds: 40 } }, true);
+const t1 = await book();
+await until(async () => (await ride(t1)).offer?.driverId === d1, 'first job to driver 1');
+const t2 = await book();
+r = await until(async () => { const x = await ride(t2); return x.offer?.driverId ? x : null; }, 'second job offered');
+assert.equal(r.offer.driverId, d2, 'driver 1 is being asked about the first job, so driver 2 gets the second');
+await adminSet(`rides/${t1}`, { status: 'cancelled' }, true);
+await adminSet(`rides/${t2}`, { status: 'cancelled' }, true);
+await adminSet('config/app', { dispatch: { searchRadiusKm: 3, requestTimeoutSeconds: 6 } }, true);
+
 step('one at a time, nobody answers: then a BID JOB ("unanswered")');
 await place(d2, GONE, 'offline'); await place(d3, GONE, 'offline');
 const s2 = await book();
@@ -244,7 +283,7 @@ r = await until(async () => { const x = await ride(s2); return x.bidJob ? x : nu
 assert.equal(r.bidJob.reason, 'unanswered'); assert.deepEqual(r.missedBy, [d1]); assert.deepEqual(r.declinedBy, []);
 await adminSet(`rides/${s2}`, { status: 'cancelled' }, true);
 await place(d1, GONE, 'offline');
-await adminSet('config/app', { dispatch: { searchRadiusKm: 3, sequentialOffers: 1 } }, true);
+await adminSet('config/app', { dispatch: { searchRadiusKm: 3 } }, true);
 
 /* ---------------------------------------------------------- phone jobs */
 
@@ -286,6 +325,13 @@ await until(async () => (await ride(p3.rideId)).dispatch.driverId === d1, 'neare
 await updateDoc(doc(D1.db, 'rides', p3.rideId), { declinedBy: arrayUnion(d1) });
 r = await until(async () => { const x = await ride(p3.rideId); return x.bidJob ? x : null; }, 'nearest bid job');
 assert.equal(r.dispatch.queueDone, true); assert.ok(r.declinedEarlier.includes(d1)); assert.ok(!r.declinedBy.includes(d1), 'driver 1 asked again');
+
+step('driver 1 says no to the phone BID JOB too: rung to them again 10 s later');
+const offered = r.dispatch.offeredAt;
+await updateDoc(doc(D1.db, 'rides', p3.rideId), { declinedBy: arrayUnion(d1) });
+r = await until(async () => { const x = await ride(p3.rideId); return (x.bidJob.rings || 0) >= 1 ? x : null; }, 'phone BID JOB rung again', 60000);
+assert.ok(!r.declinedBy.includes(d1), 'driver 1 asked again');
+assert.notEqual(r.dispatch.offeredAt, offered, 'a fresh ring');
 
 step('the office sends it again: a normal offer first, not a BID JOB');
 await O.call('redispatchFleetBooking', { rideId: p3.rideId, driverId: null });

@@ -14,6 +14,10 @@
    the bid radius, those who declined or missed it included. With BID JOBs
    switched off it is rung to everyone in range instead, as jobs were before.
 
+   Two jobs at once: a driver already being asked about one is asked about
+   the other only when nobody else in range is left, so two drivers get one
+   each rather than one driver both.
+
    Nobody to ask when it is booked: it waits as a normal job. openBidJobs
    (bidJobs.js, every minute) asks anyone who has come online since, and
    opens it as a BID JOB after bidJobs.afterSeconds, as before.
@@ -24,9 +28,9 @@
    says is theirs now.
 
    Not one at a time: bidding jobs (the passenger chooses between drivers'
-   prices, so asking one driver at a time would defeat it), BID JOBs, and
-   everything when dispatch.sequentialOffers is 0 (the old way: everyone in
-   range is rung at once).
+   prices, so asking one driver at a time would defeat it) and BID JOBs.
+   (Until 17 Nov 2026 a dispatch.sequentialOffers switch could ring every
+   app job to everyone at once, for driver apps before 1.0.36; removed.)
 
    rides/{id} fields, written here only (firestore.rules keeps them from
    clients):
@@ -60,12 +64,11 @@ module.exports = (deps) => {
   /**
    * Whether this job goes to one driver at a time.
    * @param {Object} ride Ride data.
-   * @param {Object} cfg App config.
    * @return {boolean} One at a time.
    */
-  function sequentialFor(ride, cfg) {
-    return cfg.dispatch.sequentialOffers === 1 && Boolean(ride) &&
-      ride.source !== "phone" && ride.bidding !== true && !ride.bidJob;
+  function sequentialFor(ride) {
+    return Boolean(ride) && ride.source !== "phone" &&
+      ride.bidding !== true && !ride.bidJob;
   }
   out.sequentialFor = sequentialFor;
 
@@ -104,6 +107,28 @@ module.exports = (deps) => {
   }
 
   /**
+   * Drivers being asked about another app job right now. The app shows one
+   * offer at a time, so a driver asked about two jobs at once would let the
+   * second run out while reading the first (M&S video, 17 Nov 2026: two
+   * jobs booked together, the second never showed).
+   * @param {string} rideId This job, left out.
+   * @return {Promise<Set<string>>} Driver ids.
+   */
+  async function askedElsewhere(rideId) {
+    const now = Date.now();
+    const busy = new Set();
+    const snap = await db.collection("rides")
+        .where("status", "==", "searching").limit(300).get()
+        .catch(() => null);
+    (snap ? snap.docs : []).forEach((doc) => {
+      if (doc.id !== rideId && liveOffer(doc.data(), now)) {
+        busy.add(doc.data().offer.driverId);
+      }
+    });
+    return busy;
+  }
+
+  /**
    * Offers a job to the next nearest driver not yet asked, once the offer
    * before has been answered or has run out. With nobody left it opens as a
    * BID JOB. Never throws.
@@ -119,7 +144,7 @@ module.exports = (deps) => {
       const ref = db.collection("rides").doc(rideId);
       const snap = await ref.get();
       const ride = snap.exists ? snap.data() : null;
-      if (!sequentialFor(ride, cfg) || !waitingFor(ride)) return null;
+      if (!sequentialFor(ride) || !waitingFor(ride)) return null;
       const n = Number((ride.offer || {}).n) || 0;
       if (opts.expectN !== undefined && opts.expectN !== n) return null;
       if (!opts.restart && liveOffer(ride, Date.now())) return null;
@@ -138,8 +163,12 @@ module.exports = (deps) => {
       const asked = opts.restart ? [] : ride.askedDrivers || [];
       const radiusKm = cfg.dispatch.searchRadiusKm;
       const pool = await appDriverPool(ride);
+      // Nearest first, but a driver already being asked about another job
+      // only when nobody else in range is left.
+      const elsewhere = await askedElsewhere(rideId);
       const next = pool.filter((p) => p.km <= radiusKm && !asked.includes(p.id))
-          .sort((a, b) => a.km - b.km)[0] || null;
+          .sort((a, b) => (elsewhere.has(a.id) ? 1 : 0) -
+            (elsewhere.has(b.id) ? 1 : 0) || a.km - b.km)[0] || null;
       const seconds = offerSeconds(cfg);
       const state = next ? "asking" : asked.length ? "open" : "waiting";
       // Still nobody: no write, so a job waiting for drivers to come online
@@ -152,7 +181,7 @@ module.exports = (deps) => {
         const now = await tx.get(ref);
         const r = now.exists ? now.data() : null;
         // Taken, cancelled, or another run moved it on first.
-        if (!sequentialFor(r, cfg) || !waitingFor(r) ||
+        if (!sequentialFor(r) || !waitingFor(r) ||
             (Number((r.offer || {}).n) || 0) !== n) {
           return false;
         }
@@ -251,7 +280,7 @@ module.exports = (deps) => {
       return true;
     }
     const cfg = await loadAppConfig();
-    if (!sequentialFor(after, cfg)) return false;
+    if (!sequentialFor(after)) return false;
     const was = new Set(before.declinedBy || []);
     const o = after.offer;
     if (o.state === "asking" && o.driverId && !was.has(o.driverId) &&
@@ -273,7 +302,7 @@ module.exports = (deps) => {
    *   moved on); false leaves it to the BID JOB wait.
    */
   async function sweep(rideId, ride, cfg) {
-    if (!sequentialFor(ride, cfg) || !waitingFor(ride)) return false;
+    if (!sequentialFor(ride) || !waitingFor(ride)) return false;
     const o = ride.offer || {};
     if (o.state === "asking" && o.driverId) {
       if (!liveOffer(ride, Date.now())) {

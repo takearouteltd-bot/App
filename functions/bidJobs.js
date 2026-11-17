@@ -7,8 +7,7 @@
    That includes drivers who declined it or let it run out before (M&S,
    17 Nov 2026: "back as BID JOB to all nearby drivers"); their earlier
    answers move to declinedEarlier. Only a driver who took the job and gave
-   it back (gaveBackBy) is left out. A driver who declines the BID JOB
-   itself is not asked again.
+   it back (gaveBackBy) is left out.
 
    The first offer of a job is always the normal one (M&S, 16 Nov 2026:
    "this job should come as normal"), even when nobody is online when it is
@@ -17,7 +16,7 @@
        one at a time (appOffers.js, the usual way): everyone in range was
        asked and nobody took it ("declined" if any of them said no,
        "unanswered" if they all let it run out);
-       all at once (bidding jobs, or dispatch.sequentialOffers off): a
+       all at once (bidding jobs): a
        driver declined it and no other available driver is in range;
        nobody could be asked for bidJobs.afterSeconds (openBidJobs, every
        minute), which covers nobody being online when it was booked;
@@ -29,9 +28,17 @@
      Phone jobs stay at the office's fixed price (no counter-offers), and
      only that fleet's drivers are asked. A job sent to one driver by name
      never becomes a BID JOB: it goes back to the office as before.
-   A BID JOB is rung again every bidJobs.afterSeconds until someone takes it
-   (up to MAX_BID_RINGS times for app jobs; it stays on drivers' screens
-   meanwhile). The first driver to accept gets it.
+   A BID JOB is rung again every bidJobs.ringEverySeconds (10 at least)
+   until someone takes it, to every available driver in the bid radius,
+   including those who declined it last time round (M&S, 17 Nov 2026: "BID
+   JOB must come back to all drivers including who declined, every few
+   seconds, until a driver accepts"). Drivers who have come online since are
+   asked too. timeBidJobs waits out each ring on the server; the per-minute
+   schedulers (openBidJobs here, runFleetQueues for phone jobs) catch any it
+   missed. It stops when someone takes it, when an app job's search times
+   out (expireSearchingRides), or for a phone job after
+   dispatch.searchTimeoutMinutes, when it is left for the office (it stays
+   on drivers' screens meanwhile). The first driver to accept gets it.
 
    Counter-offers on a BID JOB (bidJobs.allowCounter, app jobs only): the
    driver can ask up to maxCounterPercent above the fare, in
@@ -43,7 +50,7 @@
      radiusKm             how far from the pickup drivers are asked
      at                   when it was opened
      reason               "declined" | "unanswered" | "given_back"
-     rings, rungAt        re-rings so far, and the last one (app jobs)
+     rings, rungAt        re-rings so far, and the last one
      allowCounter         counter-offers allowed (never on phone jobs)
      maxCounterPercent    the cap on a counter-offer
    ====================================== */
@@ -53,14 +60,16 @@ module.exports = (deps) => {
   const {FieldValue} = require("firebase-admin/firestore");
   const out = {};
   const KM_PER_MILE = 1.609344;
-  // Re-rings of an app BID JOB nobody takes, one every afterSeconds.
-  const MAX_BID_RINGS = 10;
+  const {waitThen} = require("./offerTimer");
+  // How late a ring may be before the per-minute scheduler does it instead
+  // of timeBidJobs (which was stopped, or never ran).
+  const RING_SLACK_MS = 15 * 1000;
 
   /**
    * This feature's settings, from loadAppConfig().
    * @param {Object} cfg App config.
-   * @return {Object} {enabled, radiusKm, afterSeconds, allowCounter,
-   *   maxCounterPercent, ringKm}.
+   * @return {Object} {enabled, radiusKm, afterSeconds, ringEverySeconds,
+   *   allowCounter, maxCounterPercent, ringKm}.
    */
   function settings(cfg) {
     const s = cfg.bidJobs;
@@ -81,6 +90,117 @@ module.exports = (deps) => {
     return `${(Math.round((km / KM_PER_MILE) * 10) / 10).toFixed(1)} mi`;
   }
   out.milesText = milesText;
+
+  /**
+   * Whether a job is still waiting for a driver, as a BID JOB could be.
+   * @param {Object} ride Ride data.
+   * @return {boolean} Waiting.
+   */
+  function waitingFor(ride) {
+    if (!ride) return false;
+    const d = ride.dispatch || {};
+    return ride.source === "phone" ?
+      ride.status === "dispatching" && !ride.riderId &&
+        ["all", "queue"].includes(d.mode) &&
+        (d.mode === "all" || (d.queueDone === true && !d.driverId)) :
+      ride.status === "searching" && !ride.driverId;
+  }
+
+  /**
+   * Which ring of a BID JOB this is: changes when it is opened (again) and
+   * every time it is rung again.
+   * @param {Object} bidJob ride.bidJob.
+   * @return {string} Key.
+   */
+  function ringOf(bidJob) {
+    return `${toMillis(bidJob.at) || 0}:${Number(bidJob.rings) || 0}`;
+  }
+
+  /**
+   * When a BID JOB was last rung.
+   * @param {Object} bidJob ride.bidJob.
+   * @return {number} Millis, 0 if not known yet.
+   */
+  function lastRing(bidJob) {
+    return Math.max(toMillis(bidJob.rungAt) || 0, toMillis(bidJob.at) || 0);
+  }
+
+  /**
+   * Rings an open BID JOB again, to everyone in the bid radius: drivers who
+   * declined it are asked again (declinedBy emptied into declinedEarlier),
+   * except one who took it and gave it back. Phone jobs get a fresh
+   * offeredAt (dispatchFleetJob rings them); app jobs are rung here.
+   * @param {Object} ref Ride ref.
+   * @param {string} expect ringOf() of the ring this follows; a ring
+   *   already done by someone else (or the job reopened) does nothing.
+   * @return {Promise<boolean>} Rung.
+   */
+  async function ringAgain(ref, expect) {
+    const cfg = await loadAppConfig();
+    if (settings(cfg).enabled !== 1) return false;
+    const ride = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const r = snap.exists ? snap.data() : null;
+      if (!r || !r.bidJob || !waitingFor(r) || ringOf(r.bidJob) !== expect) {
+        return null;
+      }
+      // A phone job nobody has taken in the search time is left for the
+      // office (it is marked unanswered there); an app job is cancelled
+      // for the passenger at that point by expireSearchingRides.
+      const opened = toMillis(r.bidJob.at) || 0;
+      if (r.source === "phone" && opened && Date.now() - opened >
+          cfg.dispatch.searchTimeoutMinutes * 60 * 1000) {
+        return null;
+      }
+      const keep = new Set(r.gaveBackBy || []);
+      const before = r.declinedBy || [];
+      const update = {
+        "bidJob.rings": FieldValue.increment(1),
+        "bidJob.rungAt": FieldValue.serverTimestamp(),
+        "declinedBy": before.filter((id) => keep.has(id)),
+      };
+      const earlier = before.filter((id) => !keep.has(id));
+      if (earlier.length) {
+        update.declinedEarlier = FieldValue.arrayUnion(...earlier);
+      }
+      if (r.source === "phone") {
+        update["dispatch.offeredAt"] = FieldValue.serverTimestamp();
+      }
+      tx.update(ref, update);
+      return Object.assign({}, r, {declinedBy: update.declinedBy,
+        bidJob: Object.assign({}, r.bidJob,
+            {rings: (Number(r.bidJob.rings) || 0) + 1})});
+    }).catch((error) => {
+      console.error("Could not ring BID JOB again:", ref.id, error.message);
+      return null;
+    });
+    if (!ride) return false;
+    console.log(`BID JOB ${ref.id} rung again (${ride.bidJob.rings})`);
+    if (ride.source !== "phone") {
+      await deps.offerRideToDrivers(ref.id, ride, {bidRing: true});
+    }
+    return true;
+  }
+  out.ringAgain = ringAgain;
+
+  /**
+   * For the per-minute schedulers: rings a BID JOB whose ring is overdue
+   * (timeBidJobs did not do it).
+   * @param {Object} doc Ride snapshot.
+   * @param {Object} cfg App config.
+   * @return {Promise<boolean>} Rung.
+   */
+  async function ringIfOverdue(doc, cfg) {
+    const r = doc.data();
+    if (!r.bidJob || !waitingFor(r)) return false;
+    const last = lastRing(r.bidJob);
+    if (!last || Date.now() - last <
+        settings(cfg).ringEverySeconds * 1000 + RING_SLACK_MS) {
+      return false;
+    }
+    return ringAgain(doc.ref, ringOf(r.bidJob));
+  }
+  out.ringIfOverdue = ringIfOverdue;
 
   /**
    * Opens a job as a BID JOB, once. Drivers who declined it or let it run
@@ -106,13 +226,7 @@ module.exports = (deps) => {
       if (!snap.exists) return null;
       const ride = snap.data();
       const phone = ride.source === "phone";
-      const d = ride.dispatch || {};
-      const waiting = phone ?
-        ride.status === "dispatching" && !ride.riderId &&
-          ["all", "queue"].includes(d.mode) &&
-          (d.mode === "all" || (d.queueDone === true && !d.driverId)) :
-        ride.status === "searching";
-      if (!waiting) return null;
+      if (!waitingFor(ride)) return null;
       // Once: again only if the circle has been made bigger since.
       if (!opts.again && ride.bidJob &&
           Number(ride.bidJob.radiusKm) >= s.ringKm) {
@@ -201,9 +315,31 @@ module.exports = (deps) => {
      nobody could be asked about goes to anyone who has come online since).
      App jobs nobody could be asked about for bidJobs.afterSeconds are
      opened as BID JOBs (timed like expireSearchingRides, from the latest
-     restart of the search), and open BID JOBs nobody has taken are rung
-     again every afterSeconds. Phone jobs are done in runFleetQueues. */
+     restart of the search), and an open BID JOB whose ring timeBidJobs
+     missed is rung again. Phone jobs are done in runFleetQueues. */
   out.functions = {
+    /* Each ring of a BID JOB is timed here: wait ringEverySeconds from the
+       ring, then, if it is still the same ring and nobody has taken it,
+       ring it again (which starts the next wait). */
+    timeBidJobs: functions.runWith({timeoutSeconds: 180}).firestore
+        .document("rides/{rideId}")
+        .onUpdate(async (change) => {
+          const before = change.before.data();
+          const after = change.after.data();
+          if (!after.bidJob || !waitingFor(after)) return null;
+          const ring = ringOf(after.bidJob);
+          // Not opened or rung by this change; serverTimestamp fields are
+          // set by now, so lastRing is known.
+          if (before.bidJob && ringOf(before.bidJob) === ring) return null;
+          const last = lastRing(after.bidJob);
+          if (!last) return null;
+          const cfg = await loadAppConfig();
+          const wait = settings(cfg).ringEverySeconds * 1000 -
+            (Date.now() - last);
+          await waitThen(wait, () => ringAgain(change.after.ref, ring));
+          return null;
+        }),
+
     openBidJobs: functions.pubsub.schedule("every 1 minutes")
         .onRun(async () => {
           const cfg = await loadAppConfig();
@@ -218,19 +354,8 @@ module.exports = (deps) => {
             if (await deps.sweepSequential(doc.id, r, cfg)) continue;
             if (s.enabled !== 1) continue;
             if (r.bidJob) {
-              // Still nobody: ring it again, to drivers who have not
-              // declined it (offerRideToDrivers leaves those out).
-              const last = Math.max(toMillis(r.bidJob.rungAt) || 0,
-                  toMillis(r.bidJob.at) || 0);
-              if ((r.bidJob.rings || 0) >= MAX_BID_RINGS || !last ||
-                  Date.now() - last < s.afterSeconds * 1000) {
-                continue;
-              }
-              await doc.ref.update({
-                "bidJob.rings": FieldValue.increment(1),
-                "bidJob.rungAt": FieldValue.serverTimestamp(),
-              }).catch(() => null);
-              await deps.offerRideToDrivers(doc.id, r, {bidRing: true});
+              // Still nobody, and timeBidJobs missed its ring.
+              await ringIfOverdue(doc, cfg);
               continue;
             }
             const since = Math.max(

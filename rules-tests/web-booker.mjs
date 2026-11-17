@@ -142,7 +142,7 @@ step('address search and fares for each car the firm offers');
 const places = await C.call('webPlaces', { token, input: 'redditch st' });
 assert.equal(places.results[0].placeId, 'PL1');
 const q = await C.call('webQuote', { token, pickup: PICK, dropoff: DROP });
-assert.deepEqual(q.fares.map((x) => [x.id, x.fare]), [['RouteMini', 7.74], ['RouteXL', 11.61]]);
+assert.deepEqual(q.fares.map((x) => [x.id, x.fare]), [['RouteMini', 5.4], ['RouteXL', 7.8]]);
 await assert.rejects(C.call('webQuote', { token: 'x'.repeat(32), pickup: PICK, dropoff: DROP }), /confirm your mobile/);
 
 step('pay the driver: booked straight away as a web job, texted with a tracking link');
@@ -152,7 +152,7 @@ let ride = await adminGet(`rides/${b1.rideId}`);
 assert.equal(ride.channel, 'web'); assert.equal(ride.source, 'phone'); assert.equal(ride.bookedBy.via, 'web');
 assert.equal(ride.collectBy, 'cash'); assert.equal(ride.paymentMethod, 'cash'); assert.equal(ride.fleetId, f.fleetId);
 assert.match(ride.notes, /^2 passengers/); assert.equal(ride.customer.phone, '+447700900555'); assert.equal(ride.customer.name, 'Sam');
-assert.match(lastText().Body, /^Time Taxis: taxi booked, as soon as possible from 12 Station Road\. Fare about £7\.74/);
+assert.match(lastText().Body, /^Time Taxis: taxi booked, as soon as possible from 12 Station Road\. Fare about £5\.40/);
 assert.match(lastText().Body, new RegExp(`/t/${b1.trackToken}$`));
 await assert.rejects(C.call('webBook', { token, pickup: PICK, dropoff: DROP, passengers: 5, rideType: 'RouteMini', pay: 'driver' }), /up to 4 passengers/);
 
@@ -167,10 +167,10 @@ step('pay by card: a Stripe page with a hold (manual capture); the job waits for
 const b2 = await C.call('webBook', { token, pickup: PICK, dropoff: DROP, passengers: 5, rideType: 'RouteXL', pay: 'card' });
 assert.match(b2.checkoutUrl, /^https:\/\/checkout\.stripe\.test\/cs_test_/);
 const csId = b2.checkoutUrl.split('/').pop();
-assert.equal(sessions[csId].capture, 'manual'); assert.equal(sessions[csId].amount, 1161); assert.equal(sessions[csId].meta, b2.rideId);
+assert.equal(sessions[csId].capture, 'manual'); assert.equal(sessions[csId].amount, 780); assert.equal(sessions[csId].meta, b2.rideId);
 ride = await adminGet(`rides/${b2.rideId}`);
 assert.equal(ride.status, 'payment_pending'); assert.equal(ride.collectBy, 'online'); assert.equal(ride.paymentMethod, 'card');
-assert.match(ride.notes, /^PAID ONLINE: do not take payment\. 5 passengers/);
+assert.match(ride.notes, /^5 passengers/, 'the payment is on the job (collectBy), not in the notes');
 const textsBefore = texts.length;
 assert.equal((await C.call('webConfirmPayment', { token, rideId: b2.rideId })).status, 'payment_pending', 'not paid yet');
 
@@ -179,8 +179,8 @@ sessions[csId].paid = true;
 const confirmed = await C.call('webConfirmPayment', { token, rideId: b2.rideId });
 assert.equal(confirmed.status, 'dispatching');
 ride = await adminGet(`rides/${b2.rideId}`);
-assert.equal(ride.webPayment.status, 'authorised'); assert.equal(ride.webPayment.intentId, `pi_${csId}`); assert.equal(ride.webPayment.amount, 11.61);
-assert.equal(texts.length, textsBefore + 1); assert.match(lastText().Body, /Paid by card: £11\.61/);
+assert.equal(ride.webPayment.status, 'authorised'); assert.equal(ride.webPayment.intentId, `pi_${csId}`); assert.equal(ride.webPayment.amount, 7.8);
+assert.equal(texts.length, textsBefore + 1); assert.match(lastText().Body, /Paid by card: £7\.80/);
 assert.equal((await C.call('webConfirmPayment', { token, rideId: b2.rideId })).status, 'dispatching', 'safe to call twice');
 assert.equal(texts.length, textsBefore + 1, 'no second text');
 
@@ -202,16 +202,16 @@ step('trip completed: the fare is taken from the hold and credited to the firm\'
 await adminSet(`rides/${b2.rideId}`, { status: 'ongoing' }, true);
 await adminSet(`rides/${b2.rideId}`, { status: 'completed' }, true);
 ride = await until(async () => { const r = await adminGet(`rides/${b2.rideId}`); return r.webPayment.status === 'captured' && r; }, 'capture');
-assert.equal(ride.webPayment.capturedAmount, 11.61);
+assert.equal(ride.webPayment.capturedAmount, 7.8);
 const capture = stripeCalls.find((c) => c.p.endsWith(`pi_${csId}/capture`));
-assert.equal(capture.form.amount_to_capture, '1161');
+assert.equal(capture.form.amount_to_capture, '780');
 const wallet = await adminGet(`fleetWallets/${f.fleetId}`);
-assert.equal(wallet.totalWebCardFares, 11.61);
-assert.equal(wallet.totalCardFees, 0.37); assert.equal(Math.round(wallet.availableBalance * 100) / 100, 11.24, 'the firm pays the Stripe fee');
+assert.equal(wallet.totalWebCardFares, 7.8);
+assert.equal(wallet.totalCardFees, 0.37); assert.equal(Math.round(wallet.availableBalance * 100) / 100, 7.43, 'the firm pays the Stripe fee');
 const ftx = await adminGet(`fleetWallets/${f.fleetId}/transactions/webfee_${b2.rideId}`);
 assert.equal(ftx.type, 'card_fee'); assert.equal(ftx.amount, -0.37); assert.equal(ftx.estimated, false);
 const wtx = await adminGet(`fleetWallets/${f.fleetId}/transactions/web_${b2.rideId}`);
-assert.equal(wtx.type, 'web_card_fare'); assert.equal(wtx.amount, 11.61); assert.equal(wtx.driverId, 'webdrv');
+assert.equal(wtx.type, 'web_card_fare'); assert.equal(wtx.amount, 7.8); assert.equal(wtx.driverId, 'webdrv');
 assert.equal(stripeCalls.filter((c) => c.p.endsWith('/capture')).length, 1);
 
 step('a paid booking cancelled by the office releases the hold and tells the customer');

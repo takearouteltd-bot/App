@@ -156,12 +156,12 @@ assert.equal(ed.status, 'scheduled'); assert.equal(re.dropoffLocation.address, '
 assert.notEqual(re.fare.total, fareBefore, 'priced again'); assert.equal(re.customer.name, 'Eve Adams');
 assert.equal(re.dispatch.leadMinutes, 30);
 assert.ok(Math.abs(re.dispatchAt.toMillis() - (pick4h - 30 * 60000)) < 2000);
-assert.equal(re.collectBy, 'card'); assert.equal(re.notes, 'CARD PAYMENT: take it on your terminal. Two bags');
+assert.equal(re.collectBy, 'card'); assert.equal(re.notes, 'Two bags', 'the payment is on the job, not in the notes');
 assert.ok(re.editedBy && re.editedBy.uid);
 await O.call('editFleetBooking', { rideId: be.rideId, agreedPrice: 70, notes: 'Two bags, one child seat' });
 re = (await getDoc(doc(O.db, 'rides', be.rideId))).data();
 assert.equal(re.fare.total, 70); assert.equal(re.fare.agreedPrice, true);
-assert.equal(re.notes, 'CARD PAYMENT: take it on your terminal. Two bags, one child seat', 'prefix not doubled');
+assert.equal(re.notes, 'Two bags, one child seat');
 await O.call('editFleetBooking', { rideId: be.rideId, collectBy: 'cash' });
 re = (await getDoc(doc(O.db, 'rides', be.rideId))).data();
 assert.equal(re.fare.total, 70, 'agreed price kept'); assert.equal(re.notes, 'Two bags, one child seat');
@@ -280,10 +280,9 @@ const b3 = await O.call('createFleetBooking', { customer: { phone: '07700900888'
 assert.equal(b3.status, 'scheduled');
 
 step('an app job taken by a fleet driver is tagged with the fleet (cash here: Stripe is not set up in the emulator)');
-// Every driver may take an app job at once (not one at a time, which
-// bid-jobs.mjs covers), so the claims below never race the first offer.
-await adminSet('config/app', { dispatch: { sequentialOffers: 0 } }, true);
-await adminSet('rides/appjob', { riderId: 'r1', driverId: null, status: 'searching', rideType: 'RouteMini', paymentMethod: 'cash', pricing: 'checked', fare: { total: 20 }, pickupLocation: T5, dropoffLocation: PAD });
+// Open to every driver as a BID JOB (one at a time is covered in
+// bid-jobs.mjs), so the claim below never races the first offer.
+await adminSet('rides/appjob', { riderId: 'r1', driverId: null, status: 'searching', rideType: 'RouteMini', paymentMethod: 'cash', pricing: 'checked', fare: { total: 20 }, pickupLocation: T5, dropoffLocation: PAD, bidJob: { radiusKm: 16, reason: 'unanswered', allowCounter: false, maxCounterPercent: 0 } });
 await updateDoc(doc(D.db, 'rides', 'appjob'), claim(d1.user.uid));
 await until(async () => (await getDoc(doc(D.db, 'rides', 'appjob'))).data().fleetId === created.fleetId, 'tagFleetRides');
 // The wallet credit itself (index.js creditDriverWalletOnRideCompletion)
@@ -432,7 +431,7 @@ step('card on a phone booking is a label: never a card charge');
 const bc = await O.call('createFleetBooking', { customer: { phone: '07700900999', name: 'Ann Smith' }, pickup: PAD, dropoff: T5, collectBy: 'card', notes: 'Ring on arrival' });
 const rc = (await getDoc(doc(O.db, 'rides', bc.rideId))).data();
 assert.equal(rc.collectBy, 'card'); assert.equal(rc.paymentMethod, 'cash'); assert.equal(rc.payment.method, 'cash');
-assert.equal(rc.notes, 'CARD PAYMENT: take it on your terminal. Ring on arrival');
+assert.equal(rc.notes, 'Ring on arrival');
 await O.call('cancelFleetBooking', { rideId: bc.rideId });
 const bd = await O.call('createFleetBooking', { customer: { phone: '07700900999', name: 'Ann Smith' }, pickup: PAD, dropoff: T5, collectBy: 'bitcoin', notes: 'Ring on arrival' });
 const rd = (await getDoc(doc(O.db, 'rides', bd.rideId))).data();

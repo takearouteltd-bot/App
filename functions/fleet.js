@@ -2917,10 +2917,6 @@ module.exports = (deps) => {
       }
       account = {id: snap.id, company: snap.data().company || ""};
     }
-    const notePrefix = account ?
-      `ACCOUNT JOB for ${account.company}: do not take payment.` :
-      collectBy === "online" ? "PAID ONLINE: do not take payment." :
-      collectBy === "card" ? "CARD PAYMENT: take it on your terminal." : "";
     // Paid online: held until the card is authorised (fleetWeb.js).
     const held = o.paidOnline === true;
 
@@ -2934,8 +2930,9 @@ module.exports = (deps) => {
       driverId: null,
       customer: {name: name || (appRider ? appRider.name : ""), phone,
         riderId: appRider ? appRider.uid : null},
-      // Older driver apps only know "CASH JOB", so say it in the notes too.
-      notes: `${notePrefix} ${notes}`.trim(),
+      // How the money is taken is on the job (collectBy, account); the
+      // driver app shows it as a banner. The notes are the office's own.
+      notes: String(notes || "").trim(),
       bookedBy: me.bookedBy ||
         {uid: me.uid, name: me.manager.name || me.manager.email || ""},
       status: held ? "payment_pending" : later ? "scheduled" : "dispatching",
@@ -3360,8 +3357,7 @@ module.exports = (deps) => {
       });
     }
 
-    // Payment and notes. The note prefix tells older driver apps how the
-    // money is taken, as on a new booking.
+    // Payment and notes.
     const collectBy = d.collectBy === undefined ? ride.collectBy || "cash" :
       ["card", "account"].includes(d.collectBy) ? d.collectBy : "cash";
     let account = ride.account || null;
@@ -3376,15 +3372,15 @@ module.exports = (deps) => {
       account = {id: snap.id, company: snap.data().company || ""};
     }
     if (collectBy !== "account") account = null;
+    // Jobs booked before 17 Nov 2026 have the payment written at the start
+    // of the notes too (for driver apps before the payment banner); it is
+    // taken off when the job is edited.
     const prefixes = new RegExp("^(ACCOUNT JOB for .*?: do not take " +
-        "payment\\.|CARD PAYMENT: take it on your terminal\\.)\\s*");
+        "payment\\.|PAID ONLINE: do not take payment\\.|CARD PAYMENT: " +
+        "take it on your terminal\\.)\\s*");
     const plainNotes = d.notes !== undefined ? text(d.notes, 500) :
       String(ride.notes || "").replace(prefixes, "");
-    const notePrefix = account ?
-      `ACCOUNT JOB for ${account.company}: do not take payment.` :
-      collectBy === "card" ? "CARD PAYMENT: take it on your terminal." : "";
-    Object.assign(update, {collectBy, account,
-      notes: `${notePrefix} ${plainNotes}`.trim()});
+    Object.assign(update, {collectBy, account, notes: plainNotes.trim()});
 
     // Time and release.
     const now = Date.now();
@@ -4228,8 +4224,9 @@ module.exports = (deps) => {
         // Whole-fleet offers nobody answered ring again, a few times, so a
         // job does not sit waiting for the office to notice it. New drivers
         // who came online in the meantime are included.
-        const bidAfterMs = 1000 * (Number(bidJobs.settings(
-            await loadAppConfig()).afterSeconds) || 60);
+        const appCfg = await loadAppConfig();
+        const bidAfterMs = 1000 * (Number(bidJobs.settings(appCfg)
+            .afterSeconds) || 60);
         const open = await db.collection("rides")
             .where("status", "==", "dispatching")
             .where("source", "==", "phone")
@@ -4250,20 +4247,25 @@ module.exports = (deps) => {
           }
           const toFleet = outToFleet(ride);
           const offered = toMillis(d.offeredAt);
-          if (!toFleet || !offered || (d.reRings || 0) >= MAX_RE_RINGS) {
+          if (!toFleet || !offered) continue;
+          // A BID JOB rings again every bidJobs.ringEverySeconds, to every
+          // driver in range, those who declined it included, until someone
+          // takes it (bidJobs.js timeBidJobs); this catches a ring it
+          // missed.
+          if (ride.bidJob) {
+            if (await bidJobs.ringIfOverdue(doc, appCfg)) rung++;
             continue;
           }
+          if ((d.reRings || 0) >= MAX_RE_RINGS) continue;
           // Nobody answered the first ring within bidJobs.afterSeconds
           // (also when nobody was in range to ring): instead of ringing the
           // same drivers again, open it as a BID JOB (it rings them, and
-          // anyone who only missed a queue offer, highlighted). Re-rings go
-          // on from there as BID JOBs, every RE_RING_MS.
-          if (!ride.bidJob) {
-            if (Date.now() - offered < bidAfterMs) continue;
-            if (await bidJobs.open(doc.ref, "unanswered")) {
-              rung++;
-              continue;
-            }
+          // anyone who only missed a queue offer, highlighted). With BID
+          // JOBs off it is rung again a few times, every RE_RING_MS.
+          if (Date.now() - offered < bidAfterMs) continue;
+          if (await bidJobs.open(doc.ref, "unanswered")) {
+            rung++;
+            continue;
           }
           if (Date.now() - offered < RE_RING_MS) continue;
           await db.runTransaction(async (tx) => {

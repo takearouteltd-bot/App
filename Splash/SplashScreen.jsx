@@ -24,7 +24,10 @@ export default function SplashScreen() {
     <View style={styles.container} onLayout={onReady}>
       <StatusBar barStyle="light-content" backgroundColor={SPLASH_BACKGROUND} />
       <Image
-        source={require('../assets/splash-icon.png')}
+        // The same artwork as the iPhone launch screen (assets/splash-icon.png,
+        // app.json), as a 0.6 MB JPEG at 1440 wide: the original 23 MB PNG
+        // made up a quarter of the app download and took ~68 MB to decode.
+        source={require('../assets/splash-art.jpg')}
         style={StyleSheet.absoluteFill}
         resizeMode="cover"
         onLoadEnd={onReady}
