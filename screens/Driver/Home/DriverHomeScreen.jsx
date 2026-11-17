@@ -155,6 +155,8 @@ export default function DriverHomeScreen() {
   // time, which is also how the server knows the app can show them.
   const [followOnJobs, setFollowOnJobs] = useState(true);
   const followOnSaved = useRef(false);
+  // The one-off "start the shift clock" write below has been sent.
+  const shiftClockSent = useRef(false);
   // "Automatic (where I am)" in Account: the city follows the driver.
   const [workingCityAuto, setWorkingCityAuto] = useState(false);
   // Cities the driver said "Keep" to while online, so they are asked once.
@@ -324,8 +326,16 @@ export default function DriverHomeScreen() {
       }
       wasOnlineRef.current = data.status === 'online' || data.status === 'on_ride';
       // Online from before shift tracking existed: start the clock now.
-      if (data.status === 'online' && !data.shiftStartedAt) {
-        setDoc(driverRef, { shiftStartedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+      // Only from a confirmed snapshot, and once: a server time that is not
+      // confirmed yet reads as empty, so writing on every snapshot wrote
+      // again and again (about 16 writes a second while online, 16 Nov).
+      if (data.status !== 'online' || data.shiftStartedAt) {
+        shiftClockSent.current = false;
+      } else if (!snap.metadata.hasPendingWrites && !shiftClockSent.current) {
+        shiftClockSent.current = true;
+        setDoc(driverRef, { shiftStartedAt: serverTimestamp() }, { merge: true }).catch(() => {
+          shiftClockSent.current = false;
+        });
       }
     });
 
