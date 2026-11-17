@@ -202,7 +202,7 @@ await place(d3, GONE, 'offline');
 /* ------------------------------------------- app jobs one at a time */
 
 step('one at a time: nearest first; a no goes to the next driver, and so does no answer (timed by the server)');
-await adminSet('config/app', { dispatch: { searchRadiusKm: 3, requestTimeoutSeconds: 6 } }, true);
+await adminSet('config/app', { dispatch: { searchRadiusKm: 3, requestTimeoutSeconds: 6, sequentialOffers: 1 } }, true);
 const MID = { latitude: 52.3110, longitude: -1.9500, address: 'Plymouth Road, Redditch' }; // ~1.2 km
 const EDGE = { latitude: 52.3200, longitude: -1.9500, address: 'Mount Pleasant, Redditch' }; // ~2.2 km
 await place(d1, NEAR); await place(d2, MID); await place(d3, EDGE);
@@ -244,7 +244,7 @@ r = await until(async () => { const x = await ride(s2); return x.bidJob ? x : nu
 assert.equal(r.bidJob.reason, 'unanswered'); assert.deepEqual(r.missedBy, [d1]); assert.deepEqual(r.declinedBy, []);
 await adminSet(`rides/${s2}`, { status: 'cancelled' }, true);
 await place(d1, GONE, 'offline');
-await adminSet('config/app', { dispatch: { searchRadiusKm: 3 } }, true);
+await adminSet('config/app', { dispatch: { searchRadiusKm: 3, sequentialOffers: 1 } }, true);
 
 /* ---------------------------------------------------------- phone jobs */
 

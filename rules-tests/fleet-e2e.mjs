@@ -115,7 +115,7 @@ await updateDoc(doc(D2.db, 'rides', b1.rideId), claim(d2.user.uid));
 
 step('driver 2 gives it back: sent on to the fleet by itself, without driver 2; office still sees who returned it');
 await updateDoc(doc(D2.db, 'rides', b1.rideId), { status: 'dispatching', driverId: null, acceptedAt: null, declinedBy: arrayUnion(d2.user.uid) });
-r1 = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', b1.rideId))).data(); return r.dispatch.returnedBy ? r : null; }, 'returnedBy');
+r1 = await until(async () => { const r = (await getDoc(doc(O.db, 'rides', b1.rideId))).data(); return r.dispatch.returnedBy && r.dispatch.offeredAt ? r : null; }, 'returnedBy and rung again');
 assert.equal(r1.dispatch.returnedBy, d2.user.uid);
 assert.equal(r1.dispatch.autoResent, true); assert.equal(r1.dispatch.mode, 'all');
 assert.ok(r1.dispatch.offeredAt, 'rung again'); assert.ok(r1.declinedBy.includes(d2.user.uid));
