@@ -17,6 +17,8 @@ Fleet billing (plans, card charge, Stripe Link as the saved method, grace period
 
 Deleting an account (deleteMyAccount): same set-up, `node rules-tests/account-delete.mjs`, on a fresh emulator (it creates the same test logins as fleet-e2e).
 
+An admin deleting a driver or passenger (adminDeleteAccount, fleet.js: admins only, same refusals as the person's own delete, force only for money left in the wallet, the archivedAccounts/{uid} record and what it must not hold, rides and membership payments kept): `node rules-tests/admin-delete.mjs`, same set-up as account-delete (dummy Stripe secrets, no fakes), on a fresh emulator. Rules for archivedAccounts are in fleet.test.mjs.
+
 Fleet office phone (fleetPhone.js): `node rules-tests/fleet-phone.mjs`, same set-up plus a fake Twilio it starts on :8999. For this run only, add TWILIO_SID=AC + 32 zeros, TWILIO_TOKEN=testtoken, TWILIO_NUMBER=+441000000000 to functions/.secret.local and put TWILIO_API_BASE and TWILIO_NUMBERS_BASE=http://127.0.0.1:8999 in functions/.env.local; delete both after.
 
 New app bookings checked by the server (cities, price against the route, per-stop price incl. old builds without it, payment method, bidding, promo codes): `node rules-tests/booking-checks.mjs`, same set-up as fleet-phone with ROUTES_API_BASE=http://127.0.0.1:8999 in functions/.env.local (it starts its own fake Routes on :8999, so run it before fleet-phone, not alongside).

@@ -2167,7 +2167,8 @@ module.exports = (deps) => {
       fleetName: (driver && driver.fleetName) ||
         (fleetSnap && fleetSnap.exists ? fleetSnap.data().name : null) ||
         null,
-      driverType: (driver && driver.driverType) || null,
+      // "company" or "self" (self-employed), as joinInTx sets it.
+      driverType: (driver && driver.fleetDriverType) || null,
       approval: driver ? {
         approved: driver.approved === true,
         onboardingStatus: driver.onboardingStatus ||
