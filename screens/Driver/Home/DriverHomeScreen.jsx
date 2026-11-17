@@ -1060,6 +1060,18 @@ export default function DriverHomeScreen() {
   /* Decline: off this driver's list for the rest of the shift. A fleet's
      phone booking also records it, so the office sees the answer at once. A
      counter-offer already sent is taken back, so the passenger can't pick it. */
+  /* More than one job waiting: look at the next one without declining this
+     one (Sarfaraz, 18 Nov 2026: "the other job's hiding behind it"). The
+     job left stays on the list as it was, and comes round again. */
+  const showNextJob = () => {
+    if (rideRequests.length < 2) return;
+    const i = rideRequests.findIndex((r) => r.id === currentRideIdRef.current);
+    const next = rideRequests[(i + 1) % rideRequests.length];
+    if (!next || next.id === currentRideIdRef.current) return;
+    animateCard();
+    setCurrentRideId(next.id);
+  };
+
   const declineCurrent = (ride) => {
     if (ride?.id && sentOffers[ride.id] && driverId) {
       withdrawCounterOffer(ride.id, driverId).catch(() => {});
@@ -1610,8 +1622,26 @@ export default function DriverHomeScreen() {
           screen. It is a Modal, so it shows over whichever driver tab is
           open, and it uses the same Accept and Decline as a normal job. */}
       {currentRide ? (() => {
+        // Other jobs waiting behind this one: say so, and let the driver look.
+        const at = rideRequests.findIndex((r) => r.id === currentRide.id);
+        const nextJob = rideRequests.length > 1 ? rideRequests[(at + 1) % rideRequests.length] : null;
         const body = (
           <>
+            {nextJob ? (
+              <TouchableOpacity
+                style={styles.moreJobs}
+                onPress={showNextJob}
+                accessibilityRole="button"
+                accessibilityLabel={`Job ${at + 1} of ${rideRequests.length}. See the next job, ${currencySymbol()}${Number(nextJob.fareEstimate || 0).toFixed(2)}, ${distanceText(nextJob.pickupDistanceKm)} away`}
+              >
+                <Text style={styles.moreJobsText} numberOfLines={1}>
+                  {at + 1} of {rideRequests.length} jobs · next: {currencySymbol()}
+                  {Number(nextJob.fareEstimate || 0).toFixed(2)}, {distanceText(nextJob.pickupDistanceKm)}
+                </Text>
+                <Text style={styles.moreJobsLink}>See next job</Text>
+                <Ionicons name="chevron-forward" size={14} color={COLORS.midnight} />
+              </TouchableOpacity>
+            ) : null}
             {currentRide.bidJob ? (
               <View style={styles.bidBanner} accessibilityRole="header">
                 <Text style={styles.bidTitle}>BID JOB</Text>
@@ -1962,4 +1992,17 @@ const styles = StyleSheet.create({
     marginBottom: SPACE[3],
   },
   fleetBannerText: { flex: 1, color: COLORS.midnight, fontWeight: '600' },
+  moreJobs: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACE[1],
+    backgroundColor: COLORS.surface,
+    borderRadius: 12,
+    paddingVertical: SPACE[2],
+    paddingHorizontal: SPACE[3],
+    marginBottom: SPACE[3],
+    minHeight: 44,
+  },
+  moreJobsText: { flex: 1, color: COLORS.midnight, fontWeight: '600' },
+  moreJobsLink: { color: COLORS.midnight, fontWeight: '700', textDecorationLine: 'underline' },
 });
