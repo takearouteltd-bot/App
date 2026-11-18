@@ -382,6 +382,8 @@ module.exports = (deps) => {
     freeOperatorCount: async (fleetId) => (await freeOperators(fleetId))
         .length});
   Object.assign(out, bot.out);
+  // The same texting for card payment links (cardSwitch.js).
+  if (deps.shared) deps.shared.sendText = bot.sendText;
 
   // The web booker (one booking page per fleet) and its tracking page.
   Object.assign(out, require("./fleetWeb")({functions, db, FieldValue, text,

@@ -321,7 +321,7 @@ export default function RiderTripDetailsScreen() {
           items={[
             { value: durationMinutes ? `${Math.ceil(durationMinutes)} min` : 'N/A', label: 'Duration' },
             { value: distanceKm ? distanceText(distanceKm) : 'N/A', label: 'Distance' },
-            { value: trip.paymentStatus === 'no_charge' ? 'No charge' : paymentMethod === 'cash' ? 'Cash' : 'Card', label: 'Paid by' },
+            { value: trip.paymentStatus === 'no_charge' ? 'No charge' : paymentMethod === 'cash' ? 'Cash' : ['held', 'paid'].includes(trip.paymentSwitch?.state) ? 'Card (booked as cash)' : 'Card', label: 'Paid by' },
           ]}
         />
       </Card>

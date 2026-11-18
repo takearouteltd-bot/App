@@ -20,6 +20,7 @@ import { getAuth } from 'firebase/auth';
 import { db } from '../../config/firebase';
 import SafetyButton from '../../components/SafetyButton';
 import DriverPhotoPlate from '../../components/DriverPhotoPlate';
+import PayByCardInstead from '../../components/PayByCardInstead';
 import { confirmMaskedCall } from '../../utils/calling';
 import { currencySymbol, money } from '../../utils/appConfig';
 import {
@@ -490,6 +491,9 @@ export default function RideInProgressScreen() {
             />
           </View>
         ) : null}
+
+        {/* A cash trip: pay by card instead (functions/cardSwitch.js). */}
+        <PayByCardInstead ride={ride} rideId={rideId} style={styles.changeBanner} />
 
         {changePending ? (
           <View style={styles.changeBanner}>

@@ -551,11 +551,22 @@ service cloud.firestore {
         request.resource.data.stopsCompleted <= resource.data.get("stops", []).size();
     }
 
+    /* Booked as cash, but the passenger's card is now held or charged
+       instead (functions/cardSwitch.js): cash can't be recorded as well,
+       whatever the driver's app version. Only the extra a card did not
+       cover after a destination change (cashExtraDue) is still cash. */
+    function cashAfterCard() {
+      return request.resource.data.get("cashCollected", false) == true &&
+        resource.data.get("paymentSwitch", {}).get("state", "") in ["held", "paid"] &&
+        !(resource.data.get("cashExtraDue", 0) > 0);
+    }
+
     function driverCompletes(changed) {
       return changed.hasOnly(["status", "completedAt", "expiresAt", "cashCollected",
           "completedAwayFromDropoff", "completeDistanceKm"]) &&
         resource.data.status == "ongoing" && request.resource.data.status == "completed" &&
-        stampedNow("completedAt");
+        stampedNow("completedAt") &&
+        !cashAfterCard();
     }
 
     /* An app job goes back to searching; a phone job goes back to its
@@ -709,6 +720,9 @@ service cloud.firestore {
         !request.resource.data.keys().hasAny(["destinationChange", "destinationChanges",
           "originalDropoffLocation", "fareBasis", "bookedBasis", "extraHolds", "cashExtraDue",
           "holdRaise", "reachedDropoffAt", "reachedDropoffPoint", "extendedTrip"]) &&
+        /* Paying by card instead of cash is the server's to record
+           (functions/cardSwitch.js), as is cash already taken. */
+        !request.resource.data.keys().hasAny(["paymentSwitch", "cardLinkTexts", "cashCollected"]) &&
         /* A booking from the app, nothing else: a phone job or a fleet job
            here would skip the price check and ring a fleet. */
         request.resource.data.status == "searching" &&

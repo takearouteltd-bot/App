@@ -728,6 +728,9 @@ module.exports = (deps) => {
           purge(db.collection("webLimits")
               .where("at", "<", now - 2 * 86400000)),
           purge(db.collection("bookingLinks").where("expiresAt", "<", now)),
+          // Card payment links (cardSwitch.js), a week after they ran out.
+          purge(db.collection("cardLinks")
+              .where("expiresAt", "<", now - 7 * 86400000)),
         ]);
         console.log("Web clean-up:", counts.join(", "));
         return null;

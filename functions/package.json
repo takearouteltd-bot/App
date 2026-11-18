@@ -19,6 +19,7 @@
     "express": "^5.2.1",
     "firebase-admin": "^12.7.0",
     "firebase-functions": "^4.9.0",
+    "qrcode-generator": "^2.0.4",
     "stripe": "^22.0.0"
   },
   "devDependencies": {

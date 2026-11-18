@@ -9,6 +9,8 @@ import { money } from '../../utils/appConfig';
 import EmailReceiptButton from '../../components/EmailReceiptButton';
 import StarRating from '../../components/StarRating';
 import TipCard from '../../components/TipCard';
+import PayByCardInstead from '../../components/PayByCardInstead';
+import { paidByCardInstead } from '../../utils/cardSwitch';
 import StopRows from '../../components/trips/StopRows';
 import TripChangeNotes from '../../components/trips/TripChangeNotes';
 import { COLORS, TYPE, SPACE, Screen, Card, Button, Loading, RouteLine } from '../../components/ui/kit';
@@ -107,7 +109,7 @@ export default function RiderRideCompletedScreen() {
                 ? 'Paid in cash'
                 : `Please pay ${driverName} in cash`
               : isPaid
-              ? `Charged to your card${ride.cardLast4 ? ` ending ${ride.cardLast4}` : ''}`
+              ? `${paidByCardInstead(ride) ? 'Booked as cash, charged' : 'Charged'} to your card${ride.cardLast4 ? ` ending ${ride.cardLast4}` : ''}`
               : isFailed
               ? "Please email support@takearoute.ltd and we'll sort it out."
               : slow
@@ -120,6 +122,12 @@ export default function RiderRideCompletedScreen() {
           ) : null}
         </Card>
       </Animated.View>
+
+      {/* No cash: pay by card instead, for a while after the trip
+          (functions/cardSwitch.js). */}
+      {isCash && !ride.cashCollected ? (
+        <PayByCardInstead ride={ride} rideId={rideId} style={{ marginTop: SPACE[4] }} />
+      ) : null}
 
       {/* Journey */}
       <Card style={{ marginTop: SPACE[4] }}>

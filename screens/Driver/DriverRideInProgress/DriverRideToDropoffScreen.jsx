@@ -32,6 +32,7 @@ import {
   Avatar, Banner, Button, Chip, IconButton, Loading, StatRow, isCoord,
 } from '../../../components/ui/kit';
 import { whenSaved } from '../../../utils/slowSave';
+import { cardOnCompletion, paidByCardInstead, switchOf } from '../../../utils/cardSwitch';
 import { DRIVER_MAP_STYLE } from '../../../utils/driverMapStyle';
 
 const { height } = Dimensions.get('window');
@@ -256,16 +257,23 @@ export default function DriverRideToDropoffScreen() {
       return;
     }
     // An account job goes on the client's bill, so there is nothing to collect.
-    if (ride?.paymentMethod !== 'cash' || ride?.collectBy === 'account') return completeRide(extra);
+    // The passenger switched to card (functions/cardSwitch.js): nothing in cash.
+    if (ride?.paymentMethod !== 'cash' || ride?.collectBy === 'account' || paidByCardInstead(ride)) return completeRide(extra);
     const leftKm = extra?.completedAwayFromDropoff ? extra.completeDistanceKm : null;
     const terminal = ride?.collectBy === 'card';
+    // No cash: the trip is completed without it and the next screen takes a
+    // card payment for the final fare (a QR code and a texted link).
+    const byCard = !terminal && cardOnCompletion(ride, getAppConfig());
     Alert.alert(
       `Collect ${money(amountDue(leftKm), ride?.currency)} ${terminal ? 'by card' : 'in cash'}`,
       terminal
         ? 'Take the card payment on your terminal, then confirm.'
+        : byCard
+        ? 'This is a cash ride. Take cash, then confirm. No cash? The passenger can pay by card.'
         : 'This is a cash ride. Take payment from the passenger, then confirm.',
       [
         { text: 'Not yet', style: 'cancel' },
+        ...(byCard ? [{ text: 'Customer wants to pay by card', onPress: () => completeRide(extra, { payByCard: true }) }] : []),
         { text: terminal ? 'Card payment taken' : 'Cash received', onPress: () => completeRide({ ...extra, cashCollected: true }) },
       ]
     );
@@ -341,7 +349,7 @@ export default function DriverRideToDropoffScreen() {
     }
   };
 
-  const completeRide = async (extra) => {
+  const completeRide = async (extra, next = {}) => {
     if (completing) return;
     setCompleting(true);
 
@@ -358,12 +366,12 @@ export default function DriverRideToDropoffScreen() {
       batch.update(doc(db, 'drivers', ride.driverId), RELEASE);
       await whenSaved(batch.commit());
 
-      navigation.navigate('RideCompleted', { rideId });
+      navigation.navigate('RideCompleted', { rideId, ...next });
     } catch (error) {
       console.log('Error completing ride:', error);
       // The first tap may have got through before the connection dropped.
       if (await rideAlreadyEnded('completed')) {
-        navigation.navigate('RideCompleted', { rideId });
+        navigation.navigate('RideCompleted', { rideId, ...next });
         return;
       }
       Alert.alert('Could not complete', 'Please try again.');
@@ -575,7 +583,9 @@ export default function DriverRideToDropoffScreen() {
               {currencySymbol()}
               {Number(ride.fare?.total || 0).toFixed(2)}
             </Text>
-            {ride.paymentMethod === 'cash' ? (
+            {paidByCardInstead(ride) ? (
+              <Chip label="Card" icon="card-outline" />
+            ) : ride.paymentMethod === 'cash' ? (
               ride.collectBy === 'account'
                 ? <Chip label="Account" icon="business-outline" />
                 : ride.collectBy === 'card'
@@ -593,6 +603,22 @@ export default function DriverRideToDropoffScreen() {
               dropoffDistance ? { value: dropoffDistance, label: 'Distance' } : null,
             ]}
           />
+        ) : null}
+
+        {/* The passenger switched from cash to card in their app
+            (functions/cardSwitch.js): live, so the driver doesn't take cash. */}
+        {paidByCardInstead(ride) ? (
+          <View style={styles.cardBanner}>
+            <Banner
+              tone="success"
+              title="Paid by card ✓"
+              body="The passenger is paying by card instead of cash. Don't take cash: their card is charged the final fare when the trip ends."
+            />
+          </View>
+        ) : switchOf(ride)?.state === 'pending' && switchOf(ride)?.method === 'app' ? (
+          <View style={styles.cardBanner}>
+            <Banner tone="info" title="The passenger is paying by card…" body="Wait a moment before taking cash: this changes once their card goes through." />
+          </View>
         ) : null}
 
         {riderData ? (
@@ -714,6 +740,7 @@ const styles = StyleSheet.create({
   headRow: { flexDirection: 'row', alignItems: 'flex-start', gap: SPACE[4] },
 
   stats: { marginTop: SPACE[5] },
+  cardBanner: { marginTop: SPACE[4] },
 
   riderRow: {
     flexDirection: 'row', alignItems: 'center', gap: SPACE[3],
