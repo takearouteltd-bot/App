@@ -132,6 +132,14 @@ export const DEFAULT_APP_CONFIG = {
   extendedTrips: {
     enabled: 1,
   },
+  // A cash trip paid by card instead (functions/cardSwitch.js): on or off,
+  // minutes after the trip it is still offered, and 1 to allow it on taxi
+  // firm jobs. The server checks all of it again.
+  cardSwitch: {
+    enabled: 1,
+    windowMinutes: 30,
+    fleetJobs: 0,
+  },
 };
 
 function mergeSection(defaults, incoming) {
@@ -164,6 +172,7 @@ export function normaliseAppConfig(raw) {
     bidJobs: mergeSection(DEFAULT_APP_CONFIG.bidJobs, data.bidJobs),
     destinationChange: mergeSection(DEFAULT_APP_CONFIG.destinationChange, data.destinationChange),
     extendedTrips: mergeSection(DEFAULT_APP_CONFIG.extendedTrips, data.extendedTrips),
+    cardSwitch: mergeSection(DEFAULT_APP_CONFIG.cardSwitch, data.cardSwitch),
   };
 }
 

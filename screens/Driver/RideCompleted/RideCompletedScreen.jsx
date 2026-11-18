@@ -12,11 +12,15 @@ import { COLORS, TYPE, SPACE, SHADOW, Banner, Card, Button, Loading, RouteLine, 
 import { distanceText } from '../../../utils/routes';
 import { useNextJob } from '../../../utils/followOn';
 import { acceptedChanges, extraMiles } from '../../../utils/destinationChange';
+import CardLinkPanel from '../../../components/CardLinkPanel';
+import { paidByCardInstead } from '../../../utils/cardSwitch';
 
 export default function RideCompletedScreen() {
   const route = useRoute();
   const navigation = useNavigation();
-  const { rideId } = route.params || {};
+  // payByCard: the driver chose "Customer wants to pay by card" as they
+  // completed, so the payment link starts straight away.
+  const { rideId, payByCard } = route.params || {};
 
   const [ride, setRide] = useState(null);
   const [rider, setRider] = useState(null);
@@ -78,6 +82,7 @@ export default function RideCompletedScreen() {
     acceptedChanges(ride).length ? ['Destination changed', `from ${String(ride.originalDropoffLocation?.address || 'the booking').split(',')[0]}`] : null,
     fare.cashExtra > 0 ? ['Paid by card', show(fare.cardTotal)] : null,
     fare.cashExtra > 0 ? ['Paid to you in cash', show(fare.cashExtra)] : null,
+    paidByCardInstead(ride) ? ['Booked as cash', 'Paid by card instead'] : null,
   ].filter(Boolean);
 
   // Cash to collect that the driver may not have been asked for before they
@@ -109,6 +114,8 @@ export default function RideCompletedScreen() {
                 ? 'Paid online by the customer. Your fleet pays you.'
                 : ride.collectBy === 'card'
                 ? 'Paid on your card terminal'
+                : ride.paymentMethod === 'cash' && ride.cashCollected !== true && (payByCard || ride.paymentSwitch)
+                ? 'Not paid yet: take cash, or let the passenger pay by card'
                 : ride.paymentMethod === 'cash'
                 ? 'Paid to you in cash by the passenger'
                 : ride.walletProcessed === true
@@ -120,7 +127,11 @@ export default function RideCompletedScreen() {
           </Card>
         </Animated.View>
 
-        {collect > 0 && (ride.extendedTrip || !ride.cashCollected) ? (
+        {/* Card instead of cash: the QR code and texted link, "Waiting for
+            payment…", then Paid by card (functions/cardSwitch.js). */}
+        <CardLinkPanel ride={ride} rideId={rideId} autoStart={payByCard} style={{ marginTop: SPACE[4] }} />
+
+        {collect > 0 && (ride.extendedTrip || !ride.cashCollected) && !paidByCardInstead(ride) ? (
           <View style={{ marginTop: SPACE[4] }}>
             <Banner
               tone="warning"

@@ -4682,6 +4682,19 @@ module.exports = (deps) => {
     };
   }
 
+  /**
+   * Whether a job is still settled under the same rule. Only a cash job
+   * the passenger then paid by card (cardSwitch.js) moves from one to
+   * another: the driver no longer holds the money, the fleet does.
+   * @param {Object} old The settlement on the ride.
+   * @param {Object} ride Ride document.
+   * @param {string} kind From settlementKind now.
+   * @return {boolean} Same rule.
+   */
+  function sameKind(old, ride, kind) {
+    return !ride.paymentSwitch || old.kind === kind;
+  }
+
   /* Locks the commission onto a finished job and moves the driver's balance.
      A fare that changes after completion (waiting time is added then) moves
      it by the difference, at the same locked rate. */
@@ -4697,7 +4710,8 @@ module.exports = (deps) => {
           return null;
         }
         if (seen.settlement &&
-            seen.settlement.farePence === settledPence(seen, kind)) {
+            seen.settlement.farePence === settledPence(seen, kind) &&
+            sameKind(seen.settlement, seen, kind)) {
           return null;
         }
         const settleFleet = settleFleetOf(seen);
@@ -4714,7 +4728,8 @@ module.exports = (deps) => {
           const old = ride.settlement || null;
           const nowKind = settlementKind(ride);
           if (!nowKind ||
-              (old && old.farePence === settledPence(ride, nowKind))) {
+              (old && old.farePence === settledPence(ride, nowKind) &&
+                sameKind(old, ride, nowKind))) {
             return;
           }
           const percent = old ? old.commissionPercent :
@@ -5201,7 +5216,7 @@ module.exports = (deps) => {
   Object.assign(out, require("./fleetPhone")({functions, db, toE164,
     TWILIO_SECRETS, twilioConfig, assertFleetManager, assertAdmin, lineTools,
     findRiderByPhone, findDriversByPhone, phoneFor, text, FieldValue,
-    stripe: deps.stripe, STRIPE_SECRETS,
+    stripe: deps.stripe, STRIPE_SECRETS, shared: deps.shared,
     settleEndedEarly: deps.settleDriverEndedEarly,
     booking: {bookPhoneJob, quoteOne, quoteTypes, placeSearch, placeDetails,
       placeFromText, point, RIDE_TYPES}}));

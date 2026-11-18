@@ -109,6 +109,10 @@ const CONFIG_DEFAULTS = {
   // Trips completed well past the drop-off are charged for the extra miles
   // and flagged for the office (destinationChange.js). 0 turns it off.
   extendedTrips: {enabled: 1},
+  // A passenger booked as cash paying by card instead (cardSwitch.js):
+  // switched on, how long after the trip it is still offered, and whether
+  // taxi firm jobs (phone, web and fleet drivers' jobs) may use it.
+  cardSwitch: {enabled: 1, windowMinutes: 30, fleetJobs: 0},
 };
 
 /**
@@ -221,6 +225,15 @@ async function loadAppConfig() {
     extendedTrips: {
       enabled: numSetting(data.extendedTrips, "enabled",
           d.extendedTrips.enabled) === 1 ? 1 : 0,
+    },
+    cardSwitch: {
+      enabled: numSetting(data.cardSwitch, "enabled",
+          d.cardSwitch.enabled) === 1 ? 1 : 0,
+      // Stripe's payment page lasts a day at most, so no longer than that.
+      windowMinutes: Math.min(1440, numSetting(data.cardSwitch,
+          "windowMinutes", d.cardSwitch.windowMinutes)),
+      fleetJobs: numSetting(data.cardSwitch, "fleetJobs",
+          d.cardSwitch.fleetJobs) === 1 ? 1 : 0,
     },
     bidJobs: {
       enabled: numSetting(data.bidJobs, "enabled", d.bidJobs.enabled) === 1 ?
@@ -1347,6 +1360,10 @@ exports.stripeWebhook = functions
         const data = event.data;
         const object = data.object;
 
+        // A cash trip paid by card instead (cardSwitch.js). Its
+        // PaymentIntents carry a rideId too, so the lines below still run.
+        await cardSwitch.onStripeEvent(event);
+
         // Safely extract rideId WITHOUT optional chaining
         let rideId = null;
 
@@ -1464,7 +1481,8 @@ exports.chargeTripEndedEarly = functions
         const cfg = await loadAppConfig();
         const fare = endedEarlyFare(after, endPoint, cfg.fares.minimumFare,
             toMillis(after.cancelledAt) || Date.now());
-        const FieldValue = admin.firestore.FieldValue;
+        // FV, as admin.firestore.FieldValue is missing in the emulator.
+        const FieldValue = FV;
 
         await db.collection("rides").doc(rideId).update({
           "status": "completed",
@@ -1771,6 +1789,8 @@ exports.creditDriverWalletOnRideCompletion = functions.firestore
         return null;
       }
 
+      // FV (firebase-admin/firestore) rather than admin.firestore.FieldValue,
+      // which the functions emulator leaves out, so the tests can run this.
       const db = admin.firestore();
       // A fleet driver's card earnings go to the fleet (tagFleetRides in
       // fleet.js sets fleetId when they accept), not to their own wallet.
@@ -1802,15 +1822,14 @@ exports.creditDriverWalletOnRideCompletion = functions.firestore
               pendingBalance: 0,
               currency: rideCurrency(rideSnap.data()).toUpperCase(),
               walletStatus: "active",
-              createdAt: admin.firestore.FieldValue.serverTimestamp(),
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              createdAt: FV.serverTimestamp(),
+              updatedAt: FV.serverTimestamp(),
             });
           } else {
             transaction.update(walletRef, {
-              availableBalance: admin.firestore.FieldValue.
-                  increment(driverEarning),
-              totalEarned: admin.firestore.FieldValue.increment(driverEarning),
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              availableBalance: FV.increment(driverEarning),
+              totalEarned: FV.increment(driverEarning),
+              updatedAt: FV.serverTimestamp(),
             });
           }
 
@@ -1824,7 +1843,7 @@ exports.creditDriverWalletOnRideCompletion = functions.firestore
             after.paymentIntentId ? after.paymentIntentId : null,
             status: "cleared",
             description: "Earnings from ride " + rideId,
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdAt: FV.serverTimestamp(),
           });
 
           transaction.update(rideRef, {
@@ -1832,7 +1851,7 @@ exports.creditDriverWalletOnRideCompletion = functions.firestore
             "earnings.driverEarning": driverEarning,
             "earnings.cashExtra": cashExtra,
             "earnings.paidTo": fleetId ? "fleet" : "driver",
-            "earnings.creditedAt": admin.firestore.FieldValue.serverTimestamp(),
+            "earnings.creditedAt": FV.serverTimestamp(),
           });
         });
 
@@ -1848,7 +1867,7 @@ exports.creditDriverWalletOnRideCompletion = functions.firestore
             driverId: driverId,
             amount: driverEarning,
             error: error.message,
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdAt: FV.serverTimestamp(),
           });
         } catch (logError) {
           console.error("❌ Failed to log failure:", logError);
@@ -4848,16 +4867,20 @@ function paidLine(ride) {
   }
   if (ride.collectBy === "card") return "Paid by card to the driver.";
   if (ride.paymentMethod === "cash") return "Paid in cash to the driver.";
+  // Booked as cash, paid by card instead (cardSwitch.js).
+  const ps = ride.paymentSwitch || {};
+  const booked = ["held", "paid"].includes(ps.state) ? "Booked as cash. " : "";
   // The card did not cover a raised fare: the rest went to the driver in
   // cash (destinationChange.js).
   const fare = ride.fare || {};
   if (Number(fare.cashExtra) > 0) {
     const code = ride.currency || fare.currency;
-    return `Paid by card ending ${ride.cardLast4 || "on file"} ` +
+    return `${booked}Paid by card ending ${ride.cardLast4 || "on file"} ` +
       `(${emailMoney(fare.cardTotal, code)}) and ` +
       `${emailMoney(fare.cashExtra, code)} in cash to the driver.`;
   }
-  return `Paid by card ending ${ride.cardLast4 || "on file"}.`;
+  return `${booked}Paid by card ending ${ride.cardLast4 ||
+    ps.cardLast4 || "on file"}.`;
 }
 
 /**
@@ -5157,7 +5180,11 @@ exports.sendReceiptOnPaymentCaptured = functions
       if (!captured || before.paymentStatus === after.paymentStatus) {
         return null;
       }
-      if (after.receiptSentAt) return null;
+      // Booked as cash and paid by card afterwards (cardSwitch.js): the
+      // cash receipt has gone, so this one says it was paid by card.
+      const switched = before.paymentStatus === "cash" &&
+        after.paymentStatus === "captured" && after.paymentSwitch;
+      if (after.receiptSentAt && !switched) return null;
       const result = await emailRideReceipt(context.params.rideId, after);
       console.log(`Receipt for ${context.params.rideId}:`,
           JSON.stringify(result));
@@ -5756,3 +5783,12 @@ Object.assign(exports, destinationChange.functions, {
   requestDestinationChange: destinationChange.requestDestinationChange,
   answerDestinationChange: destinationChange.answerDestinationChange,
 });
+// A cash trip paid by card instead, by the passenger in the app or through
+// a link the driver shows and texts; stripeWebhook passes its events on.
+const cardSwitch = require("./cardSwitch")({
+  functions, db, stripe, STRIPE_SECRETS, TWILIO_SECRETS, sendPush,
+  loadAppConfig, toMillis, rideCurrency, emailMoney, computeWaitingCharge,
+  ensureStripeCustomer, phoneFor, toE164, shared: fleetShared,
+  paymentAlerts,
+});
+Object.assign(exports, cardSwitch.functions);

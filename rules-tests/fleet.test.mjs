@@ -684,3 +684,50 @@ test('stops: the driver ticks off one stop at a time, never past the stops booke
   await assertFails(updateDoc(doc(as('cfree'), 'rides/trip2'), { stopsCompleted: 2 }));
   await assertFails(updateDoc(doc(as('cfree'), 'rides/trip2'), { stopsCompleted: 0 }));
 });
+
+/* Paying by card instead of cash (functions/cardSwitch.js): only the server
+   records the switch, and once the card is held or charged no driver's app,
+   old or new, can record cash as well. */
+test('card instead of cash: nobody but the server writes the switch, the link texts or the card ride', async () => {
+  await seed((db) => setDoc(doc(db, 'rides/cs1'), onTrip({ paymentMethod: 'cash' })));
+  const fields = {
+    paymentSwitch: { n: 1, state: 'paid', method: 'app', amount: 10 },
+    cardLinkTexts: 0,
+    paymentMethod: 'card',
+    paymentIntentId: 'pi_x',
+    paymentStatus: 'captured',
+    cashCollected: true,
+  };
+  for (const [key, value] of Object.entries(fields)) {
+    await assertFails(updateDoc(doc(as('r1'), 'rides/cs1'), { [key]: value }));
+    await assertFails(updateDoc(doc(as('cfree'), 'rides/cs1'), { [key]: value }));
+  }
+  // Nor tucked into a completion.
+  await assertFails(updateDoc(doc(as('cfree'), 'rides/cs1'), { status: 'completed', completedAt: serverTimestamp(), paymentSwitch: { state: 'cancelled' } }));
+  // A booking cannot arrive with it, or with cash already taken.
+  const mine = { riderId: 'r1', status: 'searching' };
+  await assertFails(setDoc(doc(as('r1'), 'rides/csnew1'), { ...mine, paymentSwitch: { state: 'held' } }));
+  await assertFails(setDoc(doc(as('r1'), 'rides/csnew2'), { ...mine, cardLinkTexts: 0 }));
+  await assertFails(setDoc(doc(as('r1'), 'rides/csnew3'), { ...mine, cashCollected: true }));
+  // The page's keys are the server's alone.
+  await seed((db) => setDoc(doc(db, 'cardLinks/tok'), { rideId: 'cs1', n: 1 }));
+  await assertFails(getDoc(doc(as('r1'), 'cardLinks/tok')));
+  await assertFails(getDoc(doc(as('cfree'), 'cardLinks/tok')));
+  await assertFails(setDoc(doc(as('cfree'), 'cardLinks/tok2'), { rideId: 'cs1', n: 1 }));
+});
+test('card instead of cash: cash cannot be recorded once the card is held or charged', async () => {
+  const done = { status: 'completed', completedAt: serverTimestamp(), expiresAt: serverTimestamp() };
+  for (const state of ['held', 'paid']) {
+    await seed((db) => setDoc(doc(db, 'rides/cs2'), onTrip({ paymentMethod: 'card', paymentSwitch: { n: 1, state } })));
+    await assertFails(updateDoc(doc(as('cfree'), 'rides/cs2'), { ...done, cashCollected: true }));
+    await assertSucceeds(updateDoc(doc(as('cfree'), 'rides/cs2'), done));
+  }
+  // An attempt still open, or one that failed: cash is still fine.
+  for (const state of ['pending', 'failed', 'cancelled']) {
+    await seed((db) => setDoc(doc(db, 'rides/cs3'), onTrip({ paymentMethod: 'cash', paymentSwitch: { n: 1, state } })));
+    await assertSucceeds(updateDoc(doc(as('cfree'), 'rides/cs3'), { ...done, cashCollected: true }));
+  }
+  // The extra a card did not cover after a destination change is still cash.
+  await seed((db) => setDoc(doc(db, 'rides/cs4'), onTrip({ paymentMethod: 'card', cashExtraDue: 3, paymentSwitch: { n: 1, state: 'held' } })));
+  await assertSucceeds(updateDoc(doc(as('cfree'), 'rides/cs4'), { ...done, cashCollected: true }));
+});
