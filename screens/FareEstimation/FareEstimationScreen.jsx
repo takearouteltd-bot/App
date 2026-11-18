@@ -589,6 +589,10 @@ export default function FareEstimationScreen({ route }) {
               value={passengerFor ? 'other' : 'me'}
               onChange={(v) => (v === 'me' ? bookForMe() : bookForSomeone())}
             />
+            {/* Add a stop sits beside it, so the box is shorter. */}
+            {stops.length < MAX_STOPS ? (
+              <Chip icon="add" label={stops.length ? 'Stop' : 'Add stop'} onPress={addStop} />
+            ) : null}
           </View>
           {passengerFor ? (
             <TouchableOpacity style={styles.forRow} onPress={bookForSomeone} accessibilityRole="button">
@@ -601,15 +605,6 @@ export default function FareEstimationScreen({ route }) {
             </TouchableOpacity>
           ) : null}
 
-          {stops.length < MAX_STOPS ? (
-            <View style={styles.addStop}>
-              <Chip
-                icon="add"
-                label={stops.length ? 'Add another stop' : 'Add a stop'}
-                onPress={addStop}
-              />
-            </View>
-          ) : null}
         </View>
 
         <ScrollView showsVerticalScrollIndicator={false} style={{ flexGrow: 0 }}>
@@ -909,7 +904,9 @@ const styles = StyleSheet.create({
   tripPillText: { fontSize: 13, fontWeight: '700', color: COLORS.midnight },
   pillDivider: { width: StyleSheet.hairlineWidth, height: 16, backgroundColor: COLORS.line },
 
-  sheet: { maxHeight: '64%', paddingBottom: SPACE[6] },
+  // Tall enough that the whole booking shows without sliding on most phones;
+  // the map keeps the top part.
+  sheet: { maxHeight: '82%', paddingBottom: SPACE[6] },
   journey: { paddingBottom: SPACE[4], borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: COLORS.line },
 
   classRow: { gap: SPACE[3], paddingVertical: SPACE[4], paddingRight: SPACE[4] },
@@ -954,8 +951,7 @@ const styles = StyleSheet.create({
   },
   stopDotText: { fontSize: 11, fontWeight: '800', color: COLORS.lime },
   stopText: { flex: 1, ...TYPE.small, color: COLORS.ink },
-  addStop: { flexDirection: 'row', marginTop: SPACE[3] },
-  whoRow: { flexDirection: 'row', marginTop: SPACE[3] },
+  whoRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[3], marginTop: SPACE[3] },
   forRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[2], marginTop: SPACE[2] },
   forText: { flex: 1, ...TYPE.small, color: COLORS.midnight, fontWeight: '600' },
   forEdit: { ...TYPE.small, color: COLORS.blue, fontWeight: '700' },

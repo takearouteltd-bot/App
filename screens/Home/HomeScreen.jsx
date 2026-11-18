@@ -8,7 +8,6 @@ import {
   ActivityIndicator,
   Animated,
   Easing,
-  PanResponder,
 } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -78,41 +77,8 @@ export default function HomeScreen() {
   const [pinnedPickup, setPinnedPickup] = useState(null);
   const [nearbyCars, setNearbyCars] = useState([]);
 
-  /* The sheet can be minimised to just the "Where to?" bar, so the map is
-     not hidden behind it. Dragging the map minimises it by itself; the
-     handle, or a drag up, brings it back. */
-  const [collapsed, setCollapsed] = useState(false);
-  const [sheetHeight, setSheetHeight] = useState(0);
-  const [peekHeight, setPeekHeight] = useState(0);
-  const collapseAnim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.spring(collapseAnim, {
-      toValue: collapsed ? 1 : 0,
-      friction: 9,
-      tension: 70,
-      useNativeDriver: true,
-    }).start();
-  }, [collapsed, collapseAnim]);
-
-  const sheetPan = useRef(
-    PanResponder.create({
-      // Only a clear vertical drag is ours; taps still reach the buttons.
-      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 8 && Math.abs(g.dy) > Math.abs(g.dx),
-      onPanResponderRelease: (_, g) => {
-        if (g.dy > 24) setCollapsed(true);
-        else if (g.dy < -24) setCollapsed(false);
-      },
-    })
-  ).current;
-
-  // How far down the sheet slides when minimised: everything below the
-  // "Where to?" bar.
-  const hideBy = Math.max(0, sheetHeight - peekHeight);
-  const sheetTranslate = Animated.add(
-    slideAnim,
-    collapseAnim.interpolate({ inputRange: [0, 1], outputRange: [0, hideBy] })
-  );
+  /* The sheet always stays up: it no longer slides down when the map is
+     dragged or the sheet is pulled. */
 
   // The sheet rises once, on first paint.
   useEffect(() => {
@@ -355,9 +321,6 @@ export default function HomeScreen() {
           rotateEnabled={false}
           pitchEnabled={false}
           toolbarEnabled={false}
-          onPanDrag={() => {
-            if (!collapsed) setCollapsed(true);
-          }}
         >
           {carsToShow.map((car) => (
             <CarMarker
@@ -409,9 +372,7 @@ export default function HomeScreen() {
       </View>
 
       <Animated.View
-        style={[styles.sheetWrap, { transform: [{ translateY: sheetTranslate }] }]}
-        onLayout={(e) => setSheetHeight(e.nativeEvent.layout.height)}
-        {...sheetPan.panHandlers}
+        style={[styles.sheetWrap, { transform: [{ translateY: slideAnim }] }]}
       >
         {/* Rides on top of the sheet, so it moves with it. */}
         <View style={styles.recenter}>
@@ -419,16 +380,10 @@ export default function HomeScreen() {
         </View>
 
         <Sheet grabber={false}>
-          <View onLayout={(e) => setPeekHeight(e.nativeEvent.layout.y + e.nativeEvent.layout.height + SPACE[4])}>
-            <TouchableOpacity
-              onPress={() => setCollapsed((c) => !c)}
-              style={styles.handle}
-              hitSlop={{ top: 12, bottom: 4, left: 40, right: 40 }}
-              accessibilityRole="button"
-              accessibilityLabel={collapsed ? 'Show trip options' : 'Minimise to see the map'}
-            >
+          <View>
+            <View style={styles.handle}>
               <View style={styles.grabber} />
-            </TouchableOpacity>
+            </View>
 
             {/* A trip already running takes the top of the sheet. */}
             {ride ? (
