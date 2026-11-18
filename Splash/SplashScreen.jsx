@@ -29,7 +29,11 @@ export default function SplashScreen() {
         // app.json), as a small JPEG. Kept small: the old 23 MB PNG made up a
         // quarter of the app download.
         source={require('../assets/splash-art.jpg')}
-        style={StyleSheet.absoluteFill}
+        // A bundled image gets its own size (719 x 1599) as a default width and
+        // height, and those beat left/right/top/bottom: the art drew at full
+        // size from the top-left corner, so only "TAKE A ROU" showed. Size it
+        // to the screen explicitly.
+        style={styles.art}
         resizeMode="cover"
         onLoadEnd={onReady}
       />
@@ -41,5 +45,12 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: SPLASH_BACKGROUND,
+  },
+  art: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
   },
 });
