@@ -48,10 +48,10 @@
      ones included, from recording cash.
 
    Settings, config/app cardSwitch: enabled (1), windowMinutes (30),
-   fleetJobs (0). With fleetJobs 0 taxi firm jobs are refused: phone and
-   web bookings, and company drivers' app trips (fleetId), whose money goes
-   through the fleet's books. With 1, a company driver's app trip is paid
-   into the fleet's wallet like its other card trips, and a phone job (by
+   fleetJobs (0). With fleetJobs 0 taxi firm bookings (phone and web,
+   source "phone") are refused. A company driver's app trip is an app job
+   and always allowed: it is paid into the fleet's wallet like the firm's
+   other card app trips. With 1, a phone job (by
    link only: there is no app passenger) is settled like a firm's online
    booking (fleetWeb.js takePayment): the fleet's wallet, less Stripe's fee.
 
@@ -99,13 +99,14 @@ module.exports = (deps) => {
   /* ------------------------------ rules ------------------------------ */
 
   /**
-   * A job paid through a taxi firm's books: a phone or web booking, or a
-   * company driver's app trip.
+   * A taxi firm's own booking (phone or web, source "phone"). A company
+   * driver's app trip is still an app job: it can be paid by card instead,
+   * and the card money goes to the firm as on any of their card app trips.
    * @param {Object} ride Ride data.
    * @return {boolean} Fleet job.
    */
   function fleetJob(ride) {
-    return Boolean(ride.fleetId) || ride.source === "phone";
+    return ride.source === "phone";
   }
 
   /**

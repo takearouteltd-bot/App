@@ -527,9 +527,10 @@ await config({ enabled: 0 });
 await refused(R.call('cardSwitchStart', { rideId: await seedTrip() }), /switched off/);
 await config();
 
-step('taxi firm jobs refused while cardSwitch.fleetJobs is 0: a company driver\'s app trip, a phone job');
+step('a company driver\'s app trip is an app job: allowed; a taxi firm\'s phone job refused while cardSwitch.fleetJobs is 0');
 const f1 = await seedTrip({ fleetId: 'f1' });
-await refused(R.call('cardSwitchStart', { rideId: f1 }), /taxi firm jobs/);
+const f1res = await R.call('cardSwitchStart', { rideId: f1 });
+assert.ok(f1res && f1res.clientSecret, 'company driver app trip can switch to card');
 await adminSet('fleets/f1', { name: 'Redditch Cars' });
 const ph = await seedTrip({ source: 'phone', fleetId: 'f1', fleetName: 'Redditch Cars', riderId: null, customer: { name: 'Pat', phone: '+447700900888' }, collectBy: 'cash' });
 await complete(ph);
