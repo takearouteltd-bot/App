@@ -265,6 +265,13 @@ export async function requestDriverPosition(driverId) {
       return 'denied';
     }
 
+    // Show the map at once from the phone's last known position (up to 10
+    // minutes old), instead of "Finding your location…" for up to 10 s after
+    // a restart. It is only for the screen: the driver's position is saved
+    // from the fresh fix below.
+    const last = await Location.getLastKnownPositionAsync({ maxAge: 10 * 60 * 1000 }).catch(() => null);
+    if (last && last.coords) update({ coords: last.coords });
+
     let fix = null;
     try {
       fix = await Promise.race([
