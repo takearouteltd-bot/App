@@ -891,13 +891,18 @@ module.exports = (deps) => {
   /* ------------------------------ extended trips --------------------- */
 
   /**
-   * Charges a trip completed well past the drop-off for the extra miles,
-   * once, and raises the card hold to match. Called by
+   * A trip completed well past the drop-off: works out the extra miles and
+   * records them on the ride as waiting for the passenger's approval
+   * (extendedTrips.js charges them once approved). The fare itself does not
+   * change here, so the booked fare is charged as usual. The driver chooses
+   * where to press Complete, so the extra is never taken without the
+   * passenger (or the office) agreeing (Sarfaraz, 19 Nov 2026). Called by
    * chargeOnRideCompletion before anything is charged.
    * @param {string} rideId Ride id.
    * @param {Object} ride Ride data (completed).
-   * @return {Promise<?Object>} {fare, cashExtraDue, extraHolds} when the
-   *     trip is (now or already) extended; null when it isn't one.
+   * @return {Promise<?Object>} {fare} when the trip is (now or already)
+   *     extended, so it is not also treated as ended early; null when it
+   *     isn't one.
    */
   async function settleExtendedTrip(rideId, ride) {
     if (ride.extendedTrip) return {fare: ride.fare};
@@ -915,6 +920,7 @@ module.exports = (deps) => {
 
     const price = await priceExtension(ride, car.point);
     const ref = db.collection("rides").doc(rideId);
+    const hours = cfg.extendedTrips.approveHours;
     const applied = await db.runTransaction(async (tx) => {
       const snap = await tx.get(ref);
       const fresh = snap.exists ? snap.data() : null;
@@ -925,7 +931,15 @@ module.exports = (deps) => {
         return null;
       }
       const previous = r2(fresh.fare && fresh.fare.total);
+      const extra = r2(price.total - previous);
+      if (!(extra > 0)) return null;
+      // A passenger with the app is asked; a taxi firm's phone customer
+      // can't be, so the office decides.
+      const asks = Boolean(fresh.riderId);
+      const decideBy = Timestamp.fromMillis(Date.now() + hours * 3600 * 1000);
       const extendedTrip = {
+        state: asks ? "pending" : "office",
+        extra,
         extraKm: price.extraKm,
         pastDropoffKm: r2(pastKm),
         previousFare: previous,
@@ -938,12 +952,12 @@ module.exports = (deps) => {
         flagged: true,
         at: FieldValue.serverTimestamp(),
       };
-      const update = {
-        fare: price.fare,
-        fareBasis: price.basis,
-        extendedTrip,
-        endedAtLocation: car.point,
-      };
+      if (asks) {
+        extendedTrip.decideBy = decideBy;
+        // The sweep (extendedTrips.js) looks at the ride again then.
+        extendedTrip.dueAt = decideBy;
+      }
+      const update = {extendedTrip, endedAtLocation: car.point};
       // A change still waiting for the driver ends with the trip.
       const dc = fresh.destinationChange || {};
       if (dc.state === "pending") {
@@ -953,45 +967,55 @@ module.exports = (deps) => {
           FieldValue.arrayUnion(historyEntry(dc, "expired"));
       }
       tx.update(ref, update);
-      return {fresh, previous};
+      return {fresh, previous, extra, asks};
     });
     if (!applied) return null;
-    if (applied.already) {
-      return {fare: applied.fresh.fare,
-        cashExtraDue: Number(applied.fresh.cashExtraDue) || 0,
-        extraHolds: applied.fresh.extraHolds || []};
-    }
-    console.log("Extended trip", rideId, applied.previous, "->", price.total,
-        `${price.extraKm} km`);
+    if (applied.already) return {fare: applied.fresh.fare};
+    console.log("Extended trip, awaiting approval", rideId, applied.previous,
+        "+", applied.extra, `${price.extraKm} km`);
 
-    const now = Object.assign({}, applied.fresh, {fare: price.fare});
-    const res = await raiseHold(rideId, now, price.total, "ext");
-    const saved = await saveHold(rideId, now, res);
     const currency = rideCurrency(ride);
-    const extra = r2(price.total - applied.previous);
-    if (ride.driverId && extra > 0 && ride.paymentMethod === "cash" &&
-        ride.collectBy !== "account") {
+    const extra = emailMoney(applied.extra, currency);
+    const miles = (Math.round(price.extraKm * 0.621371 * 10) / 10).toFixed(1);
+    const card = ride.paymentMethod === "card";
+    if (ride.driverId) {
       await sendPush([ride.driverId], {
         channelId: "trip-updates",
         data: {type: "trip", rideId},
-        title: "Extended trip",
-        body: `The trip went past the drop-off, so the fare is now ` +
-          `${emailMoney(price.total, currency)} (was ` +
-          `${emailMoney(applied.previous, currency)}). Collect the extra ` +
-          `${emailMoney(extra, currency)} too.`,
+        title: "Extended trip: waiting for approval",
+        body: !applied.asks ?
+          `The trip went ${miles} mi past the drop-off. The office checks ` +
+          `the extra ${extra} before it is added.` :
+          card ?
+          `The trip went ${miles} mi past the drop-off. The passenger is ` +
+          `asked to approve the extra ${extra}; it is added to your ` +
+          "earnings once paid." :
+          `The trip went ${miles} mi past the drop-off. Take the booked ` +
+          `fare. Collect the extra ${extra} only if the passenger approves ` +
+          "it in their app.",
       }).catch(() => null);
     }
-    if (ride.riderId && extra > 0) {
+    if (applied.asks) {
       await sendPush([ride.riderId], {
         channelId: "trip-updates",
         data: {type: "trip", rideId},
-        title: "Extended trip",
-        body: "Your trip went on past your drop-off, so it was charged " +
-          `for the extra miles: ${emailMoney(price.total, currency)}.`,
+        title: "Your trip went past your drop-off",
+        body: `It ended ${miles} mi past your drop-off: ${extra} extra. ` +
+          "Open TakeARoute to approve or dispute it." + (card ?
+            ` If you don't answer within ${hours} hours, it is charged.` :
+            ""),
       }).catch(() => null);
+    } else if (paymentAlerts) {
+      await paymentAlerts.raise("extended_trip_review", rideId, {
+        title: "Extended trip to check (no passenger app to ask)",
+        detail: `${miles} mi past the drop-off, ${extra} extra. Decide ` +
+          "whether it is owed.",
+        amount: applied.extra, currency: currency.toUpperCase(),
+        rideId, driverId: ride.driverId || null,
+        fleetId: ride.fleetId || null,
+      });
     }
-    return {fare: price.fare, cashExtraDue: saved.cashExtraDue,
-      extraHolds: saved.extraHolds};
+    return {fare: applied.fresh.fare};
   }
   out.settleExtendedTrip = settleExtendedTrip;
 
