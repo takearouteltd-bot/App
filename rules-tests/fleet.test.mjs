@@ -469,6 +469,60 @@ test('a passenger can only create an ordinary app booking', async () => {
   await assertFails(addDoc(collection(db, 'rides'), booking({ driverId: 'd1' })));
   await assertFails(addDoc(collection(db, 'rides'), booking({ pricing: 'checked' })));
 });
+/* Audit 19 Nov 2026: a booking cannot arrive with the server's payment or
+   money fields, and after the price check only the price may move. */
+test('a booking cannot carry a card hold, payment state or the driver\'s money', async () => {
+  const db = as('pass1');
+  for (const extra of [
+    { paymentStatus: 'authorized' }, { paymentIntentId: 'pi_someone_else' },
+    { paymentStatus: 'authorized', paymentIntentId: 'pi_x' }, { paymentFailure: { at: 1 } },
+    { earnings: { driverEarning: 100 } }, { walletProcessed: true }, { promoTopUpProcessed: true },
+    { fare: { total: 10, cashExtra: 10 } }, { fare: { total: 10, finalTotal: 1 } },
+    { fare: { total: 10, agreedPrice: 1 } }, { fare: { total: 10, extendedExtra: 5 } },
+  ]) {
+    await assertFails(addDoc(collection(db, 'rides'), booking(extra)), JSON.stringify(extra));
+  }
+  await assertSucceeds(addDoc(collection(db, 'rides'), booking({ fare: { total: 10, discount: 0, promoCode: null } })));
+});
+test('raising an offer: bidding rides only, upwards only, and only the price keys of the fare', async () => {
+  const fare = { total: 10, subtotal: 8.33, vat: 1.67, vatPercent: 20, promoCode: null, discount: 0, discountAmount: 0 };
+  const priced = (price) => ({ ...fare, total: price, subtotal: Math.round(price / 1.2 * 100) / 100, vat: Math.round((price - price / 1.2) * 100) / 100, agreedPrice: price, recommendedTotal: 10 });
+  await seed(async (db) => {
+    await setDoc(doc(db, 'rides/bid'), searching({ riderId: 'pass1', bidding: true, offeredFare: 10, fareEstimate: 10, fare }));
+    await setDoc(doc(db, 'rides/plain'), searching({ riderId: 'pass1', bidding: false, offeredFare: null, fareEstimate: 10, fare }));
+    await setDoc(doc(db, 'rides/nooffer'), searching({ riderId: 'pass1', bidding: true, fareEstimate: 10, fare }));
+    await setDoc(doc(db, 'rides/unchecked'), searching({ riderId: 'pass1', bidding: true, offeredFare: 10, fareEstimate: 10, fare, pricing: 'pending' }));
+  });
+  const raise = (id, price, fareOver = {}) => updateDoc(doc(as('pass1'), 'rides', id),
+    { offeredFare: price, fareEstimate: price, fare: { ...priced(price), ...fareOver } });
+  await assertSucceeds(raise('bid', 12));
+  await assertFails(raise('bid', 11), 'lower than the offer now on it');
+  await assertFails(raise('bid', 13, { discountAmount: 5000 }), 'the promo money');
+  await assertFails(raise('bid', 13, { cashExtra: 13 }), 'the cash part');
+  await assertFails(raise('bid', 13, { vatPercent: 0 }), 'the VAT rate');
+  await assertFails(raise('bid', 13, { promoCode: 'FREE', discount: 1 }), 'a promo');
+  await assertFails(raise('plain', 1), 'not a bidding ride');
+  await assertFails(raise('nooffer', 1), 'a booking that left the offer out');
+  await assertFails(raise('unchecked', 12), 'before the server checked the price');
+  await assertFails(updateDoc(doc(as('stranger'), 'rides/bid'),
+    { offeredFare: 20, fareEstimate: 20, fare: priced(20) }), 'only the passenger');
+});
+test('taking a counter-offer cannot rewrite the rest of the fare', async () => {
+  const fare = { total: 10, subtotal: 8.33, vat: 1.67, vatPercent: 20, promoCode: null, discount: 0, discountAmount: 0 };
+  await seed(async (db) => {
+    await setDoc(doc(db, 'drivers/cfree'), driver(null));
+    await setDoc(doc(db, 'rides/co'), searching({ riderId: 'pass1', bidding: true, offeredFare: 10, fareEstimate: 10, fare }));
+    await setDoc(doc(db, 'rides/co/offers/cfree'), { driverId: 'cfree', price: 9, status: 'pending' });
+  });
+  const take = (fareOver) => updateDoc(doc(as('pass1'), 'rides/co'), {
+    status: 'accepted', driverId: 'cfree', acceptedAt: serverTimestamp(), walletProcessed: false,
+    offeredFare: 9, fareEstimate: 9, acceptedOfferId: 'cfree',
+    fare: { ...fare, total: 9, subtotal: 7.5, vat: 1.5, agreedPrice: 9, recommendedTotal: 10, ...fareOver },
+  });
+  await assertFails(take({ discountAmount: 5000 }));
+  await assertFails(take({ cashExtra: 9 }));
+  await assertSucceeds(take({}));
+});
 test('a suspended passenger cannot book', async () => {
   await seed((db) => setDoc(doc(db, 'riders/susp'), { fullName: 'S', blocked: true }));
   await assertFails(addDoc(collection(as('susp'), 'rides'), booking({ riderId: 'susp' })));

@@ -26,9 +26,12 @@ const until = async (fn, what) => {
 };
 const step = (s) => console.log('•', s);
 const P = { lat: 51.5, lng: -0.1 };
+// As checkAppFare leaves an app booking: priced by the server, which wrote
+// the promo's money itself (priceCheck.discountAmount).
 const ride = (id, fare, extra = {}) => adminSet(`rides/${id}`, Object.assign({
   status: 'in_progress', riderId: 'r1', driverId: 'd1', paymentMethod: 'cash', currency: 'GBP',
   pickupLocation: P, dropoffLocation: P, fare,
+  pricing: 'checked', priceCheck: { discountAmount: Number(fare.discountAmount) || 0 },
 }, extra));
 const complete = (id) => patch(`rides/${id}`, { status: 'completed' });
 
@@ -69,6 +72,19 @@ await until(async () => (await adminGet('rides/n2')).paymentStatus?.stringValue 
 await sleep(4000);
 assert.equal(num((await adminGet('driverWallets/d1')).availableBalance), 15);
 assert.equal((await adminGet('rides/n1')).promoTopUpProcessed, undefined);
+
+step('a booking the server never priced, or a driver\'s own booking: no top-up (audit 19 Nov 2026)');
+await ride('u1', { subtotal: 10, discount: 0.2, discountAmount: 2, vatPercent: 20, total: 9.6, promoCode: 'SAVE20' },
+  { pricing: 'pending', priceCheck: null });
+await ride('s1', { subtotal: 10, discount: 0.2, discountAmount: 2, vatPercent: 20, total: 9.6, promoCode: 'SAVE20' },
+  { riderId: 'd1' });
+await complete('u1'); await complete('s1');
+await until(async () => (await adminGet('rides/s1')).paymentStatus?.stringValue === 'cash', 's1 cash');
+await until(async () => (await adminGet('rides/u1')).paymentStatus?.stringValue === 'cash', 'u1 cash');
+await sleep(4000);
+assert.equal(num((await adminGet('driverWallets/d1')).availableBalance), 15);
+assert.equal((await adminGet('rides/u1')).promoTopUpProcessed, undefined);
+assert.equal((await adminGet('rides/s1')).promoTopUpProcessed, undefined);
 
 console.log('promo-topup: all passed');
 process.exit(0);

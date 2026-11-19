@@ -437,14 +437,33 @@ service cloud.firestore {
         resource.data.status == "searching";
     }
 
-    /* Raise only, and the card hold (fareEstimate) stays equal to the fare. */
+    /* A new price for the fare (utils/bidding.js fareAtPrice): only the
+       price keys may change. Everything else in the fare (the promo, its
+       discount, VAT rate, cash extra, stop charges) is what the server
+       checked at booking (checkNewRide) and pays the driver from, so a
+       passenger who could rewrite it could mint promo top-ups or move
+       money between the trip and the driver (audit 19 Nov 2026). */
+    function fareOnlyRepriced() {
+      return request.resource.data.fare is map &&
+        request.resource.data.fare.diff(resource.data.fare).affectedKeys()
+          .hasOnly(["total", "subtotal", "vat", "agreedPrice", "recommendedTotal"]);
+    }
+
+    /* Raise only, and the card hold (fareEstimate) stays equal to the fare.
+       Only on a bidding ride whose offer the server has already checked: a
+       booking that left offeredFare out would otherwise compare against 0
+       and let the price be cut after the check. */
     function riderRaisesOffer(changed) {
       return changed.hasOnly(["offeredFare", "fareEstimate", "fare"]) &&
         resource.data.status == "searching" &&
+        resource.data.get("bidding", false) == true &&
+        resource.data.get("pricing", "") == "checked" &&
+        resource.data.get("offeredFare", null) is number &&
         request.resource.data.offeredFare is number &&
-        request.resource.data.offeredFare >= resource.data.get("offeredFare", 0) &&
+        request.resource.data.offeredFare >= resource.data.offeredFare &&
         request.resource.data.fareEstimate == request.resource.data.offeredFare &&
-        request.resource.data.fare.total == request.resource.data.offeredFare;
+        request.resource.data.fare.total == request.resource.data.offeredFare &&
+        fareOnlyRepriced();
     }
 
     /* The offer is only read once the write has the right shape, so a
@@ -472,6 +491,7 @@ service cloud.firestore {
         request.resource.data.walletProcessed == false &&
         request.resource.data.driverId is string &&
         stampedNow("acceptedAt") &&
+        fareOnlyRepriced() &&
         offerMatchesWrite(rideId);
     }
 
@@ -723,6 +743,16 @@ service cloud.firestore {
         /* Paying by card instead of cash is the server's to record
            (functions/cardSwitch.js), as is cash already taken. */
         !request.resource.data.keys().hasAny(["paymentSwitch", "cardLinkTexts", "cashCollected"]) &&
+        /* The card hold and its state are the server's (holdOnAccept): a
+           booking that arrived "authorized" with any payment id would skip
+           the hold and ride free. Nor may a booking carry the driver's
+           money or the promo top-up's bookkeeping. */
+        !request.resource.data.keys().hasAny(["paymentIntentId", "paymentStatus",
+          "paymentFailure", "earnings", "walletProcessed", "promoTopUpProcessed",
+          "acceptedOfferId", "status_history"]) &&
+        /* Cash extra is the server's (destination changes, card switch). */
+        !(request.resource.data.get("fare", {}).keys().hasAny(["cashExtra", "extendedExtra",
+          "finalTotal", "agreedPrice"])) &&
         /* A booking from the app, nothing else: a phone job or a fleet job
            here would skip the price check and ring a fleet. */
         request.resource.data.status == "searching" &&

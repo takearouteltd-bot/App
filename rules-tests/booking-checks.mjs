@@ -173,6 +173,15 @@ assert.equal(val(r.status), 'searching');
 assert.equal(await promoUsed('2'), '2');
 await adminSet(`rides/${id}`, { status: 'completed' }, true);
 
+step('the promo money is the server\'s: a booking that names its own discount amount gets the real one (audit 19 Nov 2026)');
+await adminSet('promoCodes/AUD10', { code: 'AUD10', percent: 10, active: true });
+id = await book(R, rider, REDDITCH, { promoCode: 'AUD10', discount: 0.1, total: 4.86, subtotal: 4.5, discountAmount: 5000 });
+r = await settled(id);
+assert.equal(val(r.status), 'searching');
+assert.equal(Number(val(r.fare.mapValue.fields.discountAmount)), 0.45, '4.50 before VAT x 10%');
+assert.equal(Number(val(r.priceCheck.mapValue.fields.discountAmount)), 0.45);
+await adminSet(`rides/${id}`, { status: 'completed' }, true);
+
 step('a tampered discount is refused');
 await adminSet('promoCodes/BIG', { code: 'BIG', percent: 5, active: true });
 id = await book(R2, rider2, REDDITCH, { promoCode: 'BIG', discount: 0.9, total: 0.54 });

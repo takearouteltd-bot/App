@@ -865,16 +865,27 @@ exports.authorizePaymentOnRideAccept = functions
       // Re-dispatch: a driver gave the job back and another accepted it.
       // The card hold from the first accept is still valid, so reuse it
       // instead of placing a second hold on the passenger's card.
+      // Only a hold the server placed for this ride counts: the payments
+      // record is server-written, so a ride that arrived "authorized" with
+      // any id (an altered app, audit 19 Nov 2026) gets a real hold here.
       if (after.paymentIntentId && after.paymentStatus === "authorized") {
+        let ours = false;
         try {
-          await db.collection("payments").doc(after.paymentIntentId).update({
-            driverId: driverId || null,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
+          const held = await db.collection("payments")
+              .doc(String(after.paymentIntentId)).get();
+          ours = held.exists && held.data().rideId === rideId &&
+            held.data().status === "authorized";
+          if (ours) {
+            await held.ref.update({
+              driverId: driverId || null,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          }
         } catch (error) {
-          console.error("Could not update payment driver:", error);
+          console.error("Could not check the ride's card hold:", error);
         }
-        return null;
+        if (ours) return null;
+        console.warn("Card hold not this ride's; placing a new one:", rideId);
       }
 
       // A hold that fails must not leave the ride "accepted": the driver
@@ -1139,6 +1150,38 @@ exports.chargeOnRideCompletion = functions
           paymentStatus: "failed",
           paymentError: "no_card_hold",
         });
+        await paymentAlerts.raise("card_capture_failed", rideId, {
+          title: "Card trip finished with no card hold",
+          detail: "Nothing was held on the passenger's card, so nothing " +
+            "could be charged.",
+          amount: owedFare, currency: rideCurrency(after).toUpperCase(),
+          rideId, driverId: after.driverId || null,
+          fleetId: after.fleetId || null,
+        }).catch((e) => console.error("Alert failed:", rideId, e));
+        return null;
+      }
+
+      // The hold must be one the server placed for this ride (payments is
+      // server-written): never capture another ride's hold.
+      const heldSnap = await db.collection("payments")
+          .doc(String(paymentIntentId)).get().catch(() => null);
+      if (!heldSnap || !heldSnap.exists ||
+          heldSnap.data().rideId !== rideId) {
+        console.error("❌ Card hold is not this ride's:", rideId,
+            paymentIntentId);
+        await db.collection("rides").doc(rideId).update({
+          paymentStatus: "failed",
+          paymentError: "hold_not_for_ride",
+        });
+        await paymentAlerts.raise("card_capture_failed", rideId, {
+          title: "Card trip with a hold that is not its own",
+          detail: "The trip's card hold was not placed for this trip, so " +
+            "nothing was charged.",
+          amount: Number((after.fare && after.fare.total) || 0),
+          currency: rideCurrency(after).toUpperCase(),
+          rideId, driverId: after.driverId || null,
+          fleetId: after.fleetId || null, paymentIntentId,
+        }).catch((e) => console.error("Alert failed:", rideId, e));
         return null;
       }
 
@@ -1146,7 +1189,7 @@ exports.chargeOnRideCompletion = functions
       // =========================
       // MARK PROCESSING
       // =========================
-        await db.collection("payments").doc(paymentIntentId).update({
+        await heldSnap.ref.update({
           status: "processing",
           updatedAt: FV.serverTimestamp(),
         });
@@ -1323,11 +1366,13 @@ exports.chargeOnRideCompletion = functions
           fleetId: after.fleetId || null, paymentIntentId,
         });
 
-        await db.collection("payments").doc(paymentIntentId).update({
+        // The ride is marked failed whatever else goes wrong here.
+        await db.collection("payments").doc(String(paymentIntentId)).set({
           status: "failed",
-          error: error.message,
+          error: String(error && error.message || error),
           updatedAt: FV.serverTimestamp(),
-        });
+        }, {merge: true}).catch((e) =>
+          console.error("Could not mark the payment failed:", rideId, e));
 
         await db.collection("rides").doc(rideId).update({
           paymentStatus: "failed",
@@ -1904,6 +1949,13 @@ function promoTopUpAmount(ride) {
   const fare = ride.fare || {};
   // An agreed (offered) price is what was charged; no promo applies to it.
   if (!fare.promoCode || fare.agreedPrice != null) return 0;
+  // Only a booking the server priced (checkAppFare wrote the discount), and
+  // never a driver's own booking: TakeARoute pays this money itself.
+  if (ride.pricing !== "checked" || !ride.priceCheck ||
+      typeof ride.priceCheck.discountAmount !== "number") {
+    return 0;
+  }
+  if (ride.riderId && ride.riderId === ride.driverId) return 0;
   const discount = Number(fare.discountAmount) || 0;
   if (!(discount > 0)) return 0;
   const vat = Number(fare.vatPercent) || 0;
@@ -4145,13 +4197,21 @@ async function checkAppFare(rideId, ride) {
     return refuse("price_changed", "The price for this trip has changed. " +
       again);
   }
+  // The promo's money is the server's own sum, never the app's: the
+  // promo top-up (creditPromoTopUp) pays the driver fare.discountAmount, so
+  // an altered app that wrote its own figure would be paid it (audit 19 Nov
+  // 2026). Same sum as the app's (FareEstimationScreen): the fare before VAT
+  // times the code's percentage; the code itself is checked next.
+  const discountAmount = Math.round(fare.subtotal * discount * 100) / 100;
+  check.discountAmount = discountAmount;
   await db.collection("rides").doc(rideId).update({
-    pricing: "checked",
-    priceCheck: check,
-    fareEstimate: price,
-    currency: cfg.currency,
-    waitingPolicy: cfg.waiting,
-    cancellationPolicy: cfg.cancellation,
+    "pricing": "checked",
+    "priceCheck": check,
+    "fareEstimate": price,
+    "fare.discountAmount": discountAmount,
+    "currency": cfg.currency,
+    "waitingPolicy": cfg.waiting,
+    "cancellationPolicy": cfg.cancellation,
   });
   return true;
 }
