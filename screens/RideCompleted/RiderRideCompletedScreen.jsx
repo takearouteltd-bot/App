@@ -13,6 +13,7 @@ import PayByCardInstead from '../../components/PayByCardInstead';
 import { paidByCardInstead } from '../../utils/cardSwitch';
 import StopRows from '../../components/trips/StopRows';
 import TripChangeNotes from '../../components/trips/TripChangeNotes';
+import ExtendedTripCard from '../../components/trips/ExtendedTripCard';
 import { COLORS, TYPE, SPACE, Screen, Card, Button, Loading, RouteLine } from '../../components/ui/kit';
 import { distanceText } from '../../utils/routes';
 
@@ -89,6 +90,8 @@ export default function RiderRideCompletedScreen() {
     endedEarlyOff > 0 ? ['Trip ended early', -endedEarlyOff] : null,
     // If the waiting charge could not be taken it is not part of the total.
     fare.waitingCharge > 0 && !ride.extraChargeFailed ? ['Waiting time', fare.waitingCharge] : null,
+    // Miles past the drop-off, once approved (functions/extendedTrips.js).
+    fare.extendedExtra > 0 ? ['Extra miles past the drop-off', fare.extendedExtra] : null,
   ].filter(Boolean);
 
   const driverName = driver?.fullName || driver?.firstName || 'your driver';
@@ -128,6 +131,9 @@ export default function RiderRideCompletedScreen() {
       {isCash && !ride.cashCollected ? (
         <PayByCardInstead ride={ride} rideId={rideId} style={{ marginTop: SPACE[4] }} />
       ) : null}
+
+      {/* Went past the drop-off: approve or dispute the extra miles. */}
+      <ExtendedTripCard ride={ride} rideId={rideId} style={{ marginTop: SPACE[4] }} />
 
       {/* Journey */}
       <Card style={{ marginTop: SPACE[4] }}>

@@ -127,10 +127,13 @@ export const DEFAULT_APP_CONFIG = {
   destinationChange: {
     acceptSeconds: 20,
   },
-  // 1: a trip completed well past the drop-off is charged for the extra
-  // miles and flagged for the office.
+  // 1: a trip completed well past the drop-off is priced for the extra
+  // miles, which the passenger approves or disputes (functions/
+  // extendedTrips.js); a card trip nobody answers is charged after
+  // approveHours.
   extendedTrips: {
     enabled: 1,
+    approveHours: 24,
   },
   // A cash trip paid by card instead (functions/cardSwitch.js): on or off,
   // minutes after the trip it is still offered, and 1 to allow it on taxi

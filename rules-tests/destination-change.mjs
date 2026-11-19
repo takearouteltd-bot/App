@@ -107,7 +107,7 @@ const get = async (path) => {
   return fields ? Object.fromEntries(Object.entries(fields).map(([k, x]) => [k, val(x)])) : null;
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function until(check, what, tries = 240) {
+async function until(check, what, tries = 720) {
   for (let i = 0; i < tries; i++) {
     const got = await check();
     if (got) return got;
@@ -365,16 +365,32 @@ assert.ok(ride.reachedDropoffPoint);
 await refused(updateDoc(doc(DR.db, 'rides', t7.id), { reachedDropoffAt: serverTimestamp() }), null, 'permission-denied');
 await carAt(PAST, t7.id);
 await complete(t7.id);
-ride = await until(async () => { const r = await get(`rides/${t7.id}`); return r.paymentStatus === 'cash' && r; }, 'trip 7 settled');
+ride = await until(async () => { const r = await get(`rides/${t7.id}`); return r.paymentStatus === 'cash' && r.extendedTrip && r; }, 'trip 7 settled');
 const LONG = price(BOOKED_KM + routeKm(D, PAST));
-assert.ok(ride.extendedTrip, 'extended');
+const EXTRA = r2(LONG - BOOKED);
+assert.equal(ride.extendedTrip.state, 'pending');
 assert.equal(ride.extendedTrip.flagged, true);
 assert.equal(ride.extendedTrip.previousFare, BOOKED);
 assert.equal(ride.extendedTrip.newFare, LONG);
+assert.equal(ride.extendedTrip.extra, EXTRA);
 assert.equal(ride.extendedTrip.extraKm, r2(routeKm(D, PAST)));
-assert.equal(ride.fare.total, LONG);
+assert.ok(ride.extendedTrip.decideBy && ride.extendedTrip.dueAt);
+assert.equal(ride.fare.total, BOOKED);
+assert.equal(ride.fare.finalTotal, BOOKED);
+step(`cash trip completed ${r2(routeKm(D, PAST))} km past the drop-off after reaching it: extended trip priced (£${LONG}, was £${BOOKED}) but only the booked fare is due until the passenger approves the £${EXTRA}`);
+
+await refused(O.call('answerExtendedTrip', { rideId: t7.id, approve: true }), /not your trip/i, 'functions/failed-precondition');
+await refused(updateDoc(doc(R.db, 'rides', t7.id), { 'extendedTrip.state': 'waived' }), null, 'permission-denied');
+const a7 = await R.call('answerExtendedTrip', { rideId: t7.id, approve: true });
+assert.equal(a7.state, 'collect');
+ride = await get(`rides/${t7.id}`);
+assert.equal(ride.extendedTrip.state, 'collect');
+assert.equal(ride.extendedTrip.approvedBy, 'passenger');
+assert.equal(ride.extendedTrip.dueAt, undefined);
+assert.equal(ride.fare.extendedExtra, EXTRA);
 assert.equal(ride.fare.finalTotal, LONG);
-step(`cash trip completed ${r2(routeKm(D, PAST))} km past the drop-off after reaching it: extended trip, pickup to drop-off to the end at normal rates, £${LONG} (was £${BOOKED}), flagged for the office`);
+await refused(R.call('answerExtendedTrip', { rideId: t7.id, approve: false }), /already been settled/i, 'functions/failed-precondition');
+step('only the passenger can answer, not by writing the ride; approved: the cash fare goes up by the extra for the driver to collect, once');
 
 const t8 = await seedTrip();
 await carAt({ latitude: D.latitude - 0.001, longitude: D.longitude }, t8.id);
@@ -384,16 +400,96 @@ await carAt(PAST, t8.id);
 // drop-off ("Passenger got out here"): without the server's evidence that
 // would be the fare so far; with it, the trip is extended.
 await complete(t8.id, { completedAwayFromDropoff: true, completeDistanceKm: r2(routeKm(D, PAST)) });
-ride = await until(async () => { const r = await get(`rides/${t8.id}`); return r.paymentStatus === 'captured' && r; }, 'trip 8 captured');
+ride = await until(async () => { const r = await get(`rides/${t8.id}`); return r.paymentStatus === 'captured' && r.walletProcessed && r; }, 'trip 8 captured');
+assert.equal(ride.extendedTrip.state, 'pending');
 assert.equal(ride.extendedTrip.newFare, LONG);
-assert.equal(ride.fare.finalTotal, LONG);
+assert.equal(ride.fare.finalTotal, BOOKED);
 assert.equal(ride.endedEarlyBy, undefined);
 assert.equal(ride.fare.fullTotal, undefined);
-const hold8 = ride.extraHolds[0];
-assert.equal(hold8.amount, Math.round(LONG * 100) - Math.round(BOOKED * 100));
-const caps8 = stripeCalls.filter((c) => c.op === 'capture' && [t8.piId, hold8.id].includes(c.id)).map((c) => c.amount);
-assert.deepEqual(caps8.sort((a, b) => a - b), [hold8.amount, Math.round(BOOKED * 100)].sort((a, b) => a - b));
-step('card trip ended "away from the drop-off" after reaching it: extended (not the fare so far), a second hold for the extra, then both captured');
+assert.equal((ride.extraHolds || []).length, 0);
+assert.deepEqual(stripeCalls.filter((c) => c.op === 'capture' && c.id === t8.piId).map((c) => c.amount), [Math.round(BOOKED * 100)]);
+step('card trip ended "away from the drop-off" after reaching it: extended (not the fare so far), but only the booked fare is captured, no extra hold');
+
+const a8 = await R.call('answerExtendedTrip', { rideId: t8.id, approve: true });
+assert.equal(a8.state, 'charged');
+const ext8 = stripeCalls.filter((c) => c.op === 'create' && c.type === 'extended_trip');
+assert.equal(ext8.length, 1);
+assert.equal(ext8[0].amount, Math.round(EXTRA * 100));
+assert.equal(ext8[0].pm, 'pm_good');
+assert.equal(ext8[0].key, `extended_${t8.id}_1`);
+ride = await get(`rides/${t8.id}`);
+assert.equal(ride.extendedTrip.state, 'charged');
+assert.equal(ride.fare.extendedExtra, EXTRA);
+assert.equal(ride.fare.finalTotal, LONG);
+const w8 = await get(`driverWallets/${driverId}/transactions/extended_${t8.id}`);
+assert.equal(w8.amount, EXTRA);
+step(`approved: £${EXTRA} charged off session on the trip's card (once, key extended_<ride>_1) and credited to the driver's wallet`);
+
+/* Disputed, then the office decides. */
+const ADM = mk('admin');
+const adminId = (await createUserWithEmailAndPassword(ADM.auth, 'admin-dc2@test.dev', 'secret123')).user.uid;
+await adminSet(`admins/${adminId}`, { isActive: true });
+async function extendedCardTrip(extra = {}, hold) {
+  const t = await seedTrip(extra, hold);
+  await carAt(D, t.id);
+  await until(async () => (await get(`rides/${t.id}`)).reachedDropoffAt, 'the car at the drop-off');
+  await carAt(PAST, t.id);
+  await complete(t.id);
+  await until(async () => { const r = await get(`rides/${t.id}`); return r.paymentStatus && r.paymentStatus !== 'authorized' && r.extendedTrip && r; }, 'extended trip settled');
+  return t;
+}
+const t11 = await extendedCardTrip();
+assert.equal((await R.call('answerExtendedTrip', { rideId: t11.id, approve: false })).state, 'disputed');
+ride = await get(`rides/${t11.id}`);
+assert.equal(ride.fare.finalTotal, BOOKED);
+assert.equal((await get(`paymentAlerts/extended_trip_disputed_${t11.id}`)).status, 'open');
+await refused(R.call('decideExtendedTrip', { rideId: t11.id, charge: true }), /admins only/i, 'functions/permission-denied');
+assert.equal((await ADM.call('decideExtendedTrip', { rideId: t11.id, charge: true, note: 'Passenger asked to go on' })).state, 'charged');
+ride = await get(`rides/${t11.id}`);
+assert.equal(ride.extendedTrip.approvedBy, 'office');
+assert.equal(ride.fare.finalTotal, LONG);
+assert.equal((await get(`paymentAlerts/extended_trip_disputed_${t11.id}`)).status, 'resolved');
+step('disputed: nothing charged, an alert for the office; only an admin can decide; charged on the office\'s word and the alert closed');
+
+const t12 = await extendedCardTrip();
+await R.call('answerExtendedTrip', { rideId: t12.id, approve: false });
+assert.equal((await ADM.call('decideExtendedTrip', { rideId: t12.id, charge: false })).state, 'waived');
+ride = await get(`rides/${t12.id}`);
+assert.equal(ride.extendedTrip.state, 'waived');
+assert.equal(ride.fare.finalTotal, BOOKED);
+await refused(ADM.call('decideExtendedTrip', { rideId: t12.id, charge: true }), /already settled/i, 'functions/failed-precondition');
+step('the office can waive it: the booked fare stands, and it cannot be charged afterwards');
+
+/* Nobody answers: the card trip is charged after the time allowed, the cash
+   trip goes to the office. The card that refuses goes to the office too. */
+const schedule = async (name) => {
+  const pub = await fetch(`http://127.0.0.1:8085/v1/projects/${PROJECT}/topics/firebase-schedule-${name}:publish`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: [{ data: Buffer.from('{}').toString('base64') }] }) });
+  assert.ok(pub.ok, 'pubsub publish: ' + pub.status);
+};
+async function timeUp(rideId) {
+  const past = { timestampValue: new Date(Date.now() - 60000).toISOString() };
+  const r = await fetch(`${REST}/rides/${rideId}?updateMask.fieldPaths=extendedTrip.decideBy&updateMask.fieldPaths=extendedTrip.dueAt`, {
+    method: 'PATCH', headers: H, body: JSON.stringify({ fields: { extendedTrip: { mapValue: { fields: { decideBy: past, dueAt: past } } } } }) });
+  if (!r.ok) throw new Error(await r.text());
+}
+const t13 = await extendedCardTrip();
+const t14 = await extendedCardTrip({ paymentMethod: 'cash' });
+const t15 = await extendedCardTrip({}, { amount: Math.round(BOOKED * 100), pm: 'pm_decline' });
+// The booked fare on t15's held card is captured; only new charges are refused.
+await Promise.all([t13, t14, t15].map((t) => timeUp(t.id)));
+await schedule('expireSearchingRides');
+ride = await until(async () => { const r = await get(`rides/${t13.id}`); return r.extendedTrip.state === 'charged' && r; }, 'trip 13 charged with no answer');
+assert.equal(ride.extendedTrip.approvedBy, 'no_answer');
+assert.equal(ride.fare.finalTotal, LONG);
+ride = await until(async () => { const r = await get(`rides/${t14.id}`); return r.extendedTrip.state === 'unanswered' && r; }, 'trip 14 to the office');
+assert.equal(ride.fare.finalTotal, BOOKED);
+assert.equal((await get(`paymentAlerts/extended_trip_unanswered_${t14.id}`)).status, 'open');
+ride = await until(async () => { const r = await get(`rides/${t15.id}`); return r.extendedTrip.state === 'charge_failed' && r; }, 'trip 15 refused');
+assert.equal(ride.fare.finalTotal, BOOKED);
+assert.equal((await get(`paymentAlerts/extended_trip_charge_failed_${t15.id}_1`)).status, 'open');
+assert.equal(ride.extendedTrip.dueAt, undefined);
+step('no answer in time: the card trip is charged, the cash trip goes to the office (nothing to charge), a refused card goes to the office');
 
 const t9 = await seedTrip({ paymentMethod: 'cash' });
 await carAt(ASIDE, t9.id);

@@ -78,6 +78,6 @@ module.exports = ({functions, db}) => {
         return {ok: true};
       });
 
-  return {raise,
+  return {raise, assertAdmin,
     functions: {adminListPaymentAlerts, adminResolvePaymentAlert}};
 };

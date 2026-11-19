@@ -14,6 +14,7 @@ import TipCard from '../../../components/TipCard';
 import { paidTip } from '../../../utils/tips';
 import StopRows from '../../../components/trips/StopRows';
 import TripChangeNotes from '../../../components/trips/TripChangeNotes';
+import ExtendedTripCard from '../../../components/trips/ExtendedTripCard';
 import BookedForLine from '../../../components/BookedForLine';
 import { STATUS_LABEL, STATUS_PILL } from '../../../components/trips/TripsList';
 import {
@@ -212,6 +213,8 @@ export default function RiderTripDetailsScreen() {
         endedEarlyOff > 0 ? ['Trip ended early', `-${rowMoney(endedEarlyOff)}`] : null,
         // If the waiting charge could not be taken it is not part of the total.
         fare.waitingCharge > 0 && !trip.extraChargeFailed ? ['Waiting time', rowMoney(fare.waitingCharge)] : null,
+        // Miles past the drop-off, once approved (functions/extendedTrips.js).
+        fare.extendedExtra > 0 ? ['Extra miles past the drop-off', rowMoney(fare.extendedExtra)] : null,
       ].filter(Boolean);
   // A tip is its own card payment after the trip, shown under the fare.
   const tip = paidTip(live || trip);
@@ -342,6 +345,9 @@ export default function RiderTripDetailsScreen() {
           <Text style={styles.totalValue}>{rowMoney(fareTotal + tip)}</Text>
         </View>
       </Card>
+
+      {/* Went past the drop-off: approve or dispute the extra. */}
+      <ExtendedTripCard ride={live} rideId={trip.id} style={{ marginTop: SPACE[3] }} />
 
       <TripChangeNotes ride={live || trip} driverName={driver?.firstName || driver?.fullName || 'your driver'} />
 

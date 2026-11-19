@@ -106,9 +106,10 @@ const CONFIG_DEFAULTS = {
   // A passenger changing the destination mid-trip: how long the driver has
   // to accept (destinationChange.js).
   destinationChange: {acceptSeconds: 20},
-  // Trips completed well past the drop-off are charged for the extra miles
-  // and flagged for the office (destinationChange.js). 0 turns it off.
-  extendedTrips: {enabled: 1},
+  // Trips completed well past the drop-off are priced for the extra miles,
+  // which the passenger approves or disputes (extendedTrips.js); a card
+  // trip nobody answers is charged after approveHours. 0 turns it off.
+  extendedTrips: {enabled: 1, approveHours: 24},
   // A passenger booked as cash paying by card instead (cardSwitch.js):
   // switched on, how long after the trip it is still offered, and whether
   // taxi firm jobs (phone, web and fleet drivers' jobs) may use it.
@@ -225,6 +226,8 @@ async function loadAppConfig() {
     extendedTrips: {
       enabled: numSetting(data.extendedTrips, "enabled",
           d.extendedTrips.enabled) === 1 ? 1 : 0,
+      approveHours: Math.min(168, Math.max(1, numSetting(data.extendedTrips,
+          "approveHours", d.extendedTrips.approveHours))),
     },
     cardSwitch: {
       enabled: numSetting(data.cardSwitch, "enabled",
@@ -4484,6 +4487,9 @@ exports.expireSearchingRides = functions
       // Also closes a destination change the driver never answered, if its
       // timer missed it (destinationChange.js).
       await destinationChange.sweep();
+      // Extended trips' extra miles: no answer by the deadline, or waiting
+      // to be settled (extendedTrips.js).
+      await extendedTrips.sweep();
       const cfg = await loadAppConfig();
       const limitMs = cfg.dispatch.searchTimeoutMinutes * 60 * 1000;
       const cutoff = admin.firestore.Timestamp
@@ -4960,9 +4966,14 @@ function buildReceipt(ride, rideId, extra) {
     addFareLines(fare, add, currency);
     // A trip that went past the drop-off, or whose destination the
     // passenger changed on the way (destinationChange.js).
-    if (ride.extendedTrip) {
-      const miles = (Number(ride.extendedTrip.extraKm) || 0) * 0.621371;
-      add("Extended trip", `${miles.toFixed(1)} mi past the drop-off`);
+    // Only once the extra was actually added (extendedTrips.js); trips
+    // from before approval was asked for have no state and were charged.
+    const ext = ride.extendedTrip;
+    if (ext && (!ext.state || ["charged", "collect"].includes(ext.state))) {
+      const miles = (Number(ext.extraKm) || 0) * 0.621371;
+      add("Extended trip", `${miles.toFixed(1)} mi past the drop-off` +
+          (Number(fare.extendedExtra) > 0 ?
+            `, ${emailMoney(fare.extendedExtra, currency)}` : ""));
     }
     const changes = (ride.destinationChanges || [])
         .filter((c) => c && c.outcome === "accepted");
@@ -5783,6 +5794,13 @@ Object.assign(exports, destinationChange.functions, {
   requestDestinationChange: destinationChange.requestDestinationChange,
   answerDestinationChange: destinationChange.answerDestinationChange,
 });
+// The extra miles of an extended trip, once the passenger (or the office)
+// approves them; swept by expireSearchingRides.
+const extendedTrips = require("./extendedTrips")({
+  functions, db, stripe, STRIPE_SECRETS, sendPush, toMillis, rideCurrency,
+  emailMoney, paymentAlerts,
+});
+Object.assign(exports, extendedTrips.functions);
 // A cash trip paid by card instead, by the passenger in the app or through
 // a link the driver shows and texts; stripeWebhook passes its events on.
 const cardSwitch = require("./cardSwitch")({

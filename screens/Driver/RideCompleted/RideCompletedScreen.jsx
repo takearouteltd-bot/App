@@ -14,6 +14,7 @@ import { useNextJob } from '../../../utils/followOn';
 import { acceptedChanges, extraMiles } from '../../../utils/destinationChange';
 import CardLinkPanel from '../../../components/CardLinkPanel';
 import { paidByCardInstead } from '../../../utils/cardSwitch';
+import { extendedState, extraAmount } from '../../../utils/extendedTrip';
 
 export default function RideCompletedScreen() {
   const route = useRoute();
@@ -79,6 +80,7 @@ export default function RideCompletedScreen() {
     // Went past the drop-off, or the passenger changed where they were going
     // (functions/destinationChange.js).
     ride.extendedTrip ? ['Extended trip', `${extraMiles(ride.extendedTrip.extraKm)} mi past the drop-off`] : null,
+    fare.extendedExtra > 0 ? ['Extra miles (approved)', show(fare.extendedExtra)] : null,
     acceptedChanges(ride).length ? ['Destination changed', `from ${String(ride.originalDropoffLocation?.address || 'the booking').split(',')[0]}`] : null,
     fare.cashExtra > 0 ? ['Paid by card', show(fare.cardTotal)] : null,
     fare.cashExtra > 0 ? ['Paid to you in cash', show(fare.cashExtra)] : null,
@@ -92,6 +94,21 @@ export default function RideCompletedScreen() {
   const collect = ride.extendedTrip && inCash
     ? earned
     : Number(fare.cashExtra || ride.cashExtraDue) || 0;
+  // The extra miles of an extended trip wait for the passenger's approval
+  // (functions/extendedTrips.js); trips from before that have no state.
+  const extState = extendedState(ride);
+  const extExtra = money(extraAmount(ride), currency);
+  const extendedBody = !extState
+    ? null
+    : !ride.extendedTrip.state
+    ? `Extended trip: the passenger went past the drop-off, so the fare is now ${money(collect, currency)} (was ${money(ride.extendedTrip.previousFare, currency)}).`
+    : extState === 'collect'
+    ? `The passenger approved the ${extExtra} extra for the miles past the drop-off, so it's included.`
+    : extState === 'pending'
+    ? `The trip went past the drop-off. The extra ${extExtra} isn't included: collect it only if the passenger approves it in their app (this screen updates).`
+    : extState === 'waived'
+    ? 'The office decided the extra miles are not charged.'
+    : `The extra ${extExtra} for the miles past the drop-off isn't included: the office is checking it.`;
 
   const riderName = ride.passengerFor?.name || rider?.fullName || rider?.firstName || ride.customer?.name || 'the passenger';
 
@@ -138,8 +155,22 @@ export default function RideCompletedScreen() {
               title={`Collect ${money(collect, currency)} in cash`}
               body={
                 ride.extendedTrip && inCash
-                  ? `Extended trip: the passenger went past the drop-off, so the fare is now ${money(collect, currency)} (was ${money(ride.extendedTrip.previousFare, currency)}).`
+                  ? extendedBody
                   : "The passenger's card didn't cover the new price. Take the rest in cash."
+              }
+            />
+          </View>
+        ) : null}
+
+        {extState && !inCash && ride.extendedTrip.state && extState !== 'charged' ? (
+          <View style={{ marginTop: SPACE[4] }}>
+            <Banner
+              tone="info"
+              title="Extended trip"
+              body={
+                extState === 'pending'
+                  ? `The passenger is asked to approve the extra ${extExtra} for the miles past the drop-off. It's added to your earnings once paid.`
+                  : extendedBody
               }
             />
           </View>

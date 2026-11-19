@@ -15,9 +15,10 @@
      app 1.0.36 and earlier) simply lets it run out.
    - "If customer cannot update due to him being drunk, just calculate miles
      automatically": a trip completed well past the drop-off, after the car
-     had been at the drop-off, is charged for the extra miles (extended
-     trip), and flagged for the office to check, since the driver chooses
-     where to press Complete.
+     had been at the drop-off, is priced for the extra miles (extended
+     trip). Since the driver chooses where to press Complete, the extra
+     waits for the passenger to approve it, or the office when they dispute
+     it (Sarfaraz, 19 Nov 2026; extendedTrips.js).
 
    The new price for a change is the whole journey priced as one trip at
    the ride's class rates (one first mile): what has been driven, worked out
@@ -36,14 +37,16 @@
    An extended trip: when the trip is completed more than 0.5 km (straight
    line) from the drop-off, and the server saw the car within 250 m of the
    drop-off earlier in the trip (reachedDropoffAt, from notePosition below),
-   the fare becomes the booked route plus the drive from the drop-off to
+   the price is the booked route plus the drive from the drop-off to
    where the trip ended, again at the class rates with one first mile and
    never below the agreed fare. Rides already re-priced (a destination
    change, an agreed price) keep their price and add the normal price of the
    extra miles. Switched off with extendedTrips.enabled 0. Not for taxi firm
    bookings paid online (fleetWeb.js holds exactly the quoted price on the
-   card); other phone jobs are paid to the driver or the fleet and are
-   extended like app trips.
+   card); other phone jobs are paid to the driver or the fleet, and their
+   extra goes to the office, as there is no passenger app to ask. The
+   booked fare is charged as usual; extendedTrips.js adds the extra once
+   approved.
 
    Card rides: the hold on the passenger's card is raised to the new price.
    The original hold is not created to be raised (Stripe's incremental

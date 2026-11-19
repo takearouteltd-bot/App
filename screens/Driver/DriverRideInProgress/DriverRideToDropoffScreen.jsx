@@ -285,15 +285,16 @@ export default function DriverRideToDropoffScreen() {
     const awayKm = awayM === null ? null : awayM / 1000;
 
     // Past the drop-off after being there: an extended trip. The server
-    // works out the extra miles from where the car really went and flags it
-    // for the office (functions/destinationChange.js), so there is no fare
-    // so far here; a cash fare is shown to collect once it is worked out.
+    // works out the extra miles from where the car really went, and the
+    // passenger approves them before they are added (functions/
+    // destinationChange.js, extendedTrips.js), so there is no fare so far
+    // here.
     const extended =
       Number(getAppConfig().extendedTrips?.enabled) === 1 && Boolean(ride?.reachedDropoffAt);
     if (awayKm !== null && awayKm > COMPLETE_RADIUS_KM && extended) {
       Alert.alert(
         'You went past the drop-off',
-        `You are ${distanceText(awayKm)} past it. If the passenger asked to go on, complete here: the extra miles are added to the fare, and the office checks extended trips.`,
+        `You are ${distanceText(awayKm)} past it. If the passenger asked to go on, complete here: the extra miles are priced, and the passenger is asked to approve them before they're added to the fare.`,
         [
           { text: 'Keep driving', style: 'cancel' },
           {
