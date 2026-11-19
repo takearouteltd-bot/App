@@ -2,10 +2,10 @@ import React, { useCallback } from 'react';
 import { View, StyleSheet, Image, StatusBar } from 'react-native';
 import * as NativeSplash from 'expo-splash-screen';
 
-// The navy of the splash artwork (Sarfaraz's design, 18 Nov 2026). The native launch screen uses
+// The navy of the splash artwork (the clean artwork M&S sent on 19 Nov 2026). The native launch screen uses
 // the same colour (app.json → expo-splash-screen), so the hand-over from the
 // native splash to this one is seamless.
-export const SPLASH_BACKGROUND = '#01164B';
+export const SPLASH_BACKGROUND = '#00124E';
 
 // Shown by App.js while the auth state and the user's record are loading.
 //
@@ -29,7 +29,7 @@ export default function SplashScreen() {
         // app.json), as a small JPEG. Kept small: the old 23 MB PNG made up a
         // quarter of the app download.
         source={require('../assets/splash-art.jpg')}
-        // A bundled image gets its own size (719 x 1599) as a default width and
+        // A bundled image gets its own size (841 x 1803) as a default width and
         // height, and those beat left/right/top/bottom: the art drew at full
         // size from the top-left corner, so only "TAKE A ROU" showed. Size it
         // to the screen explicitly.
