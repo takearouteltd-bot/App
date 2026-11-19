@@ -1,0 +1,73 @@
+name: Tests (emulators)
+
+# The server and rules test suites, each on its own GitHub machine at the
+# same time, instead of on a laptop. Run it from the Actions tab (pick the
+# branch), or with: gh workflow run tests.yml --ref <branch>
+# Leave "suites" empty for all of them, or list some: "destination-change tips".
+on:
+  workflow_dispatch:
+    inputs:
+      suites:
+        description: Suites to run, space separated (empty = all)
+        required: false
+        default: ""
+
+jobs:
+  pick:
+    runs-on: ubuntu-latest
+    outputs:
+      suites: ${{ steps.list.outputs.suites }}
+    steps:
+      - id: list
+        env:
+          WANT: ${{ inputs.suites }}
+        run: |
+          ALL="unit bid-jobs fleet-e2e web-booker booking-checks allocation-followon driver-cancel destination-change tips card-switch fleet-phone fleet-phones fleet-billing fleet-close account-delete admin-delete membership-grant membership-plans promo-topup"
+          LIST="${WANT:-$ALL}"
+          echo "suites=$(printf '%s\n' $LIST | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: pick
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: ${{ fromJson(needs.pick.outputs.suites) }}
+    name: ${{ matrix.suite }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Cache emulators
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-v1
+
+      - name: Install
+        run: |
+          npm install -g firebase-tools
+          npm ci --prefix functions
+          npm install --prefix rules-tests --no-audit --no-fund
+
+      - name: Run ${{ matrix.suite }}
+        run: rules-tests/ci-suite.sh "${{ matrix.suite }}" 2>&1 | tee suite.log; exit ${PIPESTATUS[0]}
+
+      - name: Keep the log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-${{ matrix.suite }}
+          path: suite.log
+          retention-days: 7
