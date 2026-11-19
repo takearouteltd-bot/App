@@ -523,6 +523,12 @@ test('taking a counter-offer cannot rewrite the rest of the fare', async () => {
   await assertFails(take({ cashExtra: 9 }));
   await assertSucceeds(take({}));
 });
+test('a driver cannot set their own rating', async () => {
+  await seed((db) => setDoc(doc(db, 'drivers/rated'), driver(null, { rating: 3.2, ratingCount: 10 })));
+  await assertFails(updateDoc(doc(as('rated'), 'drivers/rated'), { rating: 5 }));
+  await assertFails(updateDoc(doc(as('rated'), 'drivers/rated'), { ratingCount: 9999 }));
+  await assertSucceeds(updateDoc(doc(as('rated'), 'drivers/rated'), { status: 'offline' }));
+});
 test('a suspended passenger cannot book', async () => {
   await seed((db) => setDoc(doc(db, 'riders/susp'), { fullName: 'S', blocked: true }));
   await assertFails(addDoc(collection(as('susp'), 'rides'), booking({ riderId: 'susp' })));

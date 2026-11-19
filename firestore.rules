@@ -234,6 +234,9 @@ service cloud.firestore {
           "restEndedEarlyAt", "restEndedEarlyBy"]) &&
         /* A time penalty for cancelling a job (functions/driverPenalty.js). */
         !changed.hasAny(["cancelBlockedUntil"]) &&
+        /* The rating is the passengers' (updateAverageRating), as it is for
+           riders: a driver could set their own (audit 19 Nov 2026). */
+        !changed.hasAny(["rating", "ratingCount"]) &&
         (!changed.hasAny(["approved"]) || request.resource.data.approved == false);
     }
 

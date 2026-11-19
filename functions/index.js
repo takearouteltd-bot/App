@@ -5625,7 +5625,10 @@ exports.updateAverageRating = functions.firestore
       const jobs = [];
 
       const apply = (collection, uid, ratingObj) => {
-        if (!uid || !ratingObj || !(ratingObj.stars >= 1)) return;
+        // 1 to 5 whole stars only: one rating of 1000 swung an average.
+        const stars = Number(ratingObj && ratingObj.stars);
+        if (!uid || !Number.isInteger(stars) || stars < 1 || stars > 5) return;
+        ratingObj = {...ratingObj, stars};
         const ref = db.collection(collection).doc(uid);
         jobs.push(db.runTransaction(async (t) => {
           const snap = await t.get(ref);
