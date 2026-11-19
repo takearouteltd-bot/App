@@ -287,7 +287,7 @@ module.exports = (deps) => {
     if (ride.riderId) {
       await sendPush([ride.riderId], {
         channelId: "trip-updates",
-        data: {type: "trip", rideId},
+        data: {type: "extended_trip", rideId},
         title: "Extra miles charged",
         body: `${extra} was charged to your card for the ` +
           `${miles(et.extraKm)} mi past your drop-off.`,

@@ -81,12 +81,17 @@ export default function RiderRideCompletedScreen() {
   // fare.subtotal is already after the promo, so the promo is added back to
   // show the fare it came off. An agreed (bidding) price has no promo line:
   // the price itself is the deal.
-  const promo = fare.agreedPrice == null ? Number(fare.discountAmount) || 0 : 0;
   const endedEarlyOff = Number(fare.fullTotal) > Number(fare.total) ? Number(fare.fullTotal) - Number(fare.total) : 0;
+  // Ended early: the server already shrank the subtotal, promo and VAT with
+  // the fare (functions/index.js earlyEndFields), so show them at the full
+  // trip's price and then take the ended-early part off once; otherwise the
+  // lines came to less than the total (audit 19 Nov 2026).
+  const full = endedEarlyOff > 0 && Number(fare.total) > 0 ? Number(fare.fullTotal) / Number(fare.total) : 1;
+  const promo = (fare.agreedPrice == null ? Number(fare.discountAmount) || 0 : 0) * full;
   const lines = [
-    ['Fare', (Number(fare.subtotal) || 0) + promo],
+    ['Fare', (Number(fare.subtotal) || 0) * full + promo],
     promo > 0 ? ['Promo discount', -promo] : null,
-    fare.vat !== undefined ? [`VAT (${fare.vatPercent || 20}%)`, fare.vat] : null,
+    fare.vat !== undefined ? [`VAT (${fare.vatPercent || 20}%)`, Number(fare.vat) * full] : null,
     endedEarlyOff > 0 ? ['Trip ended early', -endedEarlyOff] : null,
     // If the waiting charge could not be taken it is not part of the total.
     fare.waitingCharge > 0 && !ride.extraChargeFailed ? ['Waiting time', fare.waitingCharge] : null,

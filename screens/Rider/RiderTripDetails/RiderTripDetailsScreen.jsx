@@ -179,8 +179,15 @@ export default function RiderTripDetailsScreen() {
      recommendation are left out. */
   const rideMultiplier = Number(fare.rideMultiplier) || 1;
   const surge = Number(fare.surgeMultiplier) || 1;
-  const promo = Number(fare.discountAmount) || 0;
-  const beforePromo = (Number(fare.subtotal) || 0) + promo;
+  // Ended early: the server shrank the subtotal, promo and VAT with the
+  // fare (functions/index.js earlyEndFields), while the parts below (first
+  // mile, distance, time) are the full trip's. Show everything at the full
+  // price, then take the ended-early part off once, so the column adds up
+  // to the total (audit 19 Nov 2026).
+  const earlyOff = Number(fare.fullTotal) > Number(fare.total) ? Number(fare.fullTotal) - Number(fare.total) : 0;
+  const full = earlyOff > 0 && Number(fare.total) > 0 ? Number(fare.fullTotal) / Number(fare.total) : 1;
+  const promo = (Number(fare.discountAmount) || 0) * full;
+  const beforePromo = (Number(fare.subtotal) || 0) * full + promo;
   // Stops are added after the multipliers (utils/fares.js priceTrip).
   const stopCharge = Number(fare.stopCharge) || 0;
   const partsTotal =
@@ -190,7 +197,7 @@ export default function RiderTripDetailsScreen() {
   const minimumApplied = beforePromo - partsTotal > Math.max(0.02, 0.015 * rideMultiplier * surge);
   const carType = classLabel(trip.rideType);
   const firstMile = fare.pricing === 'first_mile';
-  const endedEarlyOff = Number(fare.fullTotal) > Number(fare.total) ? Number(fare.fullTotal) - Number(fare.total) : 0;
+  const endedEarlyOff = earlyOff;
 
   const fareRows = isCancelled
     ? feeCharged > 0
@@ -198,7 +205,7 @@ export default function RiderTripDetailsScreen() {
       : []
     : [
         ...(fare.agreedPrice != null
-          ? [['Agreed fare', rowMoney(fare.subtotal)]]
+          ? [['Agreed fare', rowMoney((Number(fare.subtotal) || 0) * full)]]
           : [
               [firstMile ? 'First Mile' : 'Base Fare', rowMoney(fare.baseFare)],
               [firstMile ? 'Miles After the First' : 'Distance Fare', rowMoney(fare.distanceFare)],
@@ -209,7 +216,7 @@ export default function RiderTripDetailsScreen() {
               minimumApplied ? ['Minimum fare', rowMoney(beforePromo)] : null,
               promo > 0 ? [`Promo${fare.promoCode ? ` ${fare.promoCode}` : ''}`, `-${rowMoney(promo)}`] : null,
             ]),
-        fare.vat > 0 ? ['VAT', rowMoney(fare.vat)] : null,
+        fare.vat > 0 ? ['VAT', rowMoney(Number(fare.vat) * full)] : null,
         endedEarlyOff > 0 ? ['Trip ended early', `-${rowMoney(endedEarlyOff)}`] : null,
         // If the waiting charge could not be taken it is not part of the total.
         fare.waitingCharge > 0 && !trip.extraChargeFailed ? ['Waiting time', rowMoney(fare.waitingCharge)] : null,

@@ -548,7 +548,13 @@ export default function RideInProgressScreen() {
             style={{ marginTop: SPACE[3] }}
             disabled={changeBusy || ending}
             loading={changeBusy}
-            onPress={() => navigation.navigate('DestinationSearch', { mode: 'change', origin: driverLocation || pickupLocation })}
+            // push, not navigate (as "Add stop" in FareEstimationScreen):
+            // after an ordinary booking the "Where to?" search is still
+            // below this screen, and navigate went back to it, closing the
+            // trip; picking a place then opened a trip screen with no ride
+            // ("Missing trip", audit 19 Nov 2026). DestinationScreen comes
+            // back here with merge.
+            onPress={() => navigation.push('DestinationSearch', { mode: 'change', origin: driverLocation || pickupLocation })}
           />
         ) : null}
 

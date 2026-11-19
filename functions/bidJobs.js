@@ -103,7 +103,12 @@ module.exports = (deps) => {
       ride.status === "dispatching" && !ride.riderId &&
         ["all", "queue"].includes(d.mode) &&
         (d.mode === "all" || (d.queueDone === true && !d.driverId)) :
-      ride.status === "searching" && !ride.driverId;
+      // Not while the passenger's card is failing (as appOffers.js): each
+      // driver who took it was bounced with "payment failed", and the next
+      // ring asked them all again (audit 19 Nov 2026). Adding a card
+      // (saveCard) clears auth_failed and offers it again.
+      ride.status === "searching" && !ride.driverId &&
+        ride.paymentStatus !== "auth_failed";
   }
 
   /**

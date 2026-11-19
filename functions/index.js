@@ -903,6 +903,15 @@ exports.authorizePaymentOnRideAccept = functions
           if (ride.status !== "accepted" || ride.driverId !== driverId) {
             return;
           }
+          // Read before any write (a transaction's rule). A follow-on job
+          // ("Next job") is accepted while the driver is still on a trip:
+          // its card failing must not free them from that trip, or their
+          // location stops, dispatch treats them as free and the trip can be
+          // left unpaid (audit 19 Nov 2026).
+          const driverRef = driverId ?
+            db.collection("drivers").doc(driverId) : null;
+          const driverSnap = driverRef ? await tx.get(driverRef) : null;
+          const d = driverSnap && driverSnap.exists ? driverSnap.data() : {};
           tx.update(rideRef, {
             status: "searching",
             driverId: null,
@@ -920,9 +929,12 @@ exports.authorizePaymentOnRideAccept = functions
             // Our doing, not the driver's: no penalty (driverPenalty.js).
             serverReleasedAt: FV.serverTimestamp(),
           });
-          if (driverId) {
+          // Still on another trip: leave them on it. followOn.forget
+          // (notifyRideUpdates) takes this job off them as nextRideId.
+          if (driverRef && driverSnap.exists &&
+              !(d.currentRideId && d.currentRideId !== rideId)) {
             // Same release as when a driver gives a job back.
-            tx.update(db.collection("drivers").doc(driverId), {
+            tx.update(driverRef, {
               isOnRide: false,
               currentRideId: null,
               status: "online",
@@ -1150,6 +1162,7 @@ exports.chargeOnRideCompletion = functions
           paymentStatus: "failed",
           paymentError: "no_card_hold",
         });
+        await tellDriverUnpaid(after, rideId);
         await paymentAlerts.raise("card_capture_failed", rideId, {
           title: "Card trip finished with no card hold",
           detail: "Nothing was held on the passenger's card, so nothing " +
@@ -1173,6 +1186,7 @@ exports.chargeOnRideCompletion = functions
           paymentStatus: "failed",
           paymentError: "hold_not_for_ride",
         });
+        await tellDriverUnpaid(after, rideId);
         await paymentAlerts.raise("card_capture_failed", rideId, {
           title: "Card trip with a hold that is not its own",
           detail: "The trip's card hold was not placed for this trip, so " +
@@ -1377,11 +1391,32 @@ exports.chargeOnRideCompletion = functions
         await db.collection("rides").doc(rideId).update({
           paymentStatus: "failed",
         });
+        await tellDriverUnpaid(after, rideId);
 
         return null;
       }
     });
 
+
+/**
+ * Tells the driver their last card trip was not paid: their completed
+ * screen and earnings otherwise looked as if it would arrive (audit 19 Nov
+ * 2026). The office has a payment alert for the same trip. Never throws.
+ * @param {Object} ride Ride data.
+ * @param {string} rideId Ride id.
+ * @return {Promise<void>}
+ */
+async function tellDriverUnpaid(ride, rideId) {
+  if (!ride || !ride.driverId) return;
+  await sendPush([ride.driverId], {
+    title: "Card payment didn't go through",
+    body: "The passenger's card payment for your last trip didn't go " +
+      "through. The office has been told and will sort it out; it's added " +
+      "to your wallet once paid.",
+    channelId: "trip-updates",
+    data: {type: "trip", rideId},
+  }).catch(() => null);
+}
 
 exports.stripeWebhook = functions
     .runWith({secrets: STRIPE_SECRETS.concat(["STRIPE_WEBHOOK_SECRET"])})

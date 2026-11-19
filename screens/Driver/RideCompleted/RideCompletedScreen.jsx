@@ -135,6 +135,11 @@ export default function RideCompletedScreen() {
                 ? 'Not paid yet: take cash, or let the passenger pay by card'
                 : ride.paymentMethod === 'cash'
                 ? 'Paid to you in cash by the passenger'
+                // The card was not charged (functions/index.js
+                // chargeOnRideCompletion): say so rather than "confirming"
+                // for ever. The office gets a payment alert for it.
+                : ride.paymentStatus === 'failed'
+                ? "The passenger's card payment didn't go through. The office has been told and will sort it out; it's added to your wallet once paid."
                 : ride.walletProcessed === true
                 ? 'Added to your wallet'
                 : settled

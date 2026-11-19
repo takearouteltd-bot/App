@@ -999,9 +999,13 @@ module.exports = (deps) => {
       }).catch(() => null);
     }
     if (applied.asks) {
+      // Its own type, so the app opens the trip's Approve / Dispute card
+      // (RiderRideCompleted) rather than the home map, which shows nothing
+      // for a finished trip (audit 19 Nov 2026). Older apps treat an unknown
+      // type as a trip update and open Home, as before.
       await sendPush([ride.riderId], {
         channelId: "trip-updates",
-        data: {type: "trip", rideId},
+        data: {type: "extended_trip", rideId},
         title: "Your trip went past your drop-off",
         body: `It ended ${miles} mi past your drop-off: ${extra} extra. ` +
           "Open TakeARoute to approve or dispute it." + (card ?

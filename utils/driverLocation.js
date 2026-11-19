@@ -15,7 +15,9 @@
 // usually switches to Google Maps to navigate, so while they have a job a
 // background task (with an Android notification and the iOS location
 // indicator) keeps writing drivers/{uid}; otherwise the passenger's map
-// shows the car frozen where the driver left the app.
+// shows the car frozen where the driver left the app. While online and
+// waiting, the same task runs at a gentle pace so dispatch still sees the
+// driver with the phone locked (SHARING).
 //
 // No background permission is needed for that. On Android a location service
 // with a notification, started while the app is on screen, runs on the normal
@@ -182,34 +184,71 @@ TaskManager.defineTask(JOB_LOCATION_TASK, async ({ data, error }) => {
   await writeDriverLocation(driverId, fix.coords);
 });
 
-async function startJobSharing(driverId) {
-  jobDriverId = driverId;
+/* The same background service in two modes:
+   - 'job': on a trip, a fix every 4 s or 10 m, so the passenger's map is
+     live while the driver navigates in Google Maps.
+   - 'online': free and waiting for a job, a balanced fix once a minute
+     whether or not the car moves. The heartbeat below is a JavaScript timer,
+     which the phone pauses once the app is in the background, and a parked
+     car gives no "moved 10 m" fix, so a driver waiting with the phone
+     locked went stale after 15 minutes and silently stopped getting jobs
+     while still shown Online (audit 19 Nov 2026). */
+const SHARING = {
+  job: {
+    accuracy: Location.Accuracy.High,
+    timeInterval: 4000,
+    distanceInterval: 10,
+    activityType: Location.ActivityType.AutomotiveNavigation,
+    pausesUpdatesAutomatically: false,
+    showsBackgroundLocationIndicator: true,
+    foregroundService: {
+      notificationTitle: 'Sharing your location with your passenger',
+      notificationBody: 'Until this trip ends, so they can see you coming.',
+      notificationColor: '#B8F03A',
+    },
+  },
+  online: {
+    accuracy: Location.Accuracy.Balanced,
+    timeInterval: 60000,
+    distanceInterval: 0,
+    activityType: Location.ActivityType.AutomotiveNavigation,
+    pausesUpdatesAutomatically: false,
+    showsBackgroundLocationIndicator: true,
+    foregroundService: {
+      notificationTitle: "You're online",
+      notificationBody: 'TakeARoute keeps you available for jobs while the app is in the background. Go offline to stop.',
+      notificationColor: '#B8F03A',
+    },
+  },
+};
+let sharingMode = null;
+
+async function startSharing(driverId, mode) {
+  const onJob = mode === 'job';
+  jobDriverId = onJob ? driverId : null;
   try {
-    if (await Location.hasStartedLocationUpdatesAsync(JOB_LOCATION_TASK)) {
-      update({ jobSharing: 'on' });
+    const running = await Location.hasStartedLocationUpdatesAsync(JOB_LOCATION_TASK);
+    if (running && sharingMode === mode) {
+      if (onJob) update({ jobSharing: 'on' });
       return;
     }
-    await Location.startLocationUpdatesAsync(JOB_LOCATION_TASK, {
-      accuracy: Location.Accuracy.High,
-      timeInterval: 4000,
-      distanceInterval: 10,
-      activityType: Location.ActivityType.AutomotiveNavigation,
-      pausesUpdatesAutomatically: false,
-      showsBackgroundLocationIndicator: true,
-      foregroundService: {
-        notificationTitle: 'Sharing your location with your passenger',
-        notificationBody: 'Until this trip ends, so they can see you coming.',
-        notificationColor: '#B8F03A',
-      },
-    });
-    if (jobDriverId === driverId) update({ jobSharing: 'on' });
+    // Changing mode (online -> trip, trip -> online): restart with the new
+    // pace and notification.
+    if (running) await Location.stopLocationUpdatesAsync(JOB_LOCATION_TASK);
+    sharingMode = null;
+    await Location.startLocationUpdatesAsync(JOB_LOCATION_TASK, SHARING[mode]);
+    sharingMode = mode;
+    if (onJob && jobDriverId === driverId) update({ jobSharing: 'on' });
   } catch (error) {
     // Still covered while the app is open (the watcher above), but the driver
     // has to know their passenger loses them in Google Maps.
     console.log('Could not start background location:', error?.message || error);
-    if (jobDriverId === driverId) update({ jobSharing: 'failed' });
+    sharingMode = null;
+    if (onJob && jobDriverId === driverId) update({ jobSharing: 'failed' });
   }
 }
+
+const startJobSharing = (driverId) => startSharing(driverId, 'job');
 
 /* The job screens' "Try again": re-asks for location, then starts sharing. */
 export async function retryJobSharing(driverId) {
@@ -220,6 +259,7 @@ export async function retryJobSharing(driverId) {
 
 async function stopJobSharing() {
   jobDriverId = null;
+  sharingMode = null;
   update({ jobSharing: 'off' });
   try {
     if (await Location.hasStartedLocationUpdatesAsync(JOB_LOCATION_TASK)) {
@@ -341,20 +381,30 @@ export function useDriverLocationPublisher(driverId, enabled = true) {
     );
   }, [driverId, enabled]);
 
-  // Keep the passenger's map live while the driver is in another app.
+  // Keep the position going while the driver is in another app: on a trip
+  // for the passenger's map, and while online so dispatch still sees them
+  // (SHARING above).
   const onRide = presence.onRide;
+  const sharing = onRide ? 'job' : presence.online ? 'online' : null;
   useEffect(() => {
-    if (!driverId || !enabled || !onRide) return undefined;
-    startJobSharing(driverId);
+    if (!driverId || !enabled || !sharing) return undefined;
+    startSharing(driverId, sharing);
     // Android refuses to start it while the app is in the background.
     const sub = AppState.addEventListener('change', (next) => {
-      if (next === 'active' && state.jobSharing === 'failed') startJobSharing(driverId);
+      if (next === 'active' && sharingMode !== sharing) startSharing(driverId, sharing);
     });
     return () => {
       sub.remove();
-      stopJobSharing();
     };
-  }, [driverId, enabled, onRide]);
+  }, [driverId, enabled, sharing]);
+  // Stopped once neither applies (offline, signed out), not in between:
+  // going from online to a trip restarts it in the new mode instead.
+  useEffect(() => {
+    if (driverId && enabled && sharing) return undefined;
+    stopJobSharing();
+    return undefined;
+  }, [driverId, enabled, sharing]);
+  useEffect(() => () => { stopJobSharing(); }, []);
 
   // The heartbeat (HEARTBEAT_MS): only when nothing else has saved the
   // position for a minute, so a driver on the move writes no more than now.

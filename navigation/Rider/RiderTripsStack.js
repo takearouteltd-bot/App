@@ -15,6 +15,9 @@ export default function RiderTripsStack() {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="RiderTripsScreen" component={RiderTripsScreen} />
       <Stack.Screen name="RiderTripDetails" component={RiderTripDetailsScreen} />
+      {/* "Add a card" from a trip's tip card (RiderTripDetails): without it
+          here the button did nothing unless the Wallet tab had been opened. */}
+      <Stack.Screen name="AddPaymentMethod" component={AddPaymentMethodScreen} />
       <Stack.Screen name="ReportIssueScreen" component={ReportIssueScreen} />
       <Stack.Screen name="MyReports" component={MyReportsScreen} initialParams={{ role: "rider" }} />
       <Stack.Screen name="ReportDetail" component={ReportDetailScreen} />

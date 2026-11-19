@@ -91,6 +91,11 @@ function routeForNotification(data, role) {
       // hands over to the in-progress screen by itself.
       return tab("Home", { screen: "RideTracking", params: { rideId: data.rideId } });
     }
+    // Extra miles to approve or dispute: the finished trip's screen, which
+    // has the Approve / Dispute card (functions/destinationChange.js).
+    if (type === "extended_trip" && data.rideId) {
+      return tab("Home", { screen: "RiderRideCompleted", params: { rideId: data.rideId } });
+    }
     // trip updates and anything else: the home screen shows the live ride.
     return tab("Home", { screen: "HomeScreen" });
   }
