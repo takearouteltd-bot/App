@@ -484,10 +484,11 @@ assert.equal(ride.extendedTrip.approvedBy, 'no_answer');
 assert.equal(ride.fare.finalTotal, LONG);
 ride = await until(async () => { const r = await get(`rides/${t14.id}`); return r.extendedTrip.state === 'unanswered' && r; }, 'trip 14 to the office');
 assert.equal(ride.fare.finalTotal, BOOKED);
-assert.equal((await get(`paymentAlerts/extended_trip_unanswered_${t14.id}`)).status, 'open');
+// The alert is written just after the state: wait for it rather than race it.
+assert.equal((await until(() => get(`paymentAlerts/extended_trip_unanswered_${t14.id}`), 'unanswered alert')).status, 'open');
 ride = await until(async () => { const r = await get(`rides/${t15.id}`); return r.extendedTrip.state === 'charge_failed' && r; }, 'trip 15 refused');
 assert.equal(ride.fare.finalTotal, BOOKED);
-assert.equal((await get(`paymentAlerts/extended_trip_charge_failed_${t15.id}_1`)).status, 'open');
+assert.equal((await until(() => get(`paymentAlerts/extended_trip_charge_failed_${t15.id}_1`), 'charge failed alert')).status, 'open');
 assert.equal(ride.extendedTrip.dueAt, undefined);
 step('no answer in time: the card trip is charged, the cash trip goes to the office (nothing to charge), a refused card goes to the office');
 
