@@ -67,8 +67,12 @@ export default function RideCompletedScreen() {
 
   const show = (v) => money(Number(v) || 0, currency);
   const lines = [
-    fare.baseFare !== undefined ? [fare.pricing === 'first_mile' ? 'First mile' : 'Base fare', show(fare.baseFare)] : null,
-    fare.distanceFare !== undefined ? [fare.pricing === 'first_mile' ? 'Miles after the first' : 'Distance', show(fare.distanceFare)] : null,
+    // First-mile pricing: one Distance line (M&S, 20 Nov 2026: the
+    // first-mile price and rate per mile are not shown).
+    fare.pricing === 'first_mile'
+      ? ['Distance', show((Number(fare.baseFare) || 0) + (Number(fare.distanceFare) || 0))]
+      : fare.baseFare !== undefined ? ['Base fare', show(fare.baseFare)] : null,
+    fare.pricing !== 'first_mile' && fare.distanceFare !== undefined ? ['Distance', show(fare.distanceFare)] : null,
     fare.timeFare !== undefined && !(fare.pricing === 'first_mile' && !(fare.timeFare > 0)) ? ['Time', show(fare.timeFare)] : null,
     fare.surgeMultiplier > 1 ? ['Busy-time pricing', `×${fare.surgeMultiplier}`] : null,
     fare.stopCharge > 0 ? [`Stops (${Number(fare.stops) || 0})`, show(fare.stopCharge)] : null,

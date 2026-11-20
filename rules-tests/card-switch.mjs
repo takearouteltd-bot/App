@@ -90,6 +90,11 @@ const fake = http.createServer((req, res) => {
     if (!m) return json(res, 404, { error: { message: 'not faked' } });
     const [, id, op] = m;
     if (!id && req.method === 'POST') {
+      // A card with no money on it, as Stripe answers an off-session hold.
+      if (f.payment_method === 'pm_broke') {
+        calls.push({ op: 'declined', amount: Number(f.amount), key: req.headers['idempotency-key'] });
+        return json(res, 402, { error: { type: 'card_error', code: 'card_declined', decline_code: 'insufficient_funds', message: 'Your card has insufficient funds.' } });
+      }
       made += 1;
       const manual = f.capture_method === 'manual';
       const pi = {
@@ -553,6 +558,46 @@ assert.equal(await balance('fleetWallets/f1'), 10.14, '£10.50 less the 36p fee'
 await until(async () => (await ride(ph)).settlement?.kind === 'online', 'the driver\'s fleet balance re-settled as online');
 assert.equal((await R.call('cardSwitchStart', { rideId: f1 })).state, 'pending', 'a company driver\'s app trip is allowed too');
 await config();
+
+/* ------------------- card bookings: the card is held at booking ------------------- */
+// M&S, 20 Nov 2026: a declined card is the passenger's to hear about when
+// booking, not a driver's after accepting (functions/index.js holdAtBooking).
+step('booking by card: a card with insufficient funds is refused at once, before any driver is asked');
+const booker = 'rbook';
+await adminSet(`riders/${booker}`, { stripeCustomerId: 'cus_b', defaultPaymentMethodId: 'pm_broke', fullName: 'Bob Booker' });
+const booking = (id) => adminSet(`rides/${id}`, {
+  riderId: booker, driverId: null, status: 'searching', source: 'app', rideType: 'RouteMini',
+  pricing: 'checked', paymentMethod: 'card', fareEstimate: 12, currency: 'gbp',
+  pickupLocation: P, dropoffLocation: D, fare: { total: 12, subtotal: 10, vat: 2, vatPercent: 20 },
+  timestamps: { createdAt: new Date() },
+});
+await booking('bk1');
+let bk = await until(async () => { const r = await get('rides/bk1'); return r?.paymentStatus === 'auth_failed' ? r : null; }, 'declined at booking');
+assert.equal(bk.status, 'searching');
+assert.equal(bk.paymentFailure.declineCode, 'insufficient_funds');
+assert.equal(bk.paymentFailure.atBooking, true);
+assert.match(bk.paymentFailure.message, /Insufficient funds.*Try a different card/);
+assert.equal(bk.paymentIntentId, undefined);
+assert.equal(bk.offer, undefined, 'no driver is asked');
+
+step('picking another card holds the fare on it and the search goes on');
+await adminSet(`riders/${booker}`, { defaultPaymentMethodId: 'pm_visa' }, true);
+bk = await until(async () => { const r = await get('rides/bk1'); return r?.paymentStatus === 'authorized' ? r : null; }, 'held on the new card');
+assert.equal(bk.paymentFailure, undefined);
+const held = await get(`payments/${bk.paymentIntentId}`);
+assert.equal(held.rideId, 'bk1'); assert.equal(held.status, 'authorized'); assert.equal(held.type, 'booking_hold');
+assert.equal(intents[bk.paymentIntentId].amount, 1200); assert.equal(intents[bk.paymentIntentId].status, 'requires_capture');
+
+step('cancelling while still searching releases that hold');
+await adminSet('rides/bk1', { status: 'cancelled', cancelledBy: 'rider', cancelledAt: new Date() }, true);
+await until(() => intents[bk.paymentIntentId].status === 'canceled', 'booking hold released');
+
+step('a good card from the start: held at booking');
+await booking('bk2');
+const bk2 = await until(async () => { const r = await get('rides/bk2'); return r?.paymentStatus === 'authorized' ? r : null; }, 'held at booking');
+assert.equal((await get(`payments/${bk2.paymentIntentId}`)).rideId, 'bk2');
+await adminSet('rides/bk2', { status: 'cancelled', cancelledBy: 'rider', cancelledAt: new Date() }, true);
+await until(() => intents[bk2.paymentIntentId].status === 'canceled', 'bk2 hold released');
 
 console.log('\nAll card-instead-of-cash checks passed.');
 fake.close();

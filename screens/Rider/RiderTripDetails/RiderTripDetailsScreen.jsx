@@ -207,8 +207,11 @@ export default function RiderTripDetailsScreen() {
         ...(fare.agreedPrice != null
           ? [['Agreed fare', rowMoney((Number(fare.subtotal) || 0) * full)]]
           : [
-              [firstMile ? 'First Mile' : 'Base Fare', rowMoney(fare.baseFare)],
-              [firstMile ? 'Miles After the First' : 'Distance Fare', rowMoney(fare.distanceFare)],
+              // First-mile pricing: one Distance line, so the first-mile
+              // price and the rate per mile are not on show (M&S, 20 Nov).
+              ...(firstMile
+                ? [['Distance', rowMoney((Number(fare.baseFare) || 0) + (Number(fare.distanceFare) || 0))]]
+                : [['Base Fare', rowMoney(fare.baseFare)], ['Distance Fare', rowMoney(fare.distanceFare)]]),
               firstMile && !(Number(fare.timeFare) > 0) ? null : ['Time Fare', rowMoney(fare.timeFare)],
               rideMultiplier !== 1 ? [`${carType} pricing`, `× ${rideMultiplier}`] : null,
               surge > 1 ? ['Busy-time pricing', `× ${surge}`] : null,

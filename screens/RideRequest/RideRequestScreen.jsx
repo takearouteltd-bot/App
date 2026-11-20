@@ -399,22 +399,34 @@ export default function RideRequestScreen() {
             </Text>
             <Text style={styles.searchClock}>Looking for {clock}</Text>
 
-            {/* A driver accepted but the card hold failed: the server put the
-                ride back in the queue; a working card is needed for the next
-                driver. */}
+            {/* The card was declined: at booking (functions/index.js
+                holdAtBooking, e.g. insufficient funds), or when a driver
+                accepted. No driver is asked until another card works:
+                picking a saved card or adding one restarts the search
+                (resumeAfterNewCard). */}
             {rideData.paymentStatus === 'auth_failed' ? (
               <View style={styles.widen}>
                 <Banner
                   tone="danger"
                   icon="card-outline"
                   title="Your card was declined"
-                  body="Add a card to keep searching."
+                  body={rideData.paymentFailure?.message || 'Try a different card to keep searching.'}
                   action={
-                    <Button
-                      title="Add a card"
-                      size="small"
-                      onPress={() => navigation.navigate('AddPayment', { screen: 'AddPaymentMethod' })}
-                    />
+                    <View style={styles.widenRow}>
+                      <Button
+                        title="Use another card"
+                        variant="secondary"
+                        size="small"
+                        style={{ flex: 1 }}
+                        onPress={() => navigation.navigate('AddPayment', { screen: 'AllPaymentMethods' })}
+                      />
+                      <Button
+                        title="Add a card"
+                        size="small"
+                        style={{ flex: 1 }}
+                        onPress={() => navigation.navigate('AddPayment', { screen: 'AddPaymentMethod' })}
+                      />
+                    </View>
                   }
                 />
               </View>

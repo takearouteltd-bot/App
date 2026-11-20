@@ -804,13 +804,13 @@ export default function FareEstimationScreen({ route }) {
 
           {showBreakdown ? (
             <View style={styles.breakdown}>
-              <Row label="First mile" value={money(fare.baseFare)} />
-              {fare.distanceInMiles > 1 ? (
-                <Row
-                  label={`${Math.round((fare.distanceInMiles - 1) * 10) / 10} mi more at ${money(fare.perMile)}`}
-                  value={money(fare.distanceFare)}
-                />
-              ) : null}
+              {/* One line for the distance: the first-mile price and the
+                  rate per mile are not shown to passengers or drivers
+                  (M&S, 20 Nov 2026). */}
+              <Row
+                label={`Distance · ${Math.round(fare.distanceInMiles * 10) / 10} mi`}
+                value={money((Number(fare.baseFare) || 0) + (Number(fare.distanceFare) || 0))}
+              />
               {fare.timeFare > 0 ? (
                 <Row label={`Time · ${Math.ceil(duration)} min`} value={money(fare.timeFare)} />
               ) : null}

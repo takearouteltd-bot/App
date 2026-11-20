@@ -802,29 +802,8 @@ null,
             {merge: true},
         );
 
-        // =================================================
-        // 5. RESUME A SEARCH THE OLD CARD STOPPED
-        // =================================================
-        // After a declined hold the ride waits for a card, and nothing was
-        // re-offered once one was added: the banner stayed up and drivers
-        // coming online later were never told. The search clock restarts.
-        try {
-          const waiting = await db.collection("rides")
-              .where("riderId", "==", uid)
-              .where("status", "==", "searching")
-              .get();
-          for (const rideDoc of waiting.docs) {
-            if (rideDoc.data().paymentStatus !== "auth_failed") continue;
-            await rideDoc.ref.update({
-              paymentStatus: "pending",
-              lastDriverCancelAt: admin.firestore.FieldValue.serverTimestamp(),
-            });
-            await offerRideToDrivers(rideDoc.id, rideDoc.data(),
-                {restart: true});
-          }
-        } catch (error) {
-          console.error("Could not resume search after new card:", error);
-        }
+        // 5. A search the old card stopped resumes from resumeAfterNewCard
+        // (the default card just changed), as when a saved card is picked.
 
         return {success: true};
       } catch (error) {
@@ -874,7 +853,19 @@ exports.authorizePaymentOnRideAccept = functions
           const held = await db.collection("payments")
               .doc(String(after.paymentIntentId)).get();
           ours = held.exists && held.data().rideId === rideId &&
-            held.data().status === "authorized";
+            held.data().status === "authorized" &&
+            // A hold from booking must still cover the fare: a passenger
+            // who raised their offer since gets a new hold for the new
+            // price (the old one is released below).
+            (Number(held.data().amount) || 0) >=
+              Math.round((Number(after.fareEstimate) || 0) * 100);
+          if (!ours && held.exists && held.data().rideId === rideId &&
+              held.data().status === "authorized") {
+            await stripe.paymentIntents.cancel(String(after.paymentIntentId))
+                .catch(() => null);
+            await held.ref.update({status: "canceled",
+              updatedAt: FV.serverTimestamp()}).catch(() => null);
+          }
           if (ours) {
             await held.ref.update({
               driverId: driverId || null,
@@ -4363,7 +4354,184 @@ async function checkNewRide(rideId, ride) {
   return true;
 }
 
-exports.notifyDriversOfNewRide = functions.firestore
+/**
+ * What a declined card means for the passenger, in a line, from Stripe's
+ * error. Shown on the searching screen and in the push.
+ * @param {Object} error Stripe error (or {code}).
+ * @return {string} Plain words.
+ */
+function declineText(error) {
+  const code = String((error && (error.decline_code || error.code)) || "");
+  if (code === "insufficient_funds") {
+    return "Insufficient funds on your card. Try a different card.";
+  }
+  if (code === "no_card") return "Add a card to book this trip.";
+  if (code === "expired_card") {
+    return "Your card has expired. Try a different card.";
+  }
+  if (code === "authentication_required") {
+    return "Your bank needs you to confirm this card. Try a different card.";
+  }
+  return "Your card was declined. Try a different card.";
+}
+
+/**
+ * A card booking's hold, placed as soon as the booking is checked and
+ * before any driver is asked. The passenger hears at once that their card
+ * was declined (e.g. insufficient funds) instead of a driver accepting and
+ * then being told (M&S, 20 Nov 2026). The hold is the ride's from then on:
+ * authorizePaymentOnRideAccept reuses it, cancelRidePayment releases it.
+ * Returns false when the card was declined: the ride stays "searching" with
+ * paymentStatus "auth_failed" (no driver is offered it, appOffers.js and
+ * bidJobs.js) until a new card is saved (saveCard).
+ * @param {string} rideId Ride id.
+ * @param {Object} ride Ride data.
+ * @return {Promise<boolean>} Go ahead and offer it.
+ */
+async function holdAtBooking(rideId, ride) {
+  if (ride.paymentMethod !== "card" || !ride.riderId ||
+      (ride.source && ride.source !== "app")) {
+    return true;
+  }
+  const rideRef = db.collection("rides").doc(rideId);
+  const fresh = (await rideRef.get()).data() || ride;
+  if (fresh.status !== "searching" || fresh.paymentIntentId) return true;
+  const amount = Math.round((Number(fresh.fareEstimate) || 0) * 100);
+  // A 100% promo: nothing to hold (chargeOnRideCompletion: no_charge).
+  if (!(amount > 0)) return true;
+
+  const declined = async (error) => {
+    const message = declineText(error);
+    await rideRef.update({
+      paymentStatus: "auth_failed",
+      paymentFailure: {
+        reason: String((error && error.code) || "declined"),
+        declineCode: (error && error.decline_code) || null,
+        message,
+        atBooking: true,
+        at: FV.serverTimestamp(),
+      },
+      paymentAttempts: FV.increment(1),
+    }).catch((e) => console.error("Could not mark declined:", rideId, e));
+    await sendPush([fresh.riderId], {
+      title: "Card declined",
+      body: message,
+      channelId: "trip-updates",
+      data: {type: "trip", rideId},
+    }).catch(() => null);
+    return false;
+  };
+
+  let customer = null;
+  let card = null;
+  try {
+    const rider = (await db.collection("riders").doc(fresh.riderId).get())
+        .data() || {};
+    customer = rider.stripeCustomerId || null;
+    card = rider.defaultPaymentMethodId || null;
+  } catch (error) {
+    // The accept will try again, as before.
+    console.error("Booking hold: could not read rider:", rideId, error);
+    return true;
+  }
+  // No card on file: the app does not book by card without one
+  // (FareEstimationScreen), so leave it to the accept, as before.
+  if (!customer || !card) return true;
+
+  let intent;
+  try {
+    intent = await stripe.paymentIntents.create({
+      amount,
+      currency: rideCurrency(fresh),
+      customer,
+      payment_method: card,
+      capture_method: "manual",
+      confirm: true,
+      off_session: true,
+      metadata: {rideId, riderId: fresh.riderId, driverId: "", at: "booking"},
+    }, {idempotencyKey: `auth_${rideId}_book_${card}`});
+  } catch (error) {
+    if (error && error.type === "StripeCardError") {
+      console.log("Booking hold declined:", rideId, error.code,
+          error.decline_code);
+      return declined(error);
+    }
+    // Stripe unreachable or similar: not the passenger's fault. The accept
+    // places the hold, as it always did.
+    console.error("Booking hold failed:", rideId, error && error.message);
+    return true;
+  }
+
+  await db.collection("payments").doc(intent.id).set({
+    rideId, riderId: fresh.riderId, driverId: null,
+    stripePaymentIntentId: intent.id, amount, currency: rideCurrency(fresh),
+    status: "authorized", type: "booking_hold",
+    createdAt: FV.serverTimestamp(), updatedAt: FV.serverTimestamp(),
+  });
+  // The passenger may have cancelled while the bank answered.
+  const kept = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(rideRef);
+    const cur = snap.exists ? snap.data() : null;
+    if (!cur || cur.status !== "searching" || cur.paymentIntentId) return false;
+    tx.update(rideRef, {
+      paymentIntentId: intent.id,
+      paymentStatus: "authorized",
+      paymentFailure: FV.delete(),
+    });
+    return true;
+  });
+  if (!kept) {
+    await stripe.paymentIntents.cancel(intent.id).catch(() => null);
+    await db.collection("payments").doc(intent.id).update({
+      status: "canceled", updatedAt: FV.serverTimestamp(),
+    }).catch(() => null);
+  }
+  return true;
+}
+
+/* A passenger whose card was declined picked another: a new card (saveCard)
+   or a saved one (Wallet, "Use this card"). Both set
+   riders/{uid}.defaultPaymentMethodId. Any search the declined card stopped
+   is held again on the new card and, if that works, offered to drivers
+   with its search clock restarted. Before, only a brand new card resumed it,
+   and without checking the card first. */
+exports.resumeAfterNewCard = functions
+    .runWith({secrets: STRIPE_SECRETS}).firestore
+    .document("riders/{riderId}")
+    .onUpdate(async (change, context) => {
+      const before = change.before.data() || {};
+      const after = change.after.data() || {};
+      if (!after.defaultPaymentMethodId ||
+          after.defaultPaymentMethodId === before.defaultPaymentMethodId) {
+        return null;
+      }
+      const waiting = await db.collection("rides")
+          .where("riderId", "==", context.params.riderId)
+          .where("status", "==", "searching")
+          .get();
+      for (const rideDoc of waiting.docs) {
+        const ride = rideDoc.data();
+        if (ride.paymentStatus !== "auth_failed") continue;
+        try {
+          await rideDoc.ref.update({
+            paymentStatus: "pending",
+            paymentFailure: FV.delete(),
+            lastDriverCancelAt: FV.serverTimestamp(),
+          });
+          const fresh = {...ride, paymentStatus: "pending"};
+          delete fresh.paymentFailure;
+          if (!(await holdAtBooking(rideDoc.id, fresh))) continue;
+          await offerRideToDrivers(rideDoc.id, fresh, {restart: true});
+        } catch (error) {
+          console.error("Could not resume search after card change:",
+              rideDoc.id, error);
+        }
+      }
+      return null;
+    });
+
+exports.notifyDriversOfNewRide = functions
+    .runWith({secrets: STRIPE_SECRETS}).firestore
     .document("rides/{rideId}")
     .onCreate(async (snap, context) => {
       const ride = snap.data();
@@ -4371,6 +4539,7 @@ exports.notifyDriversOfNewRide = functions.firestore
       if (ride.riderId && !(await checkNewRide(context.params.rideId, ride))) {
         return null;
       }
+      if (!(await holdAtBooking(context.params.rideId, ride))) return null;
       return offerRideToDrivers(context.params.rideId, ride);
     });
 
@@ -5008,9 +5177,14 @@ function addFareLines(fare, add, currency) {
   const adds = fare.endedEarlyPercent === undefined &&
     Math.abs(base + distance + time + stops - net) <= 0.03;
   if (adds) {
-    add(fare.pricing === "first_mile" ? "First mile" : "Base fare",
-        emailMoney(base, currency));
-    add("Distance", emailMoney(distance, currency));
+    // First-mile pricing: one Distance line, so the receipt does not show
+    // the first-mile price or the rate per mile (M&S, 20 Nov 2026).
+    if (fare.pricing === "first_mile") {
+      add("Distance", emailMoney(r2(base + distance), currency));
+    } else {
+      add("Base fare", emailMoney(base, currency));
+      add("Distance", emailMoney(distance, currency));
+    }
     if (stops > 0) {
       add(`Stops (${Number(fare.stops) || 0})`, emailMoney(stops, currency));
     }
