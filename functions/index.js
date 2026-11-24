@@ -96,6 +96,9 @@ const CONFIG_DEFAULTS = {
   fares: {minimumFare: 6},
   cancellation: {fee: 0, freeMinutes: 2, arrivedFee: 0, noShowWaitMinutes: 5,
     driverSharePercent: 100,
+    // Card rides: a cancel or no-show costs at least this share of the
+    // ride's fare (0 = off). See cancellationTerms.
+    farePercent: 0,
     // A driver cancelling a job they accepted (driverPenalty.js).
     // Mode 0 none, 1 money, 2 time off the road. Radius 0 = every cancel.
     driverPenaltyMode: 0, driverPenaltyAmount: 0, driverPenaltyMinutes: 0,
@@ -186,6 +189,8 @@ async function loadAppConfig() {
           d.cancellation.noShowWaitMinutes),
       driverSharePercent: Math.min(100, numSetting(data.cancellation,
           "driverSharePercent", d.cancellation.driverSharePercent)),
+      farePercent: Math.min(100, numSetting(data.cancellation,
+          "farePercent", d.cancellation.farePercent)),
       driverPenaltyMode: Math.min(2, Math.round(numSetting(data.cancellation,
           "driverPenaltyMode", d.cancellation.driverPenaltyMode))),
       driverPenaltyAmount: numSetting(data.cancellation,
@@ -402,6 +407,37 @@ function addPeriod(date, tier, count = 1) {
  */
 function planLabel(tier) {
   return tier === "weekly" ? "Weekly membership" : "Monthly membership";
+}
+
+/**
+ * A ride's cancellation terms for its fare. With farePercent set, the late
+ * cancel fee and the arrived / no-show fee are each at least that share of
+ * the fare (M&S 23 Nov 2026: a £30 job cancelled at the pickup costs £15).
+ * The amounts are saved on the ride as fee and arrivedFee, which is what
+ * both apps already show and cancellationFee charges, so no app update is
+ * needed. The dashboard's fixed amounts are kept as fixedFee and
+ * fixedArrivedFee, so the terms can be worked out again when the fare
+ * changes before pickup (raised offer, counter-offer).
+ * @param {Object} policy Settings cancellation, or a ride's saved terms.
+ * @param {number} fare The ride's fare.
+ * @return {Object} Terms to save on the ride.
+ */
+function cancellationTerms(policy, fare) {
+  const p = Object.assign({}, policy || {});
+  const fixedFee = numSetting(p, "fixedFee", numSetting(p, "fee", 0));
+  const fixedArrived = numSetting(p, "fixedArrivedFee",
+      numSetting(p, "arrivedFee", 0));
+  const pct = Math.min(100, numSetting(p, "farePercent", 0));
+  const amount = Number(fare);
+  const share = pct > 0 && Number.isFinite(amount) && amount > 0 ?
+    Math.round(amount * pct) / 100 : 0;
+  p.fixedFee = fixedFee;
+  p.fixedArrivedFee = fixedArrived;
+  p.farePercent = pct;
+  p.fareBasis = Number.isFinite(amount) ? Math.round(amount * 100) / 100 : 0;
+  p.fee = Math.max(fixedFee, share);
+  p.arrivedFee = Math.max(fixedArrived, share);
+  return p;
 }
 
 /**
@@ -840,6 +876,17 @@ exports.authorizePaymentOnRideAccept = functions
 
       // Cash rides are paid to the driver in person: no card hold.
       if (after.paymentMethod === "cash") return null;
+
+      // A percentage cancellation fee follows the fare agreed at accept
+      // (the passenger may have raised their offer, or taken a counter).
+      const terms = after.cancellationPolicy || {};
+      if (numSetting(terms, "farePercent", 0) > 0 &&
+          numSetting(terms, "fareBasis", -1) !==
+            Math.round((Number(after.fareEstimate) || 0) * 100) / 100) {
+        await db.collection("rides").doc(rideId).update({
+          cancellationPolicy: cancellationTerms(terms, after.fareEstimate),
+        }).catch((e) => console.error("Cancellation terms:", rideId, e));
+      }
 
       // Re-dispatch: a driver gave the job back and another accepted it.
       // The card hold from the first accept is still valid, so reuse it
@@ -4237,7 +4284,7 @@ async function checkAppFare(rideId, ride) {
     "fare.discountAmount": discountAmount,
     "currency": cfg.currency,
     "waitingPolicy": cfg.waiting,
-    "cancellationPolicy": cfg.cancellation,
+    "cancellationPolicy": cancellationTerms(cfg.cancellation, price),
   });
   return true;
 }

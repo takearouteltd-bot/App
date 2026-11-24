@@ -13,6 +13,10 @@
 //     charges the same, once they have waited `noShowWaitMinutes`.
 //   - otherwise: `fee`, if more than `freeMinutes` have passed since the
 //     driver accepted.
+//
+// With the dashboard's "% of the fare" set, the server saves `fee` and
+// `arrivedFee` on the ride already raised to that share of its fare
+// (cancellationTerms in functions/index.js), so nothing here changes.
 
 import { kmBetween } from './cities';
 const BEFORE_PICKUP = ['accepted', 'arrived'];
