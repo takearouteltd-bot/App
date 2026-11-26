@@ -699,7 +699,22 @@ service cloud.firestore {
 
     function passengerMayBook() {
       let path = /databases/$(database)/documents/riders/$(request.auth.uid);
-      return !exists(path) || get(path).data.get("blocked", false) != true;
+      return !exists(path) || (get(path).data.get("blocked", false) != true &&
+        (get(path).data.get("appReview", false) != true ||
+         inReviewArea(request.resource.data)));
+    }
+
+    /* Apple's App Review passenger (riders/{uid}.appReview) may only book
+       from the Inverness test area, where no real driver works: a booking
+       elsewhere would show up in real drivers' apps before the server could
+       stop it. The server also keeps review jobs and review drivers apart
+       (appDriverPool in functions/index.js). */
+    function inReviewArea(ride) {
+      let p = ride.get("pickupLocation", {});
+      let lat = p.get("latitude", 0);
+      let lng = p.get("longitude", 0);
+      return (lat is number || lat is int) && (lng is number || lng is int) &&
+        lat > 57.30 && lat < 57.65 && lng > -4.55 && lng < -3.95;
     }
 
     match /rides/{rideId} {

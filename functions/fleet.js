@@ -630,6 +630,8 @@ module.exports = (deps) => {
         !canWork(d) ? "docs" :
         positionStale(d) ? "stale" :
         d.isOnRide === true ? "busy" :
+        // Apple's App Review driver never gets a real fleet job.
+        d.appReview === true ||
         !canTakeFleetJob(d, ride) || !wantsJob(d, ride) ? "filters" : null;
       if (why) {
         skipped[why]++;

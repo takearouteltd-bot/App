@@ -103,6 +103,8 @@ module.exports = (deps) => {
         ride.followOnTried || []);
     if (skip.includes(id)) return false;
     if (!canServe(d.vehicleType, ride.rideType)) return false;
+    // Apple's App Review accounts only ever meet each other.
+    if ((d.appReview === true) !== (ride.appReview === true)) return false;
     if (ride.femaleDriverOnly === true && d.femaleVerified !== true) {
       return false;
     }

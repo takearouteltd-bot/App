@@ -330,6 +330,26 @@ assert.equal(seen.canCancel, false);
 await adminSet(`rides/${forId}`, { status: 'completed' }, true);
 
 await del('cities/redditch');
+
+step("Apple's App Review passenger: refused outside the Inverness test area by the rules; an Inverness booking is marked appReview by the server");
+const R3 = mk('reviewer');
+const reviewer = (await createUserWithEmailAndPassword(R3.auth, 'review-bc@test.dev', 'secret123')).user.uid;
+await adminSet(`riders/${reviewer}`, { fullName: 'App Review', locationEnabled: true, appReview: true });
+await assert.rejects(book(R3, reviewer, LONDON), /permission/i, 'a review booking in London must be refused before any driver sees it');
+const INVERNESS = { latitude: 57.4800, longitude: -4.2240, address: 'Inverness Station' };
+id = await book(R3, reviewer, INVERNESS);
+r = await settled(id);
+assert.equal(val(r.status), 'searching');
+for (let i = 0; i < 240 && val((await adminGet(`rides/${id}`)).appReview) !== true; i++) await sleep(250);
+assert.equal(val((await adminGet(`rides/${id}`)).appReview), true);
+await adminSet(`rides/${id}`, { status: 'completed' }, true);
+// An ordinary passenger is not held to Inverness.
+id = await book(R, rider, LONDON);
+r = await settled(id);
+assert.equal(val(r.status), 'searching');
+assert.notEqual(val(r.appReview), true);
+await adminSet(`rides/${id}`, { status: 'completed' }, true);
+
 fake.close();
 console.log('ALL BOOKING CHECKS PASSED');
 process.exit(0);

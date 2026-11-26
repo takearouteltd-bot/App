@@ -3966,6 +3966,19 @@ function wantsJobType(jobTypes, rideType) {
 }
 
 /**
+ * Whether a driver and a job are on different sides of the App Review line:
+ * jobs booked by Apple's review passenger go to review drivers only, and
+ * review drivers never get real jobs (drivers/{id}.appReview,
+ * rides/{id}.appReview set by checkNewRide).
+ * @param {Object} d Driver data.
+ * @param {Object} ride Ride data.
+ * @return {boolean} True when they must not be matched.
+ */
+function reviewMismatch(d, ride) {
+  return (d.appReview === true) !== (ride.appReview === true);
+}
+
+/**
  * Every available online driver who may take this app job, with how far
  * they are from the pickup (no radius applied). Drivers who declined it,
  * blocked ones and those the passenger blocked are left out. Used by
@@ -4001,7 +4014,9 @@ async function appDriverPool(ride) {
       !wantsJobType(d.jobTypes, ride.rideType) ||
       (d.workingCityId && d.workingCityId !== ride.cityId) ||
       (ride.femaleDriverOnly === true && d.femaleVerified !== true) ||
-      (d.cashJobs === false && ride.paymentMethod === "cash") ? "filters" :
+      (d.cashJobs === false && ride.paymentMethod === "cash") ||
+      // Apple's App Review accounts only ever meet each other.
+      reviewMismatch(d, ride) ? "filters" :
       null;
     if (why) {
       skipped[why]++;
@@ -4308,6 +4323,11 @@ async function checkNewRide(rideId, ride) {
       await refuseNewRide(rideId, ride, "account_suspended",
           "Your passenger account has been suspended. Please contact support.");
       return false;
+    }
+    // Apple's App Review passenger: keep the job among review drivers.
+    if (riderSnap.exists && riderSnap.data().appReview === true) {
+      ride.appReview = true;
+      await rideRef.update({appReview: true});
     }
     // Booked for someone else: the driver and the person riding see who
     // booked it, by first name, from the account rather than the app.
