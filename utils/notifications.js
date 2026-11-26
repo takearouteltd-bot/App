@@ -36,14 +36,36 @@ import { getMessaging, getToken, onMessage, registerDeviceForRemoteMessages } fr
 import { auth, db } from '../config/firebase';
 
 // Show notifications while the app is open too.
+// iOS shows a push that arrives while the app is open through this handler.
+// A job offer (or follow-on offer) is already rung by the driver home screen
+// (ringForNewJob) or the follow-on pop-up, so showing the push as well would
+// ring twice. Android filters the same two types in showPushesWhileOpen.
+const RUNG_IN_APP = ['job_offer', 'follow_on_offer'];
+
+function pushType(notification) {
+  const request = notification?.request || {};
+  return request.content?.data?.type || request.trigger?.payload?.type || null;
+}
+
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
+  handleNotification: async (notification) => {
+    const quiet = Platform.OS === 'ios' &&
+      isRemotePush(notification) &&
+      RUNG_IN_APP.includes(pushType(notification));
+    return {
+      shouldShowBanner: !quiet,
+      shouldShowList: !quiet,
+      shouldPlaySound: !quiet,
+      shouldSetBadge: false,
+    };
+  },
 });
+
+// Only pushes from the server are hidden; the app's own local job alert is
+// scheduled while it is in the background and must still show.
+function isRemotePush(notification) {
+  return notification?.request?.trigger?.type === 'push';
+}
 
 let channelsReady = false;
 

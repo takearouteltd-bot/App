@@ -14,15 +14,20 @@
       "backgroundColor": "#00124E"
     },
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.takearoute.app",
-      "buildNumber": "19",
+      "buildNumber": "39",
       "googleServicesFile": "./GoogleService-Info.plist",
       "config": {
         "googleMapsApiKey": "AIzaSyD2FkUIMuw3hkXi827QxnI8W1w2XX_KGd8"
       },
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSMicrophoneUsageDescription": "TakeARoute plays job and trip alert sounds. It never records you."
+      },
+      "entitlements": {
+        "aps-environment": "production",
+        "com.apple.developer.usernotifications.time-sensitive": true
       }
     },
     "android": {
@@ -60,7 +65,9 @@
           "locationWhenInUsePermission": "TakeARoute uses your location to find rides near you and, for drivers, to show passengers where you are.",
           "isIosBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true,
-          "isAndroidBackgroundLocationEnabled": false
+          "isAndroidBackgroundLocationEnabled": false,
+          "locationAlwaysAndWhenInUsePermission": "TakeARoute uses your location to find rides near you and, for drivers, to keep sharing where you are with your passenger while you are online or on a trip, even when the app is in the background.",
+          "locationAlwaysPermission": "TakeARoute uses your location to find rides near you and, for drivers, to keep sharing where you are with your passenger while you are online or on a trip, even when the app is in the background."
         }
       ],
       [
@@ -88,7 +95,9 @@
           "sounds": [
             "./assets/sounds/job_alert.wav",
             "./assets/sounds/job_ring.wav"
-          ]
+          ],
+          "mode": "production",
+          "enableBackgroundRemoteNotifications": true
         }
       ],
       [

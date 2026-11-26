@@ -3865,7 +3865,11 @@ async function sendPush(uids, msg) {
       // not delivered late to an iPhone.
       apns: Object.assign(msg.ttlSeconds ? {headers: {"apns-expiration":
         String(Math.floor(Date.now() / 1000) + msg.ttlSeconds)}} : {},
-      {payload: {aps: {sound: msg.sound || "default"}}}),
+      // Job offers are time-sensitive on iPhone so they ring through Focus
+      // modes, as the high-importance job-ring channel does on Android.
+      {payload: {aps: Object.assign({sound: msg.sound || "default"},
+          msg.channelId === "job-ring" ?
+            {"interruption-level": "time-sensitive"} : {})}}),
     });
     reached += res.successCount;
 
