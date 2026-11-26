@@ -39,6 +39,9 @@ export const DEFAULT_APP_CONFIG = {
     wheelchairPerStop: 0,
     ratePerMinute: 0,
     minimumFare: 0,
+    // 1 = a passenger who ends the trip early pays the whole fare
+    // (dashboard Settings > Fares; the server charges it).
+    earlyEndFullFare: 0,
     vatPercent: 20,
   },
   waiting: {

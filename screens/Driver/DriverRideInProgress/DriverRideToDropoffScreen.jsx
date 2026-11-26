@@ -122,8 +122,8 @@ export default function DriverRideToDropoffScreen() {
             'Trip ended',
             data.endedEarly
               ? data.paymentMethod === 'cash'
-                ? 'Your passenger ended the trip early. The fare so far is on its way in a notification: collect it in cash before they leave.'
-                : 'Your passenger ended the trip early. They pay the fare so far, and you are paid for it as usual.'
+                ? `Your passenger ended the trip early. ${Number(getAppConfig()?.fares?.earlyEndFullFare) > 0 ? 'The full fare' : 'The fare so far'} is on its way in a notification: collect it in cash before they leave.`
+                : `Your passenger ended the trip early. They pay ${Number(getAppConfig()?.fares?.earlyEndFullFare) > 0 ? 'the full fare' : 'the fare so far'}, and you are paid for it as usual.`
               : 'Your passenger ended this trip. You are free for the next job.'
           );
         }

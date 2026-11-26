@@ -22,7 +22,7 @@ import SafetyButton from '../../components/SafetyButton';
 import DriverPhotoPlate from '../../components/DriverPhotoPlate';
 import PayByCardInstead from '../../components/PayByCardInstead';
 import { confirmMaskedCall } from '../../utils/calling';
-import { currencySymbol, money } from '../../utils/appConfig';
+import { currencySymbol, getAppConfig, money } from '../../utils/appConfig';
 import {
   canChangeDestination,
   isPending,
@@ -101,7 +101,7 @@ export default function RideInProgressScreen() {
         if (!endTimer) {
           endTimer = setTimeout(() => {
             hasFinished = true;
-            Alert.alert('Trip ended', 'We are still working out the fare so far. You will find it in Your trips.');
+            Alert.alert('Trip ended', 'We are still working out the fare. You will find it in Your trips.');
             navigation.popToTop();
           }, 30000);
         }
@@ -273,12 +273,17 @@ export default function RideInProgressScreen() {
   /* Ending a trip that is already under way. The ride is marked cancelled
      with endedEarly; the chargeTripEndedEarly function then completes it at
      the fare so far (the share of the journey done), so the passenger pays
-     for that part and gets a receipt. */
+     for that part and gets a receipt. When the office has set "Passenger
+     ends the trip early: full fare" (fares.earlyEndFullFare), the whole
+     fare is charged instead, and they are told so before they end it. */
   const handleEndEarly = () => {
     if (ending) return;
+    const fullFare = Number(getAppConfig()?.fares?.earlyEndFullFare) > 0;
     Alert.alert(
       'End this trip early?',
-      'Your driver will be told to pull over when it is safe. You pay only for the part of the journey done so far.',
+      fullFare
+        ? 'Your driver will be told to pull over when it is safe. You still pay the full fare for this trip.'
+        : 'Your driver will be told to pull over when it is safe. You pay only for the part of the journey done so far.',
       [
         { text: 'Stay in the trip', style: 'cancel' },
         {

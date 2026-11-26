@@ -93,7 +93,10 @@ const CONFIG_DEFAULTS = {
   // someone takes it.
   bidJobs: {enabled: 1, radiusKm: 8.05, afterSeconds: 60, allowCounter: 0,
     maxCounterPercent: 30, ringEverySeconds: 20},
-  fares: {minimumFare: 6},
+  // earlyEndFullFare: 1 = a passenger who ends the trip early pays the
+  // whole agreed fare, not the fare so far (chargeTripEndedEarly). A trip
+  // the driver ends early is always charged for the part done.
+  fares: {minimumFare: 6, earlyEndFullFare: 0},
   cancellation: {fee: 0, freeMinutes: 2, arrivedFee: 0, noShowWaitMinutes: 5,
     driverSharePercent: 100,
     // Card rides: a cancel or no-show costs at least this share of the
@@ -157,6 +160,8 @@ async function loadAppConfig() {
     fares: {
       minimumFare: numSetting(data.fares, "minimumFare",
           d.fares.minimumFare),
+      earlyEndFullFare: numSetting(data.fares, "earlyEndFullFare",
+          d.fares.earlyEndFullFare),
     },
     subscription: {
       monthlyPrice: numSetting(data.subscription, "monthlyPrice",
@@ -1602,6 +1607,10 @@ exports.chargeTripEndedEarly = functions
         const cfg = await loadAppConfig();
         const fare = endedEarlyFare(after, endPoint, cfg.fares.minimumFare,
             toMillis(after.cancelledAt) || Date.now());
+        // Settings > Fares > "Passenger ends the trip early": the whole
+        // agreed fare is due (percent still records how far they got).
+        const fullFare = Number(cfg.fares.earlyEndFullFare) > 0;
+        if (fullFare) fare.total = fare.fullTotal;
         // FV, as admin.firestore.FieldValue is missing in the emulator.
         const FieldValue = FV;
 
@@ -1615,6 +1624,7 @@ exports.chargeTripEndedEarly = functions
             {latitude: endPoint.latitude, longitude: endPoint.longitude} :
             null,
           ...earlyEndFields(after.fare || {}, fare),
+          ...(fullFare ? {"fare.endedEarlyFullFare": true} : {}),
           "cancelledBy": FieldValue.delete(),
           "cancelReason": FieldValue.delete(),
           "cancelledAt": FieldValue.delete(),
@@ -1627,9 +1637,10 @@ exports.chargeTripEndedEarly = functions
             data: {type: "trip", rideId},
             title: "Passenger ended the trip early",
             body: after.paymentMethod === "cash" ?
-              `Fare so far: ${amount} (waiting time extra). ` +
-              "Collect it in cash before they leave." :
-              `Fare so far: ${amount}. It is charged to their card.`,
+              `${fullFare ? "Full fare" : "Fare so far"}: ${amount} ` +
+              "(waiting time extra). Collect it in cash before they leave." :
+              `${fullFare ? "Full fare" : "Fare so far"}: ${amount}. ` +
+              "It is charged to their card.",
           }).catch(() => null);
         }
         console.log("🛑 Trip ended early:", rideId, fare);

@@ -513,6 +513,17 @@ assert.deepEqual(calls.filter((c) => c.op === 'capture' && c.id === g2Pi.id).map
 r = await until(async () => { const x = await ride(g2); return x.walletProcessed && x; }, 'g2 credited');
 assert.equal(r.paymentMethod, 'card'); assert.equal(r.paymentStatus, 'captured');
 
+step('Settings > Fares "passenger ends the trip early: full fare" on: the whole £10 is due, not the fare so far');
+await adminSet('config/app', { currency: 'GBP', cardSwitch: { enabled: 1, windowMinutes: 30, fleetJobs: 0 }, fares: { earlyEndFullFare: 1 } });
+const g3 = await seedTrip();
+await endEarly(g3);
+r = await until(async () => { const x = await ride(g3); return x.walletProcessed && x; }, 'the full-fare ended-early trip settled');
+assert.equal(r.status, 'completed'); assert.equal(r.endedEarlyBy, 'rider');
+assert.equal(r.fare.total, 10); assert.equal(r.fare.fullTotal, 10); assert.equal(r.fare.endedEarlyFullFare, true);
+// The same 50p of waiting on top, as for any trip.
+assert.equal(r.fare.finalTotal, 10.5);
+await config();
+
 /* ----------------- 6. the window, settings, taxi firm jobs ----------------- */
 step(`after the window (${30} minutes): refused in the app and by link; a longer window in Settings allows it`);
 const w = await seedTrip({ status: 'completed', completedAt: new Date(Date.now() - 31 * 60000), paymentStatus: 'cash', fare: { total: 10, finalTotal: 10.5 } });
