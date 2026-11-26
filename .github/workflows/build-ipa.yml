@@ -81,6 +81,7 @@ jobs:
         run: |
           [ -n "$TEAM_ID" ] || { echo "::error::Repo variable APPLE_TEAM_ID is not set (run scripts/asc-setup.mjs)"; exit 1; }
           npx expo prebuild --platform ios --clean --no-install
+          node scripts/patch-stripe-ios.mjs
           node scripts/ios-signing.mjs "$PROFILE_NAME" "$TEAM_ID"
           # Prebuild names the project after expo.name; later steps use it.
           IOS_NAME=$(basename ios/*.xcodeproj .xcodeproj)
@@ -97,8 +98,11 @@ jobs:
       - name: Archive and sign
         run: |
           set -o pipefail
+          mkdir -p build
           xcodebuild -workspace "ios/$IOS_NAME.xcworkspace" -scheme "$IOS_NAME" -configuration Release \
-            -destination generic/platform=iOS -archivePath build/TakeARoute.xcarchive archive | tail -60
+            -destination generic/platform=iOS -archivePath build/TakeARoute.xcarchive archive > build/archive.log 2>&1 \
+            || { grep -E "(error|fatal error):" -A4 build/archive.log | head -80; tail -30 build/archive.log; exit 1; }
+          tail -20 build/archive.log
           cat > build/ExportOptions.plist <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
