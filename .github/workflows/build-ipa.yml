@@ -82,7 +82,10 @@ jobs:
           [ -n "$TEAM_ID" ] || { echo "::error::Repo variable APPLE_TEAM_ID is not set (run scripts/asc-setup.mjs)"; exit 1; }
           npx expo prebuild --platform ios --clean --no-install
           node scripts/ios-signing.mjs "$PROFILE_NAME" "$TEAM_ID"
-          grep -A3 "aps-environment" ios/takearoute/takearoute.entitlements
+          # Prebuild names the project after expo.name; later steps use it.
+          IOS_NAME=$(basename ios/*.xcodeproj .xcodeproj)
+          echo "IOS_NAME=$IOS_NAME" >> "$GITHUB_ENV"
+          grep -A1 "aps-environment\|time-sensitive" "ios/$IOS_NAME/$IOS_NAME.entitlements"
 
       - name: Pods
         # stripe-ios is cloned from GitHub and has timed out before; try three times.
@@ -94,7 +97,7 @@ jobs:
       - name: Archive and sign
         run: |
           set -o pipefail
-          xcodebuild -workspace ios/takearoute.xcworkspace -scheme takearoute -configuration Release \
+          xcodebuild -workspace "ios/$IOS_NAME.xcworkspace" -scheme "$IOS_NAME" -configuration Release \
             -destination generic/platform=iOS -archivePath build/TakeARoute.xcarchive archive | tail -60
           cat > build/ExportOptions.plist <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
@@ -118,7 +121,7 @@ jobs:
       - name: Name the IPA
         id: ipa
         run: |
-          APP=build/TakeARoute.xcarchive/Products/Applications/takearoute.app
+          APP=build/TakeARoute.xcarchive/Products/Applications/$IOS_NAME.app
           VERSION=$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$APP/Info.plist")
           BUILD=$(/usr/libexec/PlistBuddy -c 'Print CFBundleVersion' "$APP/Info.plist")
           mkdir -p out && cp build/ipa/*.ipa "out/TakeARoute-$VERSION-$BUILD.ipa"

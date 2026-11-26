@@ -6,13 +6,17 @@
 // The team has no registered devices, so Xcode's automatic signing (which archives with a
 // development profile) can't be used. The certificate and profile are made once with
 // scripts/asc-setup.mjs; CI installs them from repo secrets.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 const [profile, team] = process.argv.slice(2);
 if (!profile || !team) throw new Error('Usage: node scripts/ios-signing.mjs <profile name> <team id>');
 
-const path = 'ios/takearoute.xcodeproj/project.pbxproj';
-const anchor = /^(\s*)CODE_SIGN_ENTITLEMENTS = takearoute\/takearoute\.entitlements;$/gm;
+// Prebuild names the project after expo.name ("TakeARoute"), so find it rather than assume.
+const proj = readdirSync('ios').find((f) => f.endsWith('.xcodeproj') && f !== 'Pods.xcodeproj');
+if (!proj) throw new Error('No .xcodeproj in ios/ (run expo prebuild first)');
+const name = proj.replace(/\.xcodeproj$/, '');
+const path = `ios/${proj}/project.pbxproj`;
+const anchor = new RegExp(`^(\\s*)CODE_SIGN_ENTITLEMENTS = ${name}/${name}\\.entitlements;$`, 'gm');
 let count = 0;
 const out = readFileSync(path, 'utf8').replace(anchor, (line, indent) => {
   count++;
