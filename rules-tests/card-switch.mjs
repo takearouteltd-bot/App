@@ -517,7 +517,8 @@ step('Settings > Fares "passenger ends the trip early: full fare" on: the whole 
 await adminSet('config/app', { currency: 'GBP', cardSwitch: { enabled: 1, windowMinutes: 30, fleetJobs: 0 }, fares: { earlyEndFullFare: 1 } });
 const g3 = await seedTrip();
 await endEarly(g3);
-r = await until(async () => { const x = await ride(g3); return x.walletProcessed && x; }, 'the full-fare ended-early trip settled');
+// A cash trip: settled as cash to collect (as g2 above), not credited.
+r = await until(async () => { const x = await ride(g3); return x.paymentStatus === 'cash' && x; }, 'the full-fare ended-early trip settled');
 assert.equal(r.status, 'completed'); assert.equal(r.endedEarlyBy, 'rider');
 assert.equal(r.fare.total, 10); assert.equal(r.fare.fullTotal, 10); assert.equal(r.fare.endedEarlyFullFare, true);
 // The same 50p of waiting on top, as for any trip.
