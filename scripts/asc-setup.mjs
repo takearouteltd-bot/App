@@ -14,7 +14,7 @@
 // TakeARoute account.
 import { createPrivateKey, randomBytes, sign } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -79,30 +79,47 @@ for (const capabilityType of ['PUSH_NOTIFICATIONS', 'USERNOTIFICATIONS_TIMESENSI
     });
     console.log(`Turned on ${capabilityType}`);
   } catch (e) {
-    console.log(`!! Could not turn on ${capabilityType} (${e.message}). Tick it on the App ID in developer.apple.com, then run this again.`);
+    // The API does not know every capability (Time Sensitive Notifications is one).
+    console.log(`!! Could not turn on ${capabilityType} through the API. Tick it on the App ID in developer.apple.com, then run this again.`);
   }
 }
 
-// 2. Distribution certificate (key and CSR made here with the system openssl)
+// 2. Distribution certificate (key and CSR made here with the system openssl). A run after
+//    the first reuses the certificate kept in OUT, as long as Apple still has it, so running
+//    again (say after ticking a capability) only remakes the profile.
 const keyPem = join(OUT, 'dist.key');
-const csr = join(OUT, 'dist.csr');
-execFileSync('/usr/bin/openssl', ['genrsa', '-out', keyPem, '2048'], { stdio: 'ignore' });
-execFileSync('/usr/bin/openssl', ['req', '-new', '-key', keyPem, '-out', csr,
-  '-subj', '/CN=TakeARoute Distribution/O=TakeARoute/C=GB']);
-const cert = (await asc('POST', '/v1/certificates', {
-  type: 'certificates',
-  attributes: { certificateType: 'DISTRIBUTION', csrContent: readFileSync(csr, 'utf8') },
-})).data;
-const der = join(OUT, 'dist.cer');
-writeFileSync(der, Buffer.from(cert.attributes.certificateContent, 'base64'));
-const certPem = join(OUT, 'dist.pem');
-execFileSync('/usr/bin/openssl', ['x509', '-inform', 'DER', '-in', der, '-out', certPem]);
-const p12Password = randomBytes(12).toString('hex');
 const p12 = join(OUT, 'dist.p12');
-execFileSync('/usr/bin/openssl', ['pkcs12', '-export', '-inkey', keyPem, '-in', certPem,
-  '-out', p12, '-passout', `pass:${p12Password}`]);
-writeFileSync(join(OUT, 'dist.p12.password'), p12Password + '\n', { mode: 0o600 });
-console.log(`Made distribution certificate ${cert.id} (expires ${cert.attributes.expirationDate})`);
+const certIdFile = join(OUT, 'dist.cert-id');
+let cert = null;
+let p12Password = null;
+if (existsSync(certIdFile) && existsSync(p12)) {
+  const id = readFileSync(certIdFile, 'utf8').trim();
+  cert = await asc('GET', `/v1/certificates/${id}`).then((r) => r.data).catch(() => null);
+  if (cert) {
+    p12Password = readFileSync(join(OUT, 'dist.p12.password'), 'utf8').trim();
+    console.log(`Reusing distribution certificate ${cert.id}`);
+  }
+}
+if (!cert) {
+  const csr = join(OUT, 'dist.csr');
+  execFileSync('/usr/bin/openssl', ['genrsa', '-out', keyPem, '2048'], { stdio: 'ignore' });
+  execFileSync('/usr/bin/openssl', ['req', '-new', '-key', keyPem, '-out', csr,
+    '-subj', '/CN=TakeARoute Distribution/O=TakeARoute/C=GB']);
+  cert = (await asc('POST', '/v1/certificates', {
+    type: 'certificates',
+    attributes: { certificateType: 'DISTRIBUTION', csrContent: readFileSync(csr, 'utf8') },
+  })).data;
+  const der = join(OUT, 'dist.cer');
+  writeFileSync(der, Buffer.from(cert.attributes.certificateContent, 'base64'));
+  const certPem = join(OUT, 'dist.pem');
+  execFileSync('/usr/bin/openssl', ['x509', '-inform', 'DER', '-in', der, '-out', certPem]);
+  p12Password = randomBytes(12).toString('hex');
+  execFileSync('/usr/bin/openssl', ['pkcs12', '-export', '-inkey', keyPem, '-in', certPem,
+    '-out', p12, '-passout', `pass:${p12Password}`]);
+  writeFileSync(join(OUT, 'dist.p12.password'), p12Password + '\n', { mode: 0o600 });
+  writeFileSync(certIdFile, cert.id + '\n');
+  console.log(`Made distribution certificate ${cert.id} (expires ${cert.attributes.expirationDate})`);
+}
 
 // 3. App Store profile (any old one with the same name is replaced)
 const old = (await asc('GET', `/v1/profiles?filter[name]=${encodeURIComponent(PROFILE_NAME)}`)).data;
@@ -116,6 +133,7 @@ const profile = (await asc('POST', '/v1/profiles', {
   },
 })).data;
 const profilePath = join(OUT, 'takearoute-app-store.mobileprovision');
+// The time-sensitive entitlement in app.json must be in the profile, or signing fails.
 writeFileSync(profilePath, Buffer.from(profile.attributes.profileContent, 'base64'));
 const plist = execFileSync('/usr/bin/security', ['cms', '-D', '-i', profilePath]).toString();
 const team = plist.match(/<key>TeamIdentifier<\/key>\s*<array>\s*<string>([A-Z0-9]+)<\/string>/)[1];
@@ -131,3 +149,7 @@ secret('IOS_DIST_P12_PASSWORD', p12Password);
 secret('IOS_PROFILE_BASE64', readFileSync(profilePath).toString('base64'));
 execFileSync('gh', ['variable', 'set', 'APPLE_TEAM_ID', '--body', team]);
 console.log('GitHub secrets and APPLE_TEAM_ID set. Files kept in', OUT);
+const ents = execFileSync('/usr/bin/security', ['cms', '-D', '-i', profilePath]).toString();
+if (!ents.includes('com.apple.developer.usernotifications.time-sensitive')) {
+  console.log('!! The profile has no Time Sensitive Notifications entitlement. Tick it on the App ID, then run this again.');
+}
