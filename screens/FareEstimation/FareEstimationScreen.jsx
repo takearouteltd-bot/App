@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -27,6 +27,7 @@ import {
   onSnapshot,
   query,
   setDoc,
+  Timestamp,
   where,
 } from 'firebase/firestore';
 import { ACTIVE_RIDE_STATUSES } from '../../utils/modeSwitch';
@@ -39,6 +40,8 @@ import { MAX_STOPS } from '../../utils/stops';
 import { passengerForField, prettyPhone, savePassengerContact } from '../../utils/bookingFor';
 import { priceTrip } from '../../utils/fares';
 import { RIDE_CLASSES } from '../../constants/vehicleClasses';
+import { bookLaterSettings, pickupStillOk, ukWhen } from '../../utils/bookLater';
+import BookLaterPicker from '../../components/BookLaterPicker';
 import {
   COLORS,
   TYPE,
@@ -153,6 +156,18 @@ export default function FareEstimationScreen({ route }) {
   const bidding = biddingEnabled(appConfig);
   const [offer, setOffer] = useState(null);
   useEffect(() => setOffer(null), [selectedRide, distance, duration, promoApplied]);
+
+  // Now, or booked for later (utils/bookLater.js, functions/bookLater.js):
+  // null is now. Not with bidding, where the passenger picks between
+  // drivers' prices as they come in.
+  const later = useMemo(() => bookLaterSettings(appConfig), [appConfig]);
+  const laterAllowed = later.enabled && !bidding;
+  const [pickupAtMs, setPickupAtMs] = useState(route.params?.pickupAtMs || null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  useEffect(() => {
+    if (!laterAllowed && pickupAtMs) setPickupAtMs(null);
+  }, [laterAllowed, pickupAtMs]);
+  const bookingLater = laterAllowed && Boolean(pickupAtMs);
 
   // Female driver: starts from the passenger's saved preference.
   const allowFemaleOnly = femaleDriverEnabled(appConfig);
@@ -281,9 +296,17 @@ export default function FareEstimationScreen({ route }) {
       return;
     }
 
+    // A time picked a while ago may now be too soon.
+    if (bookingLater && !pickupStillOk(pickupAtMs, later)) {
+      Alert.alert('Pick a new time', `Pickups can be booked from ${later.minMinutes} minutes ahead. Please choose the time again.`);
+      setPickerOpen(true);
+      return;
+    }
+
     // One ride at a time. Without this, coming Back to this screen after
-    // booking and tapping Confirm again created a second ride.
-    try {
+    // booking and tapping Confirm again created a second ride. A ride booked
+    // for later can be booked alongside one (the server limits how many).
+    if (!bookingLater) try {
       const active = await getDocs(
         query(
           collection(db, 'rides'),
@@ -360,7 +383,10 @@ export default function FareEstimationScreen({ route }) {
       const rideData = {
         riderId: currentUser.uid,
         driverId: null,
-        status: 'searching',
+        // Booked for later: "scheduled" until the server sends it out about
+        // leadMinutes before the pickup (functions/bookLater.js).
+        status: bookingLater ? 'scheduled' : 'searching',
+        ...(bookingLater ? { pickupAt: Timestamp.fromMillis(pickupAtMs) } : {}),
         rideType: selectedRide,
 
         pickupLocation: {
@@ -436,7 +462,11 @@ export default function FareEstimationScreen({ route }) {
         );
       }
 
-      await updateDoc(doc(db, 'riders', currentUser.uid), { currentRideId: rideRef.id });
+      // A ride booked for later is not the current ride until it is sent out
+      // (the server sets it then).
+      if (!bookingLater) {
+        await updateDoc(doc(db, 'riders', currentUser.uid), { currentRideId: rideRef.id });
+      }
 
       // Keyed by place id so booking the same destination twice moves it up the
       // recent list rather than adding a duplicate.
@@ -457,6 +487,17 @@ export default function FareEstimationScreen({ route }) {
       ).catch(() => null);
 
       setLoading(false);
+      if (bookingLater) {
+        // Home, then the booked rides list (which says if the server turns
+        // it down), so Back goes home rather than to the address search.
+        navigation.popToTop();
+        navigation.navigate('BookedRides', { rideId: rideRef.id });
+        Alert.alert(
+          'Ride booked',
+          `Pickup ${ukWhen(pickupAtMs)} (UK time). We'll start finding your driver about ${later.leadMinutes} minutes before and let you know. Free to cancel until a driver accepts.`
+        );
+        return;
+      }
       // Replace, so Back from the ride screens cannot return here and book
       // the same trip twice.
       navigation.replace('RideRequest', { rideId: rideRef.id });
@@ -685,6 +726,20 @@ export default function FareEstimationScreen({ route }) {
             </View>
           ) : null}
 
+          {/* Now or later. Shown only when the dashboard allows booking ahead. */}
+          {laterAllowed ? (
+            <View style={styles.options}>
+              <ListRow
+                icon="time-outline"
+                iconColor={COLORS.midnight}
+                title={bookingLater ? `Pickup ${ukWhen(pickupAtMs)}` : 'Pickup now'}
+                detail={bookingLater ? 'UK time. Tap to change' : 'Or book for later'}
+                onPress={() => setPickerOpen(true)}
+                last
+              />
+            </View>
+          ) : null}
+
           {/* Payment. Cash appears only when the dashboard allows it. */}
           {allowCash ? (
             <Segmented
@@ -857,6 +912,8 @@ export default function FareEstimationScreen({ route }) {
                   ? 'Working out your route…'
                   : bidding
                   ? `Offer for ${selectedOption.label}`
+                  : bookingLater
+                  ? `Book for ${ukWhen(pickupAtMs)}`
                   : `Book ${selectedOption.label}`}
               </Text>
               {routeCalculated ? (
@@ -866,6 +923,21 @@ export default function FareEstimationScreen({ route }) {
           )}
         </TouchableOpacity>
       </Sheet>
+
+      <BookLaterPicker
+        visible={pickerOpen}
+        settings={later}
+        value={pickupAtMs}
+        onPick={(ms) => {
+          setPickupAtMs(ms);
+          setPickerOpen(false);
+        }}
+        onNow={() => {
+          setPickupAtMs(null);
+          setPickerOpen(false);
+        }}
+        onClose={() => setPickerOpen(false)}
+      />
     </SafeAreaView>
   );
 }

@@ -4,6 +4,7 @@
 // and the same maths the payment function charges with.
 import { useEffect, useState } from "react";
 import { getAppConfig, money, waitingCharge } from "./appConfig";
+import { bookedPickupMs, ukClock } from "./bookLater";
 
 function toMillis(ts) {
   if (!ts) return null;
@@ -31,7 +32,18 @@ export function useWaitingClock(ride) {
   if (!arrivedMs) return null;
 
   const policy = ride.waitingPolicy || getAppConfig().waiting;
-  const waitedMs = Math.max(0, now - arrivedMs);
+  // Booked for later and there early: waiting counts from the booked time,
+  // as the server charges it (functions/index.js computeWaitingCharge).
+  const booked = bookedPickupMs(ride);
+  if (booked > now) {
+    return {
+      inFreeTime: true,
+      charge: 0,
+      label: `Booked for ${ukClock(booked)}: no waiting charge until then`,
+      detail: `Then ${policy.freeMinutes} free minutes`,
+    };
+  }
+  const waitedMs = Math.max(0, now - Math.max(arrivedMs, booked));
   const freeMs = Number(policy.freeMinutes || 0) * 60000;
   const charge = waitingCharge(waitedMs, policy);
   const code = ride.currency || ride.fare?.currency;

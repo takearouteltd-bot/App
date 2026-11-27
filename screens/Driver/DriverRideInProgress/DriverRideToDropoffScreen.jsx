@@ -34,6 +34,7 @@ import {
 import { whenSaved } from '../../../utils/slowSave';
 import { cardOnCompletion, paidByCardInstead, switchOf } from '../../../utils/cardSwitch';
 import { DRIVER_MAP_STYLE } from '../../../utils/driverMapStyle';
+import { bookedPickupMs } from '../../../utils/bookLater';
 
 const { height } = Dimensions.get('window');
 
@@ -233,7 +234,9 @@ export default function DriverRideToDropoffScreen() {
       leftKm === null
         ? Number(ride?.fare?.total || 0)
         : fareSoFar(ride, leftKm, getAppConfig().fares.minimumFare);
-    const arrivedMs = ride?.arrivedAt?.toMillis?.();
+    // Booked for later and there early: waiting counts from the booked time
+    // (functions/index.js computeWaitingCharge).
+    const arrivedMs = ride?.arrivedAt?.toMillis?.() && Math.max(ride.arrivedAt.toMillis(), bookedPickupMs(ride));
     const startedMs = ride?.startedAt?.toMillis?.();
     const waiting =
       arrivedMs && startedMs ? waitingCharge(startedMs - arrivedMs, ride?.waitingPolicy) : 0;

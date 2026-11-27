@@ -29,6 +29,7 @@ import {
 } from '../../components/ui/kit';
 import { ACTIVE_RIDE_STATUSES } from '../../utils/modeSwitch';
 import CarMarker from '../../components/CarMarker';
+import { bookedPickupMs, ukWhen } from '../../utils/bookLater';
 import { GOOGLE_MAPS_API_KEY } from '../../config/maps';
 
 // Nearby cars: free drivers within this distance of the pickup, whose phone
@@ -76,6 +77,8 @@ export default function HomeScreen() {
   // A pin the passenger dropped themselves, which overrides GPS as the pickup.
   const [pinnedPickup, setPinnedPickup] = useState(null);
   const [nearbyCars, setNearbyCars] = useState([]);
+  // Rides booked for later, not yet sent out (functions/bookLater.js).
+  const [booked, setBooked] = useState([]);
 
   /* The sheet always stays up: it no longer slides down when the map is
      dragged or the sheet is pulled. */
@@ -130,6 +133,27 @@ export default function HomeScreen() {
           if (error.code === 'permission-denied') return;
           console.error('Active ride listener error:', error);
         }
+      );
+    }, [])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!auth.currentUser) return undefined;
+      return onSnapshot(
+        query(
+          collection(db, 'rides'),
+          where('riderId', '==', auth.currentUser.uid),
+          where('status', '==', 'scheduled')
+        ),
+        (snapshot) =>
+          setBooked(
+            snapshot.docs
+              .map((d) => ({ id: d.id, ...d.data() }))
+              .map((r) => ({ ...r, at: r.pickupAt?.toMillis?.() || 0 }))
+              .sort((a, b) => a.at - b.at)
+          ),
+        () => setBooked([])
       );
     }, [])
   );
@@ -305,7 +329,12 @@ export default function HomeScreen() {
   const placeIcon = (type) =>
     type === 'home' ? 'home' : type === 'work' ? 'briefcase' : 'bookmark';
 
-  const ride = activeRide ? RIDE_LABEL[activeRide.status] || RIDE_LABEL.ongoing : null;
+  const baseRide = activeRide ? RIDE_LABEL[activeRide.status] || RIDE_LABEL.ongoing : null;
+  // A ride booked for later that is now finding its driver says for when.
+  const bookedAt = bookedPickupMs(activeRide);
+  const ride = baseRide && bookedAt && activeRide.status !== 'ongoing'
+    ? { ...baseRide, detail: `For your pickup ${ukWhen(bookedAt)}.` }
+    : baseRide;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -409,6 +438,22 @@ export default function HomeScreen() {
                   <Text style={styles.activeDetail}>{ride.detail}</Text>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color={COLORS.onDark} />
+              </TouchableOpacity>
+            ) : null}
+
+            {/* Rides booked for later: the next one, and how many. */}
+            {booked.length ? (
+              <TouchableOpacity
+                activeOpacity={0.85}
+                style={styles.bookedRow}
+                onPress={() => navigation.navigate('BookedRides')}
+                accessibilityRole="button"
+              >
+                <Ionicons name="calendar-outline" size={18} color={COLORS.midnight} />
+                <Text style={styles.bookedText} numberOfLines={1}>
+                  {booked.length === 1 ? 'Booked' : `${booked.length} booked`} · next {ukWhen(booked[0].at)}
+                </Text>
+                <Ionicons name="chevron-forward" size={18} color={COLORS.midnight} />
               </TouchableOpacity>
             ) : null}
 
@@ -542,6 +587,15 @@ const styles = StyleSheet.create({
     padding: SPACE[4],
     marginBottom: SPACE[4],
   },
+  bookedRow: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACE[2],
+    backgroundColor: COLORS.limeSoft,
+    borderWidth: 1, borderColor: COLORS.limeLine,
+    borderRadius: RADIUS.lg,
+    paddingHorizontal: SPACE[4], paddingVertical: SPACE[3],
+    marginBottom: SPACE[4],
+  },
+  bookedText: { flex: 1, fontSize: 14, fontWeight: '700', color: COLORS.midnight },
   activePulseWrap: { width: 22, alignItems: 'center', justifyContent: 'center' },
   activePulse: { width: 10, height: 10, borderRadius: 5, backgroundColor: COLORS.lime },
   activeTitle: { fontSize: 16, fontWeight: '800', color: COLORS.white, letterSpacing: -0.2 },

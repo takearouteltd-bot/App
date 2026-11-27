@@ -146,6 +146,18 @@ export const DEFAULT_APP_CONFIG = {
     windowMinutes: 30,
     fleetJobs: 0,
   },
+  // Passengers book a ride for later (utils/bookLater.js, functions/
+  // bookLater.js): on or off, the soonest (minutes) and furthest (days)
+  // pickup, how many minutes before the pickup the search for a driver
+  // starts, and how many rides may be booked ahead at once. The server
+  // checks all of it again.
+  bookLater: {
+    enabled: 0,
+    minMinutes: 30,
+    maxDays: 7,
+    leadMinutes: 20,
+    maxOpen: 3,
+  },
 };
 
 function mergeSection(defaults, incoming) {
@@ -179,6 +191,7 @@ export function normaliseAppConfig(raw) {
     destinationChange: mergeSection(DEFAULT_APP_CONFIG.destinationChange, data.destinationChange),
     extendedTrips: mergeSection(DEFAULT_APP_CONFIG.extendedTrips, data.extendedTrips),
     cardSwitch: mergeSection(DEFAULT_APP_CONFIG.cardSwitch, data.cardSwitch),
+    bookLater: mergeSection(DEFAULT_APP_CONFIG.bookLater, data.bookLater),
   };
 }
 

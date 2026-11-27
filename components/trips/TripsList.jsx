@@ -11,6 +11,7 @@ import {
   COLORS, TYPE, SPACE, ScreenHeader, Card, StatusPill, RouteLine, EmptyState, Loading, Chip,
 } from '../ui/kit';
 import { distanceText } from '../../utils/routes';
+import { ukWhen } from '../../utils/bookLater';
 
 const FILTERS = [
   { key: 'all', label: 'All' },
@@ -46,6 +47,8 @@ export const STATUS_LABEL = {
   accepted: 'Driver assigned',
   arrived: 'Driver arrived',
   searching: 'Finding driver',
+  // Booked for later (functions/bookLater.js).
+  scheduled: 'Booked',
 };
 
 // Map each trip status onto a pill tone the kit already styles.
@@ -57,6 +60,7 @@ export const STATUS_PILL = {
   accepted: 'open',
   arrived: 'open',
   searching: 'pending',
+  scheduled: 'pending',
 };
 
 function TripRow({ trip, role, onPress }) {
@@ -67,7 +71,11 @@ function TripRow({ trip, role, onPress }) {
   return (
     <Card onPress={onPress} style={styles.card}>
       <View style={styles.top}>
-        <Text style={TYPE.small}>{whenLabel(tripDate(trip))}</Text>
+        <Text style={TYPE.small}>
+          {trip.status === 'scheduled' && trip.pickupAt
+            ? `Pickup ${ukWhen(trip.pickupAt.toMillis ? trip.pickupAt.toMillis() : Number(trip.pickupAt))}`
+            : whenLabel(tripDate(trip))}
+        </Text>
         <StatusPill
           status={STATUS_PILL[trip.status] || trip.status}
           label={STATUS_LABEL[trip.status] || trip.status || 'Unknown'}
@@ -140,7 +148,12 @@ export default function TripsList({ role = 'rider' }) {
   const completed = visible.filter((t) => t.status === 'completed');
   const total = completed.reduce((sum, t) => sum + Number(t.fare?.finalTotal ?? t.fare?.total ?? 0), 0);
 
-  const open = (trip) => navigation.navigate(role === 'driver' ? 'DriverTripDetails' : 'RiderTripDetails', { trip });
+  // A passenger's ride booked for later opens the booked rides list, where
+  // it can be cancelled.
+  const open = (trip) =>
+    role !== 'driver' && trip.status === 'scheduled'
+      ? navigation.navigate('BookedRides')
+      : navigation.navigate(role === 'driver' ? 'DriverTripDetails' : 'RiderTripDetails', { trip });
 
   return (
     <SafeAreaView style={styles.safe}>

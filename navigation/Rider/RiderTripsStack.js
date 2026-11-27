@@ -7,6 +7,7 @@ import RiderTripDetailsScreen from "../../screens/Rider/RiderTripDetails/RiderTr
 import ReportIssueScreen from "../../screens/Report/ReportIssueScreen";
 import MyReportsScreen from "../../screens/Reports/MyReportsScreen";
 import ReportDetailScreen from "../../screens/Reports/ReportDetailScreen";
+import BookedRidesScreen from "../../screens/BookedRides/BookedRidesScreen";
 
 const Stack = createNativeStackNavigator();
 
@@ -21,6 +22,8 @@ export default function RiderTripsStack() {
       <Stack.Screen name="ReportIssueScreen" component={ReportIssueScreen} />
       <Stack.Screen name="MyReports" component={MyReportsScreen} initialParams={{ role: "rider" }} />
       <Stack.Screen name="ReportDetail" component={ReportDetailScreen} />
+      {/* A ride booked for later, tapped in the trips list. */}
+      <Stack.Screen name="BookedRides" component={BookedRidesScreen} />
     </Stack.Navigator>
   );
 }

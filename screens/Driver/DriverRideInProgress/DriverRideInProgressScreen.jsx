@@ -21,7 +21,8 @@ import { auth, db } from '../../../config/firebase';
 import { useDriverPosition, retryJobSharing } from '../../../utils/driverLocation';
 
 import { currencySymbol, money } from '../../../utils/appConfig';
-import { driverCancelPenalty, noShowFeeFor, noShowWaitMs } from '../../../utils/cancellation';
+import { driverCancelPenalty, noShowFeeFor, noShowFromMs, noShowWaitMs } from '../../../utils/cancellation';
+import { bookedPickupMs, ukClock } from '../../../utils/bookLater';
 import { useAppConfig } from '../../../utils/appConfig';
 import SafetyButton from '../../../components/SafetyButton';
 import PaymentTypeBanner from '../../../components/PaymentTypeBanner';
@@ -336,11 +337,18 @@ export default function DriverRideInProgressScreen() {
      cancelRidePayment takes the no-show fee from the card hold if the driver
      waited long enough (utils/cancellation.js), and releases the rest. */
   const handleNoShow = useCallback(() => {
+    // Booked for later and there early: not a no-show before the booked
+    // time (firestore.rules refuses it too).
+    const booked = bookedPickupMs(ride);
+    if (booked > Date.now()) {
+      Alert.alert('Booked for later', `The passenger booked this pickup for ${ukClock(booked)}. You can report a no-show after that time.`);
+      return;
+    }
     const fee = noShowFeeFor(ride);
     const policyFee = Number(ride?.cancellationPolicy?.arrivedFee) || 0;
-    const arrivedMs = ride?.arrivedAt?.toMillis?.();
-    const leftMin = arrivedMs
-      ? Math.ceil((arrivedMs + noShowWaitMs(ride) - Date.now()) / 60000)
+    const fromMs = noShowFromMs(ride);
+    const leftMin = fromMs
+      ? Math.ceil((fromMs + noShowWaitMs(ride) - Date.now()) / 60000)
       : 0;
     let message = 'The ride will be cancelled and the passenger told.';
     if (fee > 0) {
@@ -599,6 +607,13 @@ export default function DriverRideInProgressScreen() {
                 pickup={pickupLocation?.address}
                 dropoff={dropoffLocation?.address}
               />
+              {/* Booked for later (functions/bookLater.js): the time the
+                  passenger expects the car. */}
+              {bookedPickupMs(ride) ? (
+                <Text style={styles.bookedNote}>
+                  Booked pickup {ukClock(bookedPickupMs(ride))} · waiting is free until then
+                </Text>
+              ) : null}
             </View>
 
             {!arrived ? (
@@ -672,6 +687,7 @@ const styles = StyleSheet.create({
     gap: SPACE[4],
   },
   riderRow: { flexDirection: 'row', alignItems: 'center', gap: SPACE[3] },
+  bookedNote: { ...TYPE.small, marginTop: SPACE[2], color: COLORS.midnight, fontWeight: '700' },
   ratingRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
   contact: { flexDirection: 'row', gap: SPACE[2] },
 

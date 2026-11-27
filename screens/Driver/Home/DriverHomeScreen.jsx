@@ -41,6 +41,7 @@ import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocume
 import { canServe, classLabel, vehicleLabel, wantsJobType, jobChoices } from '../../../constants/vehicleClasses';
 import { servesCity, useCities, cityFor } from '../../../utils/cities';
 import { useBookedJobs, bookedWhen } from '../../../utils/followOn';
+import { bookedPickupMs } from '../../../utils/bookLater';
 import { biddingEnabled, counterSteps, offerSeconds, sendCounterOffer, withdrawCounterOffer } from '../../../utils/bidding';
 import { clearJobAlerts, ringForNewJob, stopJobRing } from '../../../utils/notifications';
 import PaymentTypeBanner from '../../../components/PaymentTypeBanner';
@@ -1672,6 +1673,16 @@ export default function DriverHomeScreen() {
               </View>
             ) : null}
             <PaymentTypeBanner method={currentRide.paymentMethod} collectBy={currentRide.collectBy} account={currentRide.account} style={{ marginBottom: SPACE[4] }} />
+            {/* An app ride booked for later (functions/bookLater.js): the
+                passenger expects the car at this time, not straight away. */}
+            {bookedPickupMs(currentRide) ? (
+              <View style={styles.fleetBanner}>
+                <Ionicons name="calendar-outline" size={16} color={COLORS.midnight} />
+                <Text style={styles.fleetBannerText} numberOfLines={2}>
+                  Booked for {formatPickupTime(currentRide.pickupAt)} · waiting is free until then
+                </Text>
+              </View>
+            ) : null}
             {currentRide.source === 'phone' ? (
               <View style={styles.fleetBanner}>
                 <Ionicons name="call-outline" size={16} color={COLORS.midnight} />

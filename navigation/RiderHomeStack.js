@@ -11,6 +11,7 @@ import HomeScreen from "../screens/Home/HomeScreen";
 import PickupPickerScreen from "../screens/Home/PickupPickerScreen";
 import BookForSomeoneScreen from "../screens/BookForSomeone/BookForSomeoneScreen";
 import ChatScreen from "../screens/Chat/ChatScreen";
+import BookedRidesScreen from "../screens/BookedRides/BookedRidesScreen";
 import RiderPaymentStack from "./Rider/RiderPaymentStack";
 
 const Stack = createNativeStackNavigator();
@@ -29,6 +30,8 @@ export default function RiderHomeStack() {
       <Stack.Screen name="RideTracking" component={RideTrackingScreen} />
       <Stack.Screen name="RideInProgress" component={RideInProgressScreen} />
       <Stack.Screen name="RiderRideCompleted" component={RiderRideCompletedScreen} />
+      {/* Rides booked for later (functions/bookLater.js). */}
+      <Stack.Screen name="BookedRides" component={BookedRidesScreen} />
       
     </Stack.Navigator>
   );
