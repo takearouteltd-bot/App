@@ -29,7 +29,7 @@ esac
 
 : > functions/.env.local
 case $s in
-  bid-jobs|network|booking-checks|allocation-followon|driver-cancel|destination-change)
+  bid-jobs|network|national-desk|booking-checks|allocation-followon|driver-cancel|destination-change)
     echo 'ROUTES_API_BASE=http://127.0.0.1:8999' >> functions/.env.local;;
   fleet-phone)
     printf 'TWILIO_API_BASE=http://127.0.0.1:8999\nTWILIO_NUMBERS_BASE=http://127.0.0.1:8999\nCF_AI_BASE=http://127.0.0.1:8999\nPLACES_API_BASE=http://127.0.0.1:8999\nROUTES_API_BASE=http://127.0.0.1:8999\n' >> functions/.env.local;;

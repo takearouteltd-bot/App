@@ -1215,6 +1215,21 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    /* The national booking desk's board of every online driver
+       (functions/fleet.js refreshNationalBoards): name, car, plate, their
+       fleet, position and whether free, nothing private. Only the staff of
+       the fleet a TakeARoute admin made the national desk
+       (fleets/{id}.nationalDesk, which its owner cannot set) read it; the
+       driver records themselves stay unlistable for them, as for any
+       fleet. Written by the server only. */
+    match /nationalBoard/{fleetId} {
+      allow read: if isAdmin() || (
+        fleetStaffOf(fleetId) &&
+        get(/databases/$(database)/documents/fleets/$(fleetId)).data.get("nationalDesk", false) == true
+      );
+      allow write: if false;
+    }
+
     /* Zone queues, kept by functions/fleet.js. The office sees them, and
        so do the fleet's drivers (their place in the queue). */
     match /fleetQueues/{fleetId} {
