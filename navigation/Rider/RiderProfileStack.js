@@ -15,6 +15,7 @@ import MyReportsScreen from "../../screens/Reports/MyReportsScreen";
 import ReportDetailScreen from "../../screens/Reports/ReportDetailScreen";
 import ReportIssueScreen from "../../screens/Report/ReportIssueScreen";
 import EmergencyContactScreen from "../../screens/Safety/EmergencyContactScreen";
+import InviteFriendsScreen from "../../screens/Rider/RiderProfile/InviteFriendsScreen";
 
 const Stack = createNativeStackNavigator();
 
@@ -34,6 +35,7 @@ export default function RiderProfileStack() {
       <Stack.Screen name="ReportDetail" component={ReportDetailScreen} />
       <Stack.Screen name="ReportIssueScreen" component={ReportIssueScreen} initialParams={{ reporterType: "rider" }} />
       <Stack.Screen name="EmergencyContact" component={EmergencyContactScreen} initialParams={{ role: "rider" }} />
+      <Stack.Screen name="InviteFriends" component={InviteFriendsScreen} />
 
     
     </Stack.Navigator>

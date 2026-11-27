@@ -2255,6 +2255,11 @@ module.exports = (deps) => {
     // (paid before records were kept), then mark them all as from a
     // deleted account. They keep no name or number, only the phone hash.
     await keepMembershipPayments(uid, phoneHash);
+    // Invite-a-friend code, profile and unspent ride credit (referrals.js).
+    if (deps.forgetReferrals) {
+      await deps.forgetReferrals(uid).catch((e) =>
+        console.error(tag, "referrals", uid, e.message));
+    }
     if (walletSnap.exists) await db.recursiveDelete(refs.wallet);
     try {
       const bucket = admin.storage().bucket();

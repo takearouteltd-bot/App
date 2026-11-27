@@ -126,6 +126,13 @@ const CONFIG_DEFAULTS = {
   // passenger may have booked ahead at once. Off until switched on.
   bookLater: {enabled: 0, minMinutes: 30, maxDays: 7, leadMinutes: 20,
     maxOpen: 3},
+  // Invite a friend (referrals.js). Off until the owners choose amounts:
+  // ride credit for the new passenger and for the friend who invited them,
+  // paid after the new passenger's first card trip of at least minTripFare;
+  // at most monthlyCap referrer rewards a month (0 = none); a code can be
+  // entered within accountAgeDays of joining.
+  referrals: {enabled: 0, newRiderReward: 0, referrerReward: 0, monthlyCap: 5,
+    minTripFare: 10, accountAgeDays: 30},
 };
 
 /**
@@ -266,6 +273,21 @@ async function loadAppConfig() {
           data.bookLater, "leadMinutes", d.bookLater.leadMinutes)))),
       maxOpen: Math.min(10, Math.max(1, Math.round(numSetting(
           data.bookLater, "maxOpen", d.bookLater.maxOpen)))),
+    },
+    referrals: {
+      enabled: numSetting(data.referrals, "enabled",
+          d.referrals.enabled) === 1 ? 1 : 0,
+      // Capped so a typo cannot hand out a fortune.
+      newRiderReward: Math.min(100, numSetting(data.referrals,
+          "newRiderReward", d.referrals.newRiderReward)),
+      referrerReward: Math.min(100, numSetting(data.referrals,
+          "referrerReward", d.referrals.referrerReward)),
+      monthlyCap: Math.min(100, Math.floor(numSetting(data.referrals,
+          "monthlyCap", d.referrals.monthlyCap))),
+      minTripFare: numSetting(data.referrals, "minTripFare",
+          d.referrals.minTripFare),
+      accountAgeDays: Math.min(365, numSetting(data.referrals,
+          "accountAgeDays", d.referrals.accountAgeDays)),
     },
     bidJobs: {
       enabled: numSetting(data.bidJobs, "enabled", d.bidJobs.enabled) === 1 ?
@@ -1277,6 +1299,10 @@ exports.chargeOnRideCompletion = functions
         return null;
       }
 
+      // Ride credit taken off this charge (referrals.js), and whether any
+      // card money was taken, so a failure can give the credit back.
+      let creditMinor = 0;
+      let cardCaptured = false;
       try {
       // =========================
       // MARK PROCESSING
@@ -1304,6 +1330,19 @@ exports.chargeOnRideCompletion = functions
           after.extraHolds : [];
         if (baseTotal > 0) {
           finalAmount = Math.max(0, Math.round(finalTotal * 100) - cashMinor);
+        }
+        // Ride credit from invite-a-friend comes off the card part, never
+        // all of it (referrals.takeRideCredit leaves Stripe's smallest
+        // charge). The driver is still credited the whole fare.
+        if (finalAmount > 0) {
+          try {
+            creditMinor = await referrals.takeRideCredit(rideId, after,
+                finalAmount, rideCurrency(after));
+          } catch (error) {
+            console.error("Ride credit not applied:", rideId, error.message);
+            creditMinor = 0;
+          }
+          finalAmount -= creditMinor;
         }
 
         if (finalAmount <= 0) {
@@ -1354,6 +1393,7 @@ exports.chargeOnRideCompletion = functions
                 idempotencyKey: `capture_${rideId}`,
               },
           );
+          cardCaptured = true;
           // Any second hold is not needed.
           await destinationChange.releaseExtraHolds(rideId, extraHolds);
         } else {
@@ -1368,6 +1408,7 @@ exports.chargeOnRideCompletion = functions
               {amount_to_capture: paymentIntent.amount},
               {idempotencyKey: `capture_base_${rideId}`},
           );
+          cardCaptured = true;
 
           // A second hold placed when the fare went up mid-trip covers the
           // next part; only what is still left is charged on its own.
@@ -1428,16 +1469,20 @@ exports.chargeOnRideCompletion = functions
         // =========================
         // If the extra charge failed, the total actually taken is the
         // hold amount, and the waiting charge is recorded as unpaid.
+        // fare.finalTotal stays the trip's price, ride credit included: the
+        // driver's wallet is credited from it (TakeARoute pays the credit).
         await db.collection("rides").doc(rideId).update({
           "paymentStatus": "captured",
           "fare.waitingCharge": waitingFee,
           "fare.finalTotal": extraChargeFailed ?
-            Math.round(finalAmount + cashMinor) / 100 : finalTotal,
+            Math.round(finalAmount + cashMinor + creditMinor) / 100 :
+            finalTotal,
           // The card and cash parts, when the driver collected some in cash.
-          ...(cashMinor > 0 ? {
-            "fare.cashExtra": cashMinor / 100,
-            "fare.cardTotal": finalAmount / 100,
-          } : {}),
+          ...(cashMinor > 0 ? {"fare.cashExtra": cashMinor / 100} : {}),
+          ...(cashMinor > 0 || creditMinor > 0 ?
+            {"fare.cardTotal": finalAmount / 100} : {}),
+          ...(creditMinor > 0 ? {"fare.creditApplied": creditMinor / 100} :
+            {}),
           "extraChargeFailed": extraChargeFailed,
           "extraChargeError": extraChargeError,
           "cardLast4": cardLast4,
@@ -1448,6 +1493,12 @@ exports.chargeOnRideCompletion = functions
         return null;
       } catch (error) {
         console.error("❌ PAYMENT FAILED:", error);
+
+        // Nothing was taken from the card: the ride credit goes back.
+        if (creditMinor > 0 && !cardCaptured) {
+          await referrals.restoreRideCredit(rideId, after.riderId)
+              .catch((e) => console.error("Credit not restored:", rideId, e));
+        }
 
         await paymentAlerts.raise("card_capture_failed", rideId, {
           title: "Card payment failed after a trip",
@@ -5363,11 +5414,19 @@ function paidLine(ride) {
   // The card did not cover a raised fare: the rest went to the driver in
   // cash (destinationChange.js).
   const fare = ride.fare || {};
+  const code = ride.currency || fare.currency;
+  // Ride credit from invite-a-friend took part of it (referrals.js).
+  const credit = Number(fare.creditApplied) > 0 ?
+    ` ${emailMoney(fare.creditApplied, code)} came off as ride credit.` : "";
   if (Number(fare.cashExtra) > 0) {
-    const code = ride.currency || fare.currency;
     return `${booked}Paid by card ending ${ride.cardLast4 || "on file"} ` +
       `(${emailMoney(fare.cardTotal, code)}) and ` +
-      `${emailMoney(fare.cashExtra, code)} in cash to the driver.`;
+      `${emailMoney(fare.cashExtra, code)} in cash to the driver.${credit}`;
+  }
+  if (credit) {
+    return `${booked}Paid by card ending ${ride.cardLast4 ||
+      ps.cardLast4 || "on file"} (${emailMoney(fare.cardTotal, code)}).` +
+      credit;
   }
   return `${booked}Paid by card ending ${ride.cardLast4 ||
     ps.cardLast4 || "on file"}.`;
@@ -5480,8 +5539,11 @@ function buildReceipt(ride, rideId, extra) {
   // sent (or resent) once it has been paid, and counts in the total paid.
   const tip = !isFee && ride.tip && ride.tip.status === "paid" ?
     Number(ride.tip.amount) || 0 : 0;
+  // Ride credit (referrals.js) is part of the fare but not paid by them.
+  const credit = !isFee ? Number(fare.creditApplied) || 0 : 0;
+  if (credit > 0) add("Ride credit", "-" + emailMoney(credit, currency));
   if (tip > 0) add("Tip for your driver", emailMoney(tip, currency));
-  const paid = Math.round((total + tip) * 100) / 100;
+  const paid = Math.round((total - credit + tip) * 100) / 100;
 
   const rowsHtml = lines.map((l) => `
       <tr>
@@ -6284,6 +6346,8 @@ Object.assign(exports, require("./fleet")({
   STRIPE_SECRETS, fleetBilling, shared: fleetShared, stripe, privacy,
   membershipSuspended, positionStale, settleDriverEndedEarly,
   membershipPhoneHash, phoneOwners, poolNote, bookLater,
+  // Declared further down; only called once everything has loaded.
+  forgetReferrals: (uid) => referrals.forgetAccount(uid),
 }));
 // The passenger changing the destination mid-trip, and extended trips;
 // used by chargeOnRideCompletion, cancelRidePayment and the driver
@@ -6315,3 +6379,10 @@ const cardSwitch = require("./cardSwitch")({
   paymentAlerts,
 });
 Object.assign(exports, cardSwitch.functions);
+// Invite a friend: codes, the reward after a first paid trip, and ride
+// credit, which chargeOnRideCompletion takes off the card. Off by default.
+const referrals = require("./referrals")({
+  functions, admin, db, stripe, STRIPE_SECRETS, loadAppConfig, toE164,
+  sendPush, emailMoney, rideCurrency, assertAdmin,
+});
+Object.assign(exports, referrals.functions);

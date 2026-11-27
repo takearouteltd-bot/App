@@ -29,6 +29,8 @@ import {
 } from '../../components/ui/kit';
 
 import { confirmLeaveSignup } from "../../utils/leaveSignup";
+import { useAppConfig } from "../../utils/appConfig";
+import { referralsEnabled, applyReferralCode } from "../../utils/referrals";
 // Two steps: this one, then location.
 const TOTAL_STEPS = 2;
 
@@ -42,6 +44,10 @@ export default function RiderProfileScreen({ navigation }) {
   // Phone sign-ups have no address for receipts. Optional, like the photo.
   const askEmail = !auth.currentUser?.email;
   const [email, setEmail] = useState("");
+  // A friend's invite code (functions/referrals.js), only while it is on.
+  const appConfig = useAppConfig();
+  const askInvite = referralsEnabled(appConfig);
+  const [inviteCode, setInviteCode] = useState("");
 
   const isFormValid = fullName.trim().length > 0;
 
@@ -146,6 +152,18 @@ export default function RiderProfileScreen({ navigation }) {
 
       console.log("✅ Rider profile updated");
 
+      // An invite code that doesn't work never stops sign-up.
+      if (askInvite && inviteCode.trim()) {
+        try {
+          await applyReferralCode(inviteCode);
+        } catch (codeError) {
+          Alert.alert(
+            "Invite code not added",
+            `${codeError?.message || "That code could not be used."} You can try again from Profile > Invite friends.`
+          );
+        }
+      }
+
       // 👉 Move to next onboarding step
       navigation.navigate("EnableLocation");
 
@@ -231,6 +249,21 @@ export default function RiderProfileScreen({ navigation }) {
               You can add a phone number later from your profile, so your driver can call you.
             </Text>
           )}
+
+          {askInvite ? (
+            <Field
+              label="Invite code (optional)"
+              left="gift-outline"
+              placeholder="From a friend"
+              value={inviteCode}
+              onChangeText={setInviteCode}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              maxLength={12}
+              style={{ marginTop: SPACE[4] }}
+              hint="Get ride credit after your first trip paid by card."
+            />
+          ) : null}
         </ScrollView>
 
         <Footer>

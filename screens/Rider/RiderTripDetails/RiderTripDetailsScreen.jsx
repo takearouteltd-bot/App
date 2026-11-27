@@ -157,7 +157,9 @@ export default function RiderTripDetailsScreen() {
   const rowMoney = (n) => money(n, trip.currency || fare.currency);
 
   // Fare is an object; finalTotal (with waiting time) once the trip is paid.
-  const fareTotal = isCancelled ? feeCharged : Number(fare.finalTotal ?? fare.total ?? 0);
+  // Ride credit (functions/referrals.js) came off the card part.
+  const rideCredit = isCancelled ? 0 : Number(fare.creditApplied) || 0;
+  const fareTotal = isCancelled ? feeCharged : Number(fare.finalTotal ?? fare.total ?? 0) - rideCredit;
   const paymentMethod = trip.paymentMethod || trip.payment?.method || 'card';
 
   // ✅ Pickup & dropoff from nested location objects
@@ -225,6 +227,7 @@ export default function RiderTripDetailsScreen() {
         fare.waitingCharge > 0 && !trip.extraChargeFailed ? ['Waiting time', rowMoney(fare.waitingCharge)] : null,
         // Miles past the drop-off, once approved (functions/extendedTrips.js).
         fare.extendedExtra > 0 ? ['Extra miles past the drop-off', rowMoney(fare.extendedExtra)] : null,
+        rideCredit > 0 ? ['Ride credit', `-${rowMoney(rideCredit)}`] : null,
       ].filter(Boolean);
   // A tip is its own card payment after the trip, shown under the fare.
   const tip = paidTip(live || trip);
