@@ -341,6 +341,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    /* "Share my trip" links (functions/fleetWeb.js shareTripLink): the
+       token for each ride. Server only: the page asks webTrack, and the
+       passenger's app asks shareTripLink, so no driver or other passenger
+       can read a link off a ride or this record. */
+    match /tripShares/{rideId} {
+      allow read, write: if false;
+    }
+
     /* Membership payments, kept for the books and disputes even after an
        account is deleted (functions/index.js). Admins read; only the
        server writes. */

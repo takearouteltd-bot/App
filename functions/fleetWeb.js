@@ -30,6 +30,8 @@
                             intentId, status pending|authorised|captured|
                             released|failed, amount, capturedAmount}
    fleets/{id}/customers/{phone}.webRides   latest web booking ids
+   tripShares/{rideId}      token "s...", riderId, expiresAt, shares: a
+                            passenger's "Share my trip" link (server only)
    ====================================== */
 
 const crypto = require("crypto");
@@ -731,6 +733,9 @@ module.exports = (deps) => {
           // Card payment links (cardSwitch.js), a week after they ran out.
           purge(db.collection("cardLinks")
               .where("expiresAt", "<", now - 7 * 86400000)),
+          // Shared trip links (shareTripLink), a week after they ran out.
+          purge(db.collection("tripShares")
+              .where("expiresAt", "<", now - 7 * 86400000)),
         ]);
         console.log("Web clean-up:", counts.join(", "));
         return null;
@@ -759,10 +764,104 @@ module.exports = (deps) => {
 
   /* ------------------------------ tracking --------------------------- */
 
+  // Links shared from the passenger's app ("Share my trip", below).
+  const SHARE_TOKEN = /^s[A-Za-z0-9_-]{22}$/;
+  const SHARE_STATUSES = ["accepted", "arrived", "ongoing"];
+  const SHARE_HOURS = 24;
+
+  /**
+   * The driver as the tracking page shows them: first name, car, plate,
+   * photo and, while they are on the way or on the trip, where they are.
+   * No phone number or anything else from their record.
+   * @param {Object} r Ride data.
+   * @return {Promise<?Object>} Driver, or null before a driver accepts or
+   *   once the trip is over.
+   */
+  async function driverView(r) {
+    if (!r.driverId || !["accepted", "arrived", "ongoing"].includes(r.status)) {
+      return null;
+    }
+    // On a job the driver's phone writes drivers/{id}.location. Not while
+    // they are still finishing someone else's trip (a follow-on job,
+    // followOn.js): that is the other passenger's journey.
+    const dSnap = await db.collection("drivers").doc(r.driverId).get();
+    const dv = dSnap.exists ? dSnap.data() : {};
+    const loc = dv.location || {};
+    const finishing = r.status === "accepted" && r.followOn &&
+      !r.followOn.startedAt;
+    const pos = !finishing && Number.isFinite(Number(loc.latitude)) &&
+      Number.isFinite(Number(loc.longitude)) ?
+      {latitude: Number(loc.latitude), longitude: Number(loc.longitude)} :
+      null;
+    return {
+      name: dv.firstName || String(dv.fullName || "").split(" ")[0] ||
+        "Your driver",
+      car: [dv.vehicleColor, dv.makeModel].filter(Boolean).join(" "),
+      registration: dv.registrationNumber ?
+        String(dv.registrationNumber).toUpperCase() : "",
+      photo: dv.profileImage || null,
+      position: pos,
+    };
+  }
+
+  /**
+   * Straight-line km between two points.
+   * @param {Object} a Point.
+   * @param {Object} b Point.
+   * @return {number} Km (Infinity without both points).
+   */
+  function kmBetween(a, b) {
+    if (!a || !b || !Number.isFinite(Number(a.latitude)) ||
+        !Number.isFinite(Number(b.latitude))) {
+      return Infinity;
+    }
+    const rad = (d) => Number(d) * Math.PI / 180;
+    const dLat = rad(b.latitude - a.latitude);
+    const dLon = rad(b.longitude - a.longitude);
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.latitude)) *
+      Math.cos(rad(b.latitude)) * Math.sin(dLon / 2) ** 2;
+    return 2 * 6371 * Math.asin(Math.sqrt(h));
+  }
+
+  /**
+   * A rough time to the pickup (driver on the way) or to the drop-off
+   * through the stops left (on the trip), from the car's position: the
+   * same town-driving guess as follow-on jobs (followOn.js), not a road
+   * route, so the page says "about". No Google call per poll.
+   * @param {Object} r Ride data.
+   * @param {?Object} driver From driverView.
+   * @return {?number} Minutes, or null.
+   */
+  function etaMinutesOf(r, driver) {
+    const pos = driver && driver.position;
+    if (!pos) return null;
+    let points;
+    if (r.status === "accepted") {
+      points = [r.pickupLocation];
+    } else if (r.status === "ongoing") {
+      const stops = Array.isArray(r.stops) ? r.stops : [];
+      points = stops.slice(Math.max(0, Number(r.stopsCompleted) || 0))
+          .concat([r.dropoffLocation]);
+    } else {
+      return null;
+    }
+    let km = 0;
+    let from = pos;
+    for (const p of points) {
+      const leg = kmBetween(from, p);
+      if (!Number.isFinite(leg)) return null;
+      km += leg;
+      from = p;
+    }
+    return Math.max(1, Math.round(km * 1.4 / 30 * 60));
+  }
+
   /* What the tracking page shows. Polled every few seconds; the link in
-     the customer's text is the key. */
+     the customer's text is the key. A link the passenger shared from the
+     app ("Share my trip", shareTripLink) starts with "s" and shows less. */
   out.webTrack = functions.https.onCall(async (data) => {
     const t = text(data && data.trackToken, 64);
+    if (SHARE_TOKEN.test(t)) return sharedTrack(t);
     const found = /^[A-Za-z0-9_-]{22}$/.test(t) ? await db.collection("rides")
         .where("trackToken", "==", t).limit(1).get() : null;
     const doc = found && !found.empty ? found.docs[0] : null;
@@ -790,29 +889,110 @@ module.exports = (deps) => {
       paymentStatus: r.webPayment ? r.webPayment.status : null,
       canCancel: !appRide && ["payment_pending", "scheduled", "dispatching"]
           .includes(r.status) && !r.driverId,
-      driver: null,
+      driver: await driverView(r),
     };
-    if (r.driverId && ["accepted", "arrived", "ongoing"].includes(r.status)) {
-      // On a job the driver's phone writes drivers/{id}.location.
-      const dSnap = await db.collection("drivers").doc(r.driverId).get();
-      const dv = dSnap.exists ? dSnap.data() : {};
-      const loc = dv.location || {};
-      const pos = Number.isFinite(Number(loc.latitude)) &&
-        Number.isFinite(Number(loc.longitude)) ?
-        {latitude: Number(loc.latitude), longitude: Number(loc.longitude)} :
-        null;
-      result.driver = {
-        name: dv.firstName || String(dv.fullName || "").split(" ")[0] ||
-          "Your driver",
-        car: [dv.vehicleColor, dv.makeModel].filter(Boolean).join(" "),
-        registration: dv.registrationNumber ?
-          String(dv.registrationNumber).toUpperCase() : "",
-        photo: dv.profileImage || null,
-        position: pos,
-      };
-    }
+    result.etaMinutes = etaMinutesOf(r, result.driver);
     return result;
   });
+
+  /* ---------------------------- share my trip ------------------------ */
+
+  /* "Share my trip" in the passenger's app: a link to the tracking page
+     for a friend or family member, sent from the phone's own share sheet.
+     tripShares/{rideId} (server only) holds the token, so asking again
+     gives the same link. The page it opens shows the driver's first name,
+     car, plate and photo, where the car is while the driver is on the way
+     and on the trip, the pickup and drop-off and a rough arrival time;
+     never a phone number, the fare or how it is paid, and no cancel
+     button. Once the trip is over or cancelled it says so and shows
+     nothing else, and a day after the last share the link stops working
+     (unless the trip is somehow still going). 16 random bytes, as the web
+     booker's links: nobody guesses one. The token is not on the ride,
+     which approved drivers can read while it is looking for a driver. */
+  out.shareTripLink = functions.https.onCall(async (data, context) => {
+    const uid = context.auth && context.auth.uid;
+    if (!uid) {
+      throw new HttpsError("unauthenticated", "Please sign in again.");
+    }
+    const rideId = text(data && data.rideId, 128);
+    if (!rideId || rideId.includes("/")) {
+      throw new HttpsError("invalid-argument", "Which trip?");
+    }
+    const rideRef = db.collection("rides").doc(rideId);
+    const shareRef = db.collection("tripShares").doc(rideId);
+    const share = await db.runTransaction(async (tx) => {
+      const [rideSnap, shareSnap] = await Promise.all([tx.get(rideRef),
+        tx.get(shareRef)]);
+      const r = rideSnap.exists ? rideSnap.data() : null;
+      // Only the passenger who booked it, and only an app ride: a phone or
+      // web booking has its own tracking link, texted by the office.
+      if (!r || r.riderId !== uid || r.fleetId) {
+        throw new HttpsError("permission-denied",
+            "You can only share your own trip.");
+      }
+      if (!SHARE_STATUSES.includes(r.status) || !r.driverId) {
+        throw new HttpsError("failed-precondition", "You can share your " +
+          "trip once a driver is on the way.");
+      }
+      const expiresAt = Date.now() + SHARE_HOURS * 3600 * 1000;
+      const old = shareSnap.exists ? shareSnap.data() : null;
+      if (old && old.riderId === uid && SHARE_TOKEN.test(old.token || "")) {
+        tx.update(shareRef, {expiresAt, shares: FieldValue.increment(1)});
+        return old.token;
+      }
+      const fresh = `s${token(16)}`;
+      tx.set(shareRef, {token: fresh, rideId, riderId: uid, expiresAt,
+        shares: 1, createdAt: FieldValue.serverTimestamp()});
+      return fresh;
+    });
+    return {url: `${BASE}/t/${share}`, token: share};
+  });
+
+  /**
+   * What a shared trip link shows (see shareTripLink).
+   * @param {string} t Share token.
+   * @return {Promise<Object>} The tracking page's data, shared: true.
+   */
+  async function sharedTrack(t) {
+    const found = await db.collection("tripShares").where("token", "==", t)
+        .limit(1).get();
+    const s = found.empty ? null : found.docs[0].data();
+    const rideSnap = s ? await db.collection("rides").doc(s.rideId).get() :
+      null;
+    const r = rideSnap && rideSnap.exists ? rideSnap.data() : null;
+    const live = Boolean(r && SHARE_STATUSES.includes(r.status));
+    if (!r || r.riderId !== s.riderId ||
+        (!live && Number(s.expiresAt || 0) < Date.now())) {
+      throw new HttpsError("not-found", "This trip link has expired.");
+    }
+    const riderSnap = await db.collection("riders").doc(r.riderId).get()
+        .catch(() => null);
+    const rider = riderSnap && riderSnap.exists ? riderSnap.data() : {};
+    const first = String(rider.firstName || rider.fullName ||
+      r.bookedByName || "").trim().split(/\s+/)[0].slice(0, 40);
+    const ended = ["completed", "cancelled", "canceled"].includes(r.status);
+    const result = {
+      shared: true,
+      sharedBy: first,
+      status: r.status === "canceled" ? "cancelled" :
+        live || ended ? r.status : "dispatching",
+      fleetName: "TakeARoute",
+      phone: "",
+      bookedBy: "",
+      cash: null,
+      // Where they are going, while the trip is on; nothing once it ends.
+      pickup: live ? booking.point(r.pickupLocation) : null,
+      dropoff: live ? booking.point(r.dropoffLocation) : null,
+      pickupAt: null,
+      fare: null,
+      paidOnline: false,
+      paymentStatus: null,
+      canCancel: false,
+      driver: live ? await driverView(r) : null,
+    };
+    result.etaMinutes = etaMinutesOf(r, result.driver);
+    return result;
+  }
 
   /* An app ride booked for someone else (passengerFor, their mobile in
      rides/{id}/contact/passenger): text them when a driver is on the way,

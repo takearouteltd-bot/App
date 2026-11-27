@@ -19,6 +19,7 @@ import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore'
 import { getAuth } from 'firebase/auth';
 import { db } from '../../config/firebase';
 import SafetyButton from '../../components/SafetyButton';
+import ShareTripButton from '../../components/ShareTripButton';
 import DriverPhotoPlate from '../../components/DriverPhotoPlate';
 import PayByCardInstead from '../../components/PayByCardInstead';
 import { confirmMaskedCall } from '../../utils/calling';
@@ -496,6 +497,9 @@ export default function RideInProgressScreen() {
             />
           </View>
         ) : null}
+
+        {/* A live link for a friend or family member (components/ShareTripButton). */}
+        {driverData ? <ShareTripButton rideId={rideId} driver={driverData} style={{ marginTop: SPACE[2] }} /> : null}
 
         {/* A cash trip: pay by card instead (functions/cardSwitch.js). */}
         <PayByCardInstead ride={ride} rideId={rideId} style={styles.changeBanner} />

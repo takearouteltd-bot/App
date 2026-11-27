@@ -20,6 +20,7 @@ import { getAuth } from 'firebase/auth';
 import { db } from '../../config/firebase';
 import { useWaitingClock } from '../../utils/useWaitingClock';
 import SafetyButton from '../../components/SafetyButton';
+import ShareTripButton from '../../components/ShareTripButton';
 import DriverPhotoPlate from '../../components/DriverPhotoPlate';
 import { confirmMaskedCall } from '../../utils/calling';
 import {
@@ -474,6 +475,9 @@ export default function RideTrackingScreen() {
             />
           </View>
         ) : null}
+
+        {/* A live link for a friend or family member (components/ShareTripButton). */}
+        {driverData ? <ShareTripButton rideId={rideId} driver={driverData} style={{ marginTop: SPACE[2] }} /> : null}
 
         <View style={styles.journey}>
           <RouteLine compact pickup={pickupLocation.address} dropoff={dropoffLocation.address} />

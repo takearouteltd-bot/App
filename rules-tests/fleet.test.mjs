@@ -823,3 +823,15 @@ test('route trail: admins and the fleet read it, nobody else; nobody writes it',
   await assertFails(setDoc(doc(as('own1'), 'rides/took/trail/trip-000000002'), chunk));
   await assertFails(updateDoc(doc(as('adm'), 'rides/took/trail/trip-000000001'), { points: [] }));
 });
+test('share my trip: the links (tripShares) are the server\'s alone', async () => {
+  await seed((db) => setDoc(doc(db, 'tripShares/app'), { token: 's' + 'a'.repeat(22), rideId: 'app', riderId: 'r1', expiresAt: Date.now() + 3600000 }));
+  // Not the passenger who shared it, the driver on the job, another driver, fleet staff or an admin.
+  for (const uid of ['r1', 'd1', 'dind', 'own1', 'adm']) {
+    await assertFails(getDoc(doc(as(uid), 'tripShares/app')));
+    await assertFails(getDocs(query(collection(as(uid), 'tripShares'), where('rideId', '==', 'app'))));
+    await assertFails(setDoc(doc(as(uid), 'tripShares/capp'), { token: 's' + 'b'.repeat(22), rideId: 'capp', riderId: uid }));
+    await assertFails(updateDoc(doc(as(uid), 'tripShares/app'), { riderId: uid }));
+    await assertFails(deleteDoc(doc(as(uid), 'tripShares/app')));
+  }
+  await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(), 'tripShares/app')));
+});
