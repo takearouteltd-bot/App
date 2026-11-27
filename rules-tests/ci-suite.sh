@@ -39,7 +39,7 @@ case $s in
     printf 'STRIPE_API_BASE=http://127.0.0.1:8999\nTWILIO_API_BASE=http://127.0.0.1:8999\n' >> functions/.env.local;;
 esac
 case $s in
-  driver-cancel|tips|destination-change)
+  driver-cancel|tips|destination-change|referrals)
     echo 'STRIPE_API_BASE=http://127.0.0.1:8999' >> functions/.env.local;;
 esac
 

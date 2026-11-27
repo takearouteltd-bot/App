@@ -61,6 +61,52 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    /* ================= INVITE A FRIEND ================= */
+
+    /* functions/referrals.js writes all of it; no app login writes any of
+       it, so nobody can make a code, mark a referral rewarded or give
+       themselves ride credit. A passenger reads only their own profile
+       (code, counts), credit and ledger, and the referrals they are in.
+       Codes are not readable, so nobody can list who owns which code; the
+       phone and card registries hold hashes and are closed to everyone. */
+    match /referralCodes/{code} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
+    match /referralProfiles/{userId} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow write: if false;
+    }
+
+    match /referrals/{refereeId} {
+      allow read: if isAdmin() || (
+        signedIn() && (
+          request.auth.uid == refereeId ||
+          resource.data.referrerId == request.auth.uid
+        )
+      );
+      allow write: if false;
+    }
+
+    match /referralPhones/{phoneHash} {
+      allow read, write: if false;
+    }
+
+    match /referralCards/{cardHash} {
+      allow read, write: if false;
+    }
+
+    match /riderCredit/{userId} {
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+      allow write: if false;
+
+      match /entries/{entryId} {
+        allow read: if isAdmin() || (signedIn() && request.auth.uid == userId);
+        allow write: if false;
+      }
+    }
+
     /* ================= PUSH TOKENS (NEW) ================= */
     /* Each phone saves its own notification token. Cloud Functions read
        these with admin access, so no read rule is needed for them. */
@@ -768,9 +814,10 @@ service cloud.firestore {
         !request.resource.data.keys().hasAny(["paymentIntentId", "paymentStatus",
           "paymentFailure", "earnings", "walletProcessed", "promoTopUpProcessed",
           "acceptedOfferId", "status_history"]) &&
-        /* Cash extra is the server's (destination changes, card switch). */
+        /* Cash extra is the server's (destination changes, card switch),
+           and so is ride credit taken off the charge (referrals.js). */
         !(request.resource.data.get("fare", {}).keys().hasAny(["cashExtra", "extendedExtra",
-          "finalTotal", "agreedPrice"])) &&
+          "finalTotal", "agreedPrice", "creditApplied"])) &&
         /* A booking from the app, nothing else: a phone job or a fleet job
            here would skip the price check and ring a fleet. */
         request.resource.data.status == "searching" &&
