@@ -451,7 +451,9 @@ service cloud.firestore {
       return changed.hasOnly(["status", "cancelledBy", "cancelReason", "endedEarly", "cancelledAt"]) &&
         request.resource.data.status == "cancelled" &&
         request.resource.data.cancelledBy == "rider" &&
-        resource.data.status in ["searching", "accepted", "arrived", "ongoing"] &&
+        /* "scheduled": a ride booked for later (functions/bookLater.js),
+           free to cancel before it is sent out. Phone jobs have no riderId. */
+        resource.data.status in ["searching", "scheduled", "accepted", "arrived", "ongoing"] &&
         stampedNow("cancelledAt") &&
         endedEarlyMatchesTrip();
     }
@@ -672,7 +674,18 @@ service cloud.firestore {
         request.resource.data.cancelledBy == "driver" &&
         resource.data.status in ["accepted", "arrived", "ongoing"] &&
         stampedNow("cancelledAt") &&
-        endedEarlyMatchesTrip();
+        endedEarlyMatchesTrip() &&
+        noShowNotEarly();
+    }
+
+    /* A ride booked for later (functions/bookLater.js, bookedAhead is the
+       server's): a driver who got there early cannot call the passenger a
+       no-show before the time they booked. */
+    function noShowNotEarly() {
+      return request.resource.data.get("cancelReason", "") != "passenger_no_show" ||
+        resource.data.get("bookedAhead", null) == null ||
+        !(resource.data.get("pickupAt", null) is timestamp) ||
+        request.time >= resource.data.pickupAt;
     }
 
     function driverRatesRider(changed) {
@@ -715,6 +728,22 @@ service cloud.firestore {
         data.passengerFor.name.trim().size() >= 1 &&
         data.passengerFor.name.size() <= 60 &&
         data.passengerFor.get("hasPhone", false) is bool
+      );
+    }
+
+    /* Now ("searching", no pickup time), or booked for later
+       (functions/bookLater.js): "scheduled" with a pickup time from 10
+       minutes to 15 days ahead; the server checks the dashboard's window
+       and everything else, and alone sets when it is sent out (dispatchAt,
+       bookedAhead). No bidding on a booking for later. */
+    function bookingWhenOk(data) {
+      return !data.keys().hasAny(["dispatchAt", "dispatch", "bookedAhead"]) && (
+        (data.status == "searching" && data.get("pickupAt", null) == null) ||
+        (data.status == "scheduled" &&
+          data.get("pickupAt", null) is timestamp &&
+          data.pickupAt > request.time + duration.value(10, "m") &&
+          data.pickupAt < request.time + duration.value(15, "d") &&
+          data.get("bidding", false) != true)
       );
     }
 
@@ -794,7 +823,7 @@ service cloud.firestore {
           "finalTotal", "agreedPrice"])) &&
         /* A booking from the app, nothing else: a phone job or a fleet job
            here would skip the price check and ring a fleet. */
-        request.resource.data.status == "searching" &&
+        bookingWhenOk(request.resource.data) &&
         request.resource.data.get("source", "app") == "app" &&
         !("fleetId" in request.resource.data) &&
         request.resource.data.get("driverId", null) == null &&
@@ -897,7 +926,7 @@ service cloud.firestore {
           contactId == "passenger" &&
           get(/databases/$(database)/documents/rides/$(rideId)).data.riderId == request.auth.uid &&
           get(/databases/$(database)/documents/rides/$(rideId)).data.get("passengerFor", null) != null &&
-          get(/databases/$(database)/documents/rides/$(rideId)).data.status == "searching" &&
+          get(/databases/$(database)/documents/rides/$(rideId)).data.status in ["searching", "scheduled"] &&
           request.resource.data.keys().hasOnly(["phone"]) &&
           request.resource.data.phone is string &&
           request.resource.data.phone.matches("[+][1-9][0-9]{7,14}");

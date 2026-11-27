@@ -120,6 +120,12 @@ const CONFIG_DEFAULTS = {
   // switched on, how long after the trip it is still offered, and whether
   // taxi firm jobs (phone, web and fleet drivers' jobs) may use it.
   cardSwitch: {enabled: 1, windowMinutes: 30, fleetJobs: 0},
+  // Passengers booking a ride for later in the app (bookLater.js): switched
+  // on, how soon and how far ahead a pickup may be, how many minutes before
+  // the pickup the search for a driver starts, and how many rides one
+  // passenger may have booked ahead at once. Off until switched on.
+  bookLater: {enabled: 0, minMinutes: 30, maxDays: 7, leadMinutes: 20,
+    maxOpen: 3},
 };
 
 /**
@@ -248,6 +254,19 @@ async function loadAppConfig() {
       fleetJobs: numSetting(data.cardSwitch, "fleetJobs",
           d.cardSwitch.fleetJobs) === 1 ? 1 : 0,
     },
+    bookLater: {
+      enabled: numSetting(data.bookLater, "enabled",
+          d.bookLater.enabled) === 1 ? 1 : 0,
+      minMinutes: Math.min(240, Math.max(15, Math.round(numSetting(
+          data.bookLater, "minMinutes", d.bookLater.minMinutes)))),
+      // firestore.rules allows a pickup up to 15 days ahead.
+      maxDays: Math.min(14, Math.max(1, Math.round(numSetting(
+          data.bookLater, "maxDays", d.bookLater.maxDays)))),
+      leadMinutes: Math.min(120, Math.max(5, Math.round(numSetting(
+          data.bookLater, "leadMinutes", d.bookLater.leadMinutes)))),
+      maxOpen: Math.min(10, Math.max(1, Math.round(numSetting(
+          data.bookLater, "maxOpen", d.bookLater.maxOpen)))),
+    },
     bidJobs: {
       enabled: numSetting(data.bidJobs, "enabled", d.bidJobs.enabled) === 1 ?
         1 : 0,
@@ -278,6 +297,18 @@ function rideCurrency(ride) {
 }
 
 /**
+ * The booked pickup time of an app ride booked for later, in ms, or 0. Only
+ * a booking the server checked counts (bookedAhead, server-written), so a
+ * pickupAt written by an altered app never moves the waiting clock.
+ * @param {Object} ride Ride data.
+ * @return {number} Milliseconds, or 0.
+ */
+function bookedPickupMs(ride) {
+  if (!ride || !ride.bookedAhead || ride.source === "phone") return 0;
+  return toMillis(ride.pickupAt) || 0;
+}
+
+/**
  * Waiting charge between the driver arriving and the ride starting.
  * Same maths as waitingCharge() in the app's utils/appConfig.js.
  * @param {Object} ride Ride document with arrivedAt and startedAt.
@@ -286,8 +317,10 @@ function rideCurrency(ride) {
  */
 function computeWaitingCharge(ride, fallback) {
   if (!ride || !ride.arrivedAt || !ride.startedAt) return 0;
-  const arrived = ride.arrivedAt.toMillis ?
-    ride.arrivedAt.toMillis() : Number(ride.arrivedAt);
+  // A ride booked for later (bookLater.js): a driver who is there before
+  // the booked time waits for free until then.
+  const arrived = Math.max(ride.arrivedAt.toMillis ?
+    ride.arrivedAt.toMillis() : Number(ride.arrivedAt), bookedPickupMs(ride));
   const started = ride.startedAt.toMillis ?
     ride.startedAt.toMillis() : Number(ride.startedAt);
   if (!Number.isFinite(arrived) || !Number.isFinite(started)) return 0;
@@ -473,8 +506,10 @@ function cancellationFee(before, after) {
     if (before.status !== "arrived" || !(arrivedFee > 0)) return 0;
     const arrived = toMillis(after.arrivedAt);
     if (!arrived) return 0;
+    // Booked for later: the wait starts at the booked time, not before.
+    const waitFrom = Math.max(arrived, bookedPickupMs(after));
     const waitMs = numSetting(policy, "noShowWaitMinutes", 5) * 60000;
-    return cancelled - arrived >= waitMs ? round2(arrivedFee) : 0;
+    return cancelled - waitFrom >= waitMs ? round2(arrivedFee) : 0;
   }
   if (after.cancelledBy !== "rider") return 0;
   if (before.status === "arrived" && arrivedFee > 0) return round2(arrivedFee);
@@ -4164,18 +4199,21 @@ async function offerRideToDrivers(rideId, ride, opts = {}) {
   const fareAmount = Number(ride.fare && ride.fare.total) ||
     Number(ride.fareEstimate) || 0;
   const fare = emailMoney(fareAmount, rideCurrency(ride).toUpperCase());
+  // A ride booked for later: its pickup time, which older driver apps do
+  // not show on the offer.
+  const booked = bookLater.driverNote(ride);
   if (ride.bidJob) {
     const short = pickup.split(",")[0];
     await Promise.all(nearby.map((p) => sendPush([p.id], {...ring,
       title: `BID JOB: ${short}`,
-      body: `${bidJobs.milesText(p.km)} away, ${fare}. ` +
+      body: `${booked}${bidJobs.milesText(p.km)} away, ${fare}. ` +
         "Open TakeARoute to take it."}).catch(() => null)));
   } else {
     // Each driver is told how far the pickup is from them.
     await Promise.all(nearby.map((p) => sendPush([p.id], {...ring,
       title: fareAmount > 0 ? `New job offer · ${fare}` : "New job offer",
-      body: `Pickup at ${pickup}, ${bidJobs.milesText(p.km)} away. ` +
-        "Open TakeARoute to accept.",
+      body: `${booked}Pickup at ${pickup}, ${bidJobs.milesText(p.km)} ` +
+        "away. Open TakeARoute to accept.",
     }).catch(() => null)));
   }
   console.log(`Job ${rideId} offered to ${nearby.length} driver(s)` +
@@ -4272,7 +4310,11 @@ async function refuseNewRide(rideId, ride, reason, message) {
   const rideRef = db.collection("rides").doc(rideId);
   const done = await db.runTransaction(async (tx) => {
     const snap = await tx.get(rideRef);
-    if (!snap.exists || snap.data().status !== "searching") return false;
+    // "scheduled": a ride booked for later (bookLater.js).
+    if (!snap.exists ||
+        !["searching", "scheduled"].includes(snap.data().status)) {
+      return false;
+    }
     const riderRef = ride.riderId ?
       db.collection("riders").doc(ride.riderId) : null;
     const rider = riderRef ? await tx.get(riderRef) : null;
@@ -4686,6 +4728,12 @@ exports.notifyDriversOfNewRide = functions
     .document("rides/{rideId}")
     .onCreate(async (snap, context) => {
       const ride = snap.data();
+      // Booked for later in the app: checked now, sent out at its time
+      // (bookLater.js). No card hold yet.
+      if (ride.status === "scheduled" && ride.riderId &&
+          (ride.source || "app") === "app") {
+        return bookLater.checkBooking(context.params.rideId, ride);
+      }
       if (ride.status !== "searching") return null;
       if (ride.riderId && !(await checkNewRide(context.params.rideId, ride))) {
         return null;
@@ -4780,6 +4828,14 @@ exports.notifyRideUpdates = functions.firestore
         await followOn.switchAfter(endedDriver, rideId);
       }
 
+      // A ride booked for later whose time has come: bookLater.js
+      // (startBookedSearch) holds the card and offers it, and tells the
+      // passenger. Not "your driver had to cancel".
+      if (before.status === "scheduled" && after.status === "searching" &&
+          after.riderId) {
+        return null;
+      }
+
       // Back to searching because the card hold failed: the passenger and
       // driver were told by authorizePaymentOnRideAccept, and there is no
       // point offering it again until a card is added.
@@ -4840,6 +4896,13 @@ exports.notifyRideUpdates = functions.firestore
             title: "Driver found",
             body: "Your driver is finishing a trip nearby and will head " +
               `to you straight after${eta ? `, in about ${eta} min` : ""}.`});
+        }
+        if (after.bookedAhead) {
+          return sendPush([after.riderId], {...trip,
+            title: "Driver assigned",
+            body: "A driver has accepted your pickup at " +
+              `${bookLater.ukWhen(toMillis(after.pickupAt))} and is ` +
+              "heading to you."});
         }
         return sendPush([after.riderId], {...trip,
           title: "Driver on the way",
@@ -4921,12 +4984,16 @@ exports.expireSearchingRides = functions
         const rideRef = doc.ref;
         // The search restarts when a driver gives the job back or a card
         // hold fails, so time it from the latest of those, not the booking.
+        // A ride booked for later starts its search at dispatchAt
+        // (bookLater.js), and keeps looking until its pickup time at least.
         const searchStarted = Math.max(
             ms(ride.timestamps && ride.timestamps.createdAt),
+            ms(ride.dispatchAt),
             ms(ride.lastDriverCancelAt),
             ms(ride.paymentFailure && ride.paymentFailure.at),
         );
-        if (Date.now() - searchStarted < limitMs) continue;
+        const booked = bookedPickupMs(ride);
+        if (Date.now() < Math.max(searchStarted + limitMs, booked)) continue;
         const done = await db.runTransaction(async (tx) => {
           // Firestore transactions must do every read before the first
           // write, so read the passenger before touching the ride.
@@ -4955,7 +5022,9 @@ exports.expireSearchingRides = functions
         if (!done) continue;
         await sendPush([ride.riderId], {
           title: "No drivers found",
-          body: "No drivers were found. Please try again.",
+          body: booked ? "We couldn't find a driver for your pickup at " +
+            `${bookLater.ukWhen(booked)}. You have not been charged.` :
+            "No drivers were found. Please try again.",
           channelId: "trip-updates",
           data: {type: "trip", rideId: doc.id},
         }).catch(() => null);
@@ -6196,8 +6265,17 @@ Object.assign(exports, bidJobs.functions);
 const appOffers = require("./appOffers")({
   functions, db, loadAppConfig, toMillis, appDriverPool, poolNote, sendPush,
   followOn, bidJobs, ringAll: offerRideToDrivers, emailMoney, rideCurrency,
+  bookedNote: (ride) => bookLater.driverNote(ride),
 });
 Object.assign(exports, appOffers.functions);
+// Passengers booking a ride for later in the app; used by
+// notifyDriversOfNewRide, notifyRideUpdates, expireSearchingRides,
+// offerRideToDrivers and fleet.js dispatchScheduledRides.
+const bookLater = require("./bookLater")({
+  functions, db, loadAppConfig, toMillis, sendPush, STRIPE_SECRETS,
+  checkNewRide, refuseNewRide, holdAtBooking, offerRideToDrivers,
+});
+Object.assign(exports, bookLater.functions);
 Object.assign(exports, require("./fleet")({
   functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
   wantsJobType, belowMinFare, followOn, bidJobs,
@@ -6205,7 +6283,7 @@ Object.assign(exports, require("./fleet")({
   TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor,
   STRIPE_SECRETS, fleetBilling, shared: fleetShared, stripe, privacy,
   membershipSuspended, positionStale, settleDriverEndedEarly,
-  membershipPhoneHash, phoneOwners, poolNote,
+  membershipPhoneHash, phoneOwners, poolNote, bookLater,
 }));
 // The passenger changing the destination mid-trip, and extended trips;
 // used by chargeOnRideCompletion, cancelRidePayment and the driver

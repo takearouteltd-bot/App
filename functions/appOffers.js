@@ -56,7 +56,8 @@ const GRACE_MS = 700;
 
 module.exports = (deps) => {
   const {functions, db, loadAppConfig, toMillis, appDriverPool, poolNote,
-    sendPush, followOn, bidJobs, ringAll, emailMoney, rideCurrency} = deps;
+    sendPush, followOn, bidJobs, ringAll, emailMoney, rideCurrency,
+    bookedNote} = deps;
   const {FieldValue, Timestamp} = require("firebase-admin/firestore");
   const {waitThen} = require("./offerTimer");
   const out = {};
@@ -244,8 +245,9 @@ module.exports = (deps) => {
           data: {type: "job_offer", rideId,
             expiresAt: Date.now() + seconds * 1000},
           title: `New job offer${fare}`,
-          body: `Pickup at ${pickup}, ${bidJobs.milesText(next.km)} away. ` +
-            `${seconds} s to answer.`,
+          // Booked for later: the pickup time first (bookLater.js).
+          body: `${bookedNote ? bookedNote(ride) : ""}Pickup at ${pickup}, ` +
+            `${bidJobs.milesText(next.km)} away. ${seconds} s to answer.`,
         }).catch(() => null);
       }
       // A busy driver about to drop off nearby, if they would be quicker.

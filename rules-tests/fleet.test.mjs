@@ -854,3 +854,80 @@ test('lowest fare: a driver sets none or a number from 0 to 200 on their own rec
   await assertSucceeds(updateDoc(doc(as('d2'), 'drivers/d2'), { minJobFare: 20 }));
   await assertSucceeds(updateDoc(doc(as('adm'), 'drivers/d2'), { minJobFare: 300 }));
 });
+
+/* Booked for later in the app (functions/bookLater.js): "scheduled" with a
+   pickup time; the server alone sets when it is sent out. */
+test('book for later: a scheduled booking with a pickup time in the window, nothing the server sets', async () => {
+  const db = as('pass1');
+  const at = (min) => Timestamp.fromMillis(Date.now() + min * 60000);
+  const later = (extra = {}) => booking({ status: 'scheduled', pickupAt: at(60), ...extra });
+  await assertSucceeds(addDoc(collection(db, 'rides'), later()));
+  await assertSucceeds(addDoc(collection(db, 'rides'), later({ pickupAt: at(14 * 24 * 60) })));
+  await assertSucceeds(addDoc(collection(db, 'rides'), later({ bidding: false })));
+  await assertFails(addDoc(collection(db, 'rides'), later({ pickupAt: at(5) })));
+  await assertFails(addDoc(collection(db, 'rides'), later({ pickupAt: at(-60) })));
+  await assertFails(addDoc(collection(db, 'rides'), later({ pickupAt: at(16 * 24 * 60) })));
+  await assertFails(addDoc(collection(db, 'rides'), later({ pickupAt: Date.now() + 3600000 })));
+  await assertFails(addDoc(collection(db, 'rides'), booking({ status: 'scheduled' })));
+  await assertFails(addDoc(collection(db, 'rides'), later({ dispatchAt: at(30) })));
+  await assertFails(addDoc(collection(db, 'rides'), later({ bookedAhead: { leadMinutes: 20 } })));
+  await assertFails(addDoc(collection(db, 'rides'), later({ dispatch: { leadMinutes: 0 } })));
+  await assertFails(addDoc(collection(db, 'rides'), later({ bidding: true })));
+  await assertFails(addDoc(collection(db, 'rides'), later({ pricing: 'checked' })));
+  await assertFails(addDoc(collection(db, 'rides'), later({ paymentStatus: 'authorized' })));
+  await assertFails(addDoc(collection(db, 'rides'), later({ source: 'phone' })));
+  await assertFails(addDoc(collection(db, 'rides'), later({ fleetId: 'f1' })));
+  await assertFails(addDoc(collection(db, 'rides'), later({ riderId: 'someone' })));
+  // A booking for now carries no pickup time: it would move the waiting clock.
+  await assertFails(addDoc(collection(db, 'rides'), booking({ pickupAt: at(60) })));
+  await assertFails(addDoc(collection(db, 'rides'), booking({ dispatchAt: at(60) })));
+  await assertSucceeds(addDoc(collection(db, 'rides'), booking({ pickupAt: null })));
+});
+test('book for later: a blocked passenger cannot; the App Review passenger only in the test area', async () => {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'riders/blk'), { blocked: true });
+    await setDoc(doc(db, 'riders/rev'), { appReview: true });
+  });
+  const at = Timestamp.fromMillis(Date.now() + 3600000);
+  const ride = (uid, pickup) => ({ riderId: uid, driverId: null, status: 'scheduled', rideType: 'RouteMini', pickupAt: at, pickupLocation: pickup });
+  const INVERNESS = { latitude: 57.48, longitude: -4.22 };
+  const LONDON = { latitude: 51.5, longitude: -0.12 };
+  await assertFails(addDoc(collection(as('blk'), 'rides'), ride('blk', LONDON)));
+  await assertFails(addDoc(collection(as('rev'), 'rides'), ride('rev', LONDON)));
+  await assertSucceeds(addDoc(collection(as('rev'), 'rides'), ride('rev', INVERNESS)));
+});
+test('book for later: drivers cannot see or take it; only its passenger cancels it; the time is fixed', async () => {
+  const soon = Timestamp.fromMillis(Date.now() + 3600000);
+  await seed((db) => setDoc(doc(db, 'rides/bl1'), cAppJob({ riderId: 'pass1', status: 'scheduled', pickupAt: soon, bookedAhead: { leadMinutes: 20 }, dispatchAt: soon })));
+  await assertFails(getDoc(doc(as('cfree'), 'rides/bl1')));
+  await assertFails(updateDoc(doc(as('cfree'), 'rides/bl1'), claim('cfree')));
+  await assertFails(updateDoc(doc(as('cfree'), 'rides/bl1'), { declinedBy: ['cfree'] }));
+  await assertSucceeds(getDoc(doc(as('pass1'), 'rides/bl1')));
+  await assertSucceeds(getDocs(query(collection(as('pass1'), 'rides'), where('riderId', '==', 'pass1'), where('status', '==', 'scheduled'))));
+  await assertFails(updateDoc(doc(as('pass1'), 'rides/bl1'), { pickupAt: Timestamp.fromMillis(Date.now() + 7200000) }));
+  await assertFails(updateDoc(doc(as('pass1'), 'rides/bl1'), { dispatchAt: Timestamp.now() }));
+  await assertFails(updateDoc(doc(as('pass1'), 'rides/bl1'), { status: 'searching' }));
+  const cancel = { status: 'cancelled', cancelledBy: 'rider', cancelledAt: serverTimestamp() };
+  await assertFails(updateDoc(doc(as('r1'), 'rides/bl1'), cancel));
+  await assertSucceeds(updateDoc(doc(as('pass1'), 'rides/bl1'), cancel));
+});
+test('book for later: the mobile of the person it is for is saved while it is booked', async () => {
+  await seed((db) => setDoc(doc(db, 'rides/blfor'), cAppJob({ riderId: 'pass1', status: 'scheduled', passengerFor: { name: 'Mum', hasPhone: true } })));
+  await assertSucceeds(setDoc(doc(as('pass1'), 'rides/blfor/contact/passenger'), { phone: '+447700900123' }));
+});
+test('book for later: no no-show before the booked time; after it, and other cancels, as usual', async () => {
+  const bl = (min) => cAppJob({ riderId: 'pass1', status: 'arrived', driverId: 'cfree', arrivedAt: Timestamp.now(),
+    pickupAt: Timestamp.fromMillis(Date.now() + min * 60000), bookedAhead: { leadMinutes: 20 } });
+  await seed(async (db) => {
+    await setDoc(doc(db, 'rides/blEarly'), bl(15));
+    await setDoc(doc(db, 'rides/blEarly2'), bl(15));
+    await setDoc(doc(db, 'rides/blDue'), bl(-1));
+    // A pickupAt without the server's bookedAhead changes nothing.
+    await setDoc(doc(db, 'rides/blRaw'), { ...bl(15), bookedAhead: null });
+  });
+  const noShow = { status: 'cancelled', cancelledBy: 'driver', cancelReason: 'passenger_no_show', cancelledAt: serverTimestamp() };
+  await assertFails(updateDoc(doc(as('cfree'), 'rides/blEarly'), noShow));
+  await assertSucceeds(updateDoc(doc(as('cfree'), 'rides/blEarly2'), { ...noShow, cancelReason: 'vehicle_problem' }));
+  await assertSucceeds(updateDoc(doc(as('cfree'), 'rides/blDue'), noShow));
+  await assertSucceeds(updateDoc(doc(as('cfree'), 'rides/blRaw'), noShow));
+});

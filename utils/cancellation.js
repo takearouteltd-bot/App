@@ -19,6 +19,7 @@
 // (cancellationTerms in functions/index.js), so nothing here changes.
 
 import { kmBetween } from './cities';
+import { bookedPickupMs } from './bookLater';
 const BEFORE_PICKUP = ['accepted', 'arrived'];
 
 function millis(ts) {
@@ -57,14 +58,22 @@ export function cancellationFeeFor(ride, now = Date.now()) {
   return now - accepted > num(policy.freeMinutes, 2) * 60000 ? round2(fee) : 0;
 }
 
+// When the no-show wait starts: the driver's arrival, or the booked time of
+// a ride booked for later if they got there early (as functions/index.js
+// cancellationFee). 0 before they have arrived.
+export function noShowFromMs(ride) {
+  const arrived = millis(ride?.arrivedAt);
+  return arrived ? Math.max(arrived, bookedPickupMs(ride)) : 0;
+}
+
 // What the passenger pays if the driver reports a no-show now. 0 until the
 // driver has waited long enough.
 export function noShowFeeFor(ride, now = Date.now()) {
   if (!ride || ride.paymentMethod === 'cash' || ride.status !== 'arrived') return 0;
   const arrivedFee = num(ride.cancellationPolicy?.arrivedFee, 0);
-  const arrived = millis(ride.arrivedAt);
-  if (!(arrivedFee > 0) || !arrived) return 0;
-  return now - arrived >= noShowWaitMs(ride) ? round2(arrivedFee) : 0;
+  const from = noShowFromMs(ride);
+  if (!(arrivedFee > 0) || !from) return 0;
+  return now - from >= noShowWaitMs(ride) ? round2(arrivedFee) : 0;
 }
 
 // What cancelling this job would cost the driver, for the warning only: the
