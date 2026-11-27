@@ -3841,6 +3841,22 @@ exports.payDriverMembership = functions
    job-ring, trip-updates, messages, general.
 ====================================== */
 
+/* Job offers and follow-on offers carry Accept / Decline buttons in app
+   builds that have them (the app's utils/offerAlerts.js), so a driver with
+   Google Maps in front can answer without switching apps.
+     category  iPhone: aps.category names the button set the app
+               registered. An app without it shows the push as before.
+     alertTag  Android: the notification tag. Android shows the push itself
+               while the app is in the background (no buttons are possible
+               on that copy), and the app replaces it, by this tag, with
+               the same alert plus buttons. Also the iPhone apns-collapse-id.
+               Older apps ignore both; a new offer for the same job replaces
+               the last one instead of stacking. */
+const OFFER_ALERTS = {
+  job_offer: {category: "job_offer", prefix: "offer"},
+  follow_on_offer: {category: "follow_on_offer", prefix: "followon"},
+};
+
 /**
  * Sends one notification to every saved phone for the given users and
  * removes tokens Firebase says are no longer valid.
@@ -3866,6 +3882,11 @@ async function sendPush(uids, msg) {
   Object.entries(msg.data || {}).forEach(([k, v]) => {
     if (v !== undefined && v !== null) data[k] = String(v);
   });
+  const offer = data.rideId ? OFFER_ALERTS[data.type] : null;
+  if (offer) {
+    data.category = offer.category;
+    data.alertTag = `${offer.prefix}_${data.rideId}`.slice(0, 64);
+  }
 
   let reached = 0;
   for (let i = 0; i < tokenOwners.length; i += 500) {
@@ -3877,17 +3898,21 @@ async function sendPush(uids, msg) {
       android: {
         priority: "high",
         ttl: (msg.ttlSeconds || 3600) * 1000,
-        notification: {channelId: msg.channelId || "general"},
+        notification: Object.assign({channelId: msg.channelId || "general"},
+            offer ? {tag: data.alertTag} : {}),
       },
       // Same limit as Android's ttl, so a ring for a job that has gone is
       // not delivered late to an iPhone.
-      apns: Object.assign(msg.ttlSeconds ? {headers: {"apns-expiration":
-        String(Math.floor(Date.now() / 1000) + msg.ttlSeconds)}} : {},
+      apns: Object.assign({headers: Object.assign({},
+          msg.ttlSeconds ? {"apns-expiration":
+            String(Math.floor(Date.now() / 1000) + msg.ttlSeconds)} : {},
+          offer ? {"apns-collapse-id": data.alertTag} : {})},
       // Job offers are time-sensitive on iPhone so they ring through Focus
       // modes, as the high-importance job-ring channel does on Android.
       {payload: {aps: Object.assign({sound: msg.sound || "default"},
           msg.channelId === "job-ring" ?
-            {"interruption-level": "time-sensitive"} : {})}}),
+            {"interruption-level": "time-sensitive"} : {},
+          offer ? {category: offer.category} : {})}}),
     });
     reached += res.successCount;
 
@@ -4102,19 +4127,22 @@ async function offerRideToDrivers(rideId, ride, opts = {}) {
     ttlSeconds: Math.max(10, cfg.dispatch.requestTimeoutSeconds || 20),
     data: {type: "job_offer", rideId},
   };
+  const fareAmount = Number(ride.fare && ride.fare.total) ||
+    Number(ride.fareEstimate) || 0;
+  const fare = emailMoney(fareAmount, rideCurrency(ride).toUpperCase());
   if (ride.bidJob) {
-    const fare = emailMoney(Number(ride.fare && ride.fare.total) ||
-      Number(ride.fareEstimate) || 0, rideCurrency(ride).toUpperCase());
     const short = pickup.split(",")[0];
     await Promise.all(nearby.map((p) => sendPush([p.id], {...ring,
       title: `BID JOB: ${short}`,
       body: `${bidJobs.milesText(p.km)} away, ${fare}. ` +
         "Open TakeARoute to take it."}).catch(() => null)));
   } else {
-    await sendPush(nearby.map((p) => p.id), {...ring,
-      title: "New job offer",
-      body: `Pickup at ${pickup}. Open TakeARoute to accept.`,
-    });
+    // Each driver is told how far the pickup is from them.
+    await Promise.all(nearby.map((p) => sendPush([p.id], {...ring,
+      title: fareAmount > 0 ? `New job offer · ${fare}` : "New job offer",
+      body: `Pickup at ${pickup}, ${bidJobs.milesText(p.km)} away. ` +
+        "Open TakeARoute to accept.",
+    }).catch(() => null)));
   }
   console.log(`Job ${rideId} offered to ${nearby.length} driver(s)` +
     (ride.bidJob ? " as a BID JOB" : "") + `; ${poolNote(pool, radiusKm)}`);
@@ -6120,6 +6148,7 @@ Object.assign(exports, require("./tips")({
 const followOn = require("./followOn")({
   functions, db, sendPush, loadAppConfig, distanceKm, canServe, wantsJobType,
   hasExpiredDocument, membershipSuspended, positionStale, toMillis,
+  emailMoney,
 });
 Object.assign(exports, followOn.functions);
 // BID JOBs; used by offerRideToDrivers, reofferWhenPreferenceDropped, fleet.
@@ -6132,7 +6161,7 @@ Object.assign(exports, bidJobs.functions);
 // reofferWhenPreferenceDropped and openBidJobs.
 const appOffers = require("./appOffers")({
   functions, db, loadAppConfig, toMillis, appDriverPool, poolNote, sendPush,
-  followOn, bidJobs, ringAll: offerRideToDrivers,
+  followOn, bidJobs, ringAll: offerRideToDrivers, emailMoney, rideCurrency,
 });
 Object.assign(exports, appOffers.functions);
 Object.assign(exports, require("./fleet")({

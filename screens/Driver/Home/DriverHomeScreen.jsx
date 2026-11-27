@@ -18,7 +18,7 @@ import { Alert } from '../../../components/ui/alert';
 import MapView, { PROVIDER_GOOGLE } from 'react-native-maps';
 import StaticMarker from '../../../components/StaticMarker';
 import { Ionicons } from '@expo/vector-icons';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import {
   collection,
   query,
@@ -80,6 +80,10 @@ const bidRadiusKm = (ride, normalKm) =>
 const ms = (t) => (t?.toMillis ? t.toMillis() : Number(t) || 0);
 /* App jobs one driver at a time (functions/appOffers.js): ride.offer says
    who is being asked. Not on bidding jobs, BID JOBs, or when switched off. */
+// How long Accept on a job offer alert waits for the job to reach this
+// screen's list (a cold start includes finding the driver's position).
+const ACCEPT_WAIT_MS = 20000;
+
 const oneAtATime = (ride) => Boolean(ride?.offer && !ride.bidJob && ride.source !== 'phone');
 /* Each time the server rings a job counts as a new offer: a new driver
    asked, a BID JOB opened or rung again, a fleet job sent or rung again. A
@@ -1266,6 +1270,37 @@ export default function DriverHomeScreen() {
 
     return () => subscription.remove();
   }, [driverId, navigation]);
+
+  /* ================= ACCEPT FROM THE ALERT ================= */
+  /* Accept pressed on a job offer alert (utils/offerAlerts.js) opens the app
+     here with acceptJobId (App.js). The job is taken as soon as it is on this
+     driver's list, through the same checks as the Accept button; if it has
+     not turned up in ACCEPT_WAIT_MS it has gone. */
+  const route = useRoute();
+  const acceptJobId = route.params?.acceptJobId || null;
+  const acceptAt = route.params?.acceptAt || 0;
+  const [acceptWanted, setAcceptWanted] = useState(null);
+  useEffect(() => {
+    if (!acceptJobId) return;
+    setAcceptWanted({ id: acceptJobId, at: acceptAt || Date.now() });
+    navigation.setParams({ acceptJobId: undefined, acceptAt: undefined });
+  }, [acceptJobId, acceptAt, navigation]);
+  useEffect(() => {
+    if (!acceptWanted || isAccepting) return undefined;
+    const ride = rideRequests.find((r) => r.id === acceptWanted.id);
+    if (ride) {
+      setAcceptWanted(null);
+      setCurrentRideId(ride.id);
+      handleAcceptRide(ride);
+      return undefined;
+    }
+    const timer = setTimeout(() => {
+      setAcceptWanted(null);
+      Alert.alert('Job not taken', 'This job is no longer available.');
+    }, Math.max(0, ACCEPT_WAIT_MS - (Date.now() - acceptWanted.at)));
+    return () => clearTimeout(timer);
+    // handleAcceptRide is a new function each render; the latest is used.
+  }, [acceptWanted, rideRequests, isAccepting]);
 
   /* ================= RENDER ================= */
   if (checkingRide) {

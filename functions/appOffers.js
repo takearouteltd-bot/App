@@ -56,7 +56,7 @@ const GRACE_MS = 700;
 
 module.exports = (deps) => {
   const {functions, db, loadAppConfig, toMillis, appDriverPool, poolNote,
-    sendPush, followOn, bidJobs, ringAll} = deps;
+    sendPush, followOn, bidJobs, ringAll, emailMoney, rideCurrency} = deps;
   const {FieldValue, Timestamp} = require("firebase-admin/firestore");
   const {waitThen} = require("./offerTimer");
   const out = {};
@@ -228,14 +228,24 @@ module.exports = (deps) => {
       if (next) {
         const pickup = ride.pickupLocation && ride.pickupLocation.address ?
           ride.pickupLocation.address : "a nearby pickup";
+        const fareAmount = Number(ride.fare && ride.fare.total) ||
+          Number(ride.fareEstimate) || 0;
+        const fare = fareAmount > 0 ?
+          ` · ${emailMoney(fareAmount, rideCurrency(ride).toUpperCase())}` :
+          "";
+        // The fare, how far away and how long they have, so the driver can
+        // decide from the alert alone (it has Accept / Decline buttons in
+        // newer apps: sendPush).
         await sendPush([next.id], {
           // As offerRideToDrivers rings (utils/notifications.js).
           channelId: "job-ring",
           sound: "job_ring.wav",
           ttlSeconds: Math.max(10, seconds),
-          data: {type: "job_offer", rideId},
-          title: "New job offer",
-          body: `Pickup at ${pickup}. Open TakeARoute to accept.`,
+          data: {type: "job_offer", rideId,
+            expiresAt: Date.now() + seconds * 1000},
+          title: `New job offer${fare}`,
+          body: `Pickup at ${pickup}, ${bidJobs.milesText(next.km)} away. ` +
+            `${seconds} s to answer.`,
         }).catch(() => null);
       }
       // A busy driver about to drop off nearby, if they would be quicker.
