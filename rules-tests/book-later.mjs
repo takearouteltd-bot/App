@@ -245,7 +245,10 @@ await adminSet('rides/unchecked', { riderId: rider, source: 'app', status: 'sche
   pickupAt: new Date(Date.now() + 10 * 60000), pickupLocation: PICKUP, dropoffLocation: DROP, rideType: 'RouteMini', paymentMethod: 'card' });
 await schedule('dispatchScheduledRides');
 await sleep(5000);
-assert.equal((await ride('unchecked')).status, 'scheduled');
+{ const u = await ride('unchecked');
+  // Never sent out: it stays booked, or the new-ride check refuses it outright.
+  assert.ok(['scheduled', 'cancelled'].includes(u.status), u.status);
+  assert.ok(!u.bookedAhead?.dispatchedAt && !u.offer, 'not sent to drivers'); }
 
 console.log(`\n${steps} steps passed`);
 fake.close();
