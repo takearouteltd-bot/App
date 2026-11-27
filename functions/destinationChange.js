@@ -859,14 +859,17 @@ module.exports = (deps) => {
    * On every position the driver's phone saves (the drivers/{id} update
    * trigger that already runs for each save, so no extra function runs),
    * notes when the car on a trip under way reaches its drop-off. Costs one
-   * read of the ride per save during a trip, and a write once. The phone
-   * cannot set this itself (firestore.rules).
+   * read of the ride per save during a trip (shared with the route trail,
+   * routeTrail.js), and a write once. The phone cannot set this itself
+   * (firestore.rules).
    * @param {string} driverId Driver.
    * @param {Object} before Driver record before.
    * @param {Object} after Driver record after.
+   * @param {?Object=} rideSnap The ride, already read by the trigger
+   *     (null: nothing to read); read here when left out.
    * @return {Promise<void>}
    */
-  async function notePosition(driverId, before, after) {
+  async function notePosition(driverId, before, after, rideSnap) {
     if (!after || after.isOnRide !== true || !after.currentRideId) return;
     const loc = coords(after.location);
     if (!loc) return;
@@ -876,8 +879,8 @@ module.exports = (deps) => {
       return;
     }
     const ref = db.collection("rides").doc(after.currentRideId);
-    const snap = await ref.get();
-    const ride = snap.exists ? snap.data() : null;
+    const snap = rideSnap !== undefined ? rideSnap : await ref.get();
+    const ride = snap && snap.exists ? snap.data() : null;
     const near = (r) => Boolean(r) && r.status === "ongoing" &&
       r.driverId === driverId && !r.reachedDropoffAt &&
       distanceKm(loc, r.dropoffLocation) <= REACHED_KM;

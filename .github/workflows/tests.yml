@@ -22,7 +22,7 @@ jobs:
         env:
           WANT: ${{ inputs.suites }}
         run: |
-          ALL="unit bid-jobs fleet-e2e web-booker booking-checks allocation-followon driver-cancel destination-change tips card-switch fleet-phone fleet-phones fleet-billing fleet-close account-delete admin-delete membership-grant membership-plans promo-topup"
+          ALL="unit route-trail bid-jobs fleet-e2e web-booker booking-checks allocation-followon driver-cancel destination-change tips card-switch fleet-phone fleet-phones fleet-billing fleet-close account-delete admin-delete membership-grant membership-plans promo-topup"
           LIST="${WANT:-$ALL}"
           echo "suites=$(printf '%s\n' $LIST | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
 

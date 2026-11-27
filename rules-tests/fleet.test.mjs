@@ -791,3 +791,35 @@ test('card instead of cash: cash cannot be recorded once the card is held or cha
   await seed((db) => setDoc(doc(db, 'rides/cs4'), onTrip({ paymentMethod: 'card', cashExtraDue: 3, paymentSwitch: { n: 1, state: 'held' } })));
   await assertSucceeds(updateDoc(doc(as('cfree'), 'rides/cs4'), { ...done, cashCollected: true }));
 });
+
+/* Route history (functions/routeTrail.js): admins and the ride's fleet staff
+   read rides/{id}/trail; nobody else, and nobody but the server writes it. */
+test('route trail: admins and the fleet read it, nobody else; nobody writes it', async () => {
+  const chunk = { leg: 'trip', driverId: 'd1', from: Timestamp.fromMillis(0), points: [{ t: 1, lat: 52.3, lng: -1.9, kph: 30, s: 'o' }] };
+  await env.withSecurityRulesDisabled(async (ctx) => {
+    const db = ctx.firestore();
+    await setDoc(doc(db, 'rides/took/trail/trip-000000001'), chunk);
+    await setDoc(doc(db, 'rides/app/trail/trip-000000001'), { ...chunk });
+  });
+  // A fleet job: admins and that fleet's active staff.
+  await assertSucceeds(getDocs(collection(as('adm'), 'rides/took/trail')));
+  await assertSucceeds(getDoc(doc(as('own1'), 'rides/took/trail/trip-000000001')));
+  await assertSucceeds(getDocs(collection(as('op1'), 'rides/took/trail')));
+  await assertFails(getDocs(collection(as('own2'), 'rides/took/trail')));
+  await assertFails(getDocs(collection(as('gone'), 'rides/took/trail')));
+  // Not the driver on the job, another driver, or the public.
+  await assertFails(getDocs(collection(as('d1'), 'rides/took/trail')));
+  await assertFails(getDoc(doc(as('d2'), 'rides/took/trail/trip-000000001')));
+  await assertFails(getDocs(collection(env.unauthenticatedContext().firestore(), 'rides/took/trail')));
+  // An app job (no fleet): admins only, not the passenger or the driver.
+  await assertSucceeds(getDocs(collection(as('adm'), 'rides/app/trail')));
+  await assertFails(getDocs(collection(as('r1'), 'rides/app/trail')));
+  await assertFails(getDocs(collection(as('d1'), 'rides/app/trail')));
+  await assertFails(getDocs(collection(as('own1'), 'rides/app/trail')));
+  // Server only: not the driver (who could hide where they went), the fleet or an admin's browser.
+  await assertFails(setDoc(doc(as('d1'), 'rides/took/trail/trip-000000002'), chunk));
+  await assertFails(updateDoc(doc(as('d1'), 'rides/took/trail/trip-000000001'), { points: [] }));
+  await assertFails(deleteDoc(doc(as('d1'), 'rides/took/trail/trip-000000001')));
+  await assertFails(setDoc(doc(as('own1'), 'rides/took/trail/trip-000000002'), chunk));
+  await assertFails(updateDoc(doc(as('adm'), 'rides/took/trail/trip-000000001'), { points: [] }));
+});

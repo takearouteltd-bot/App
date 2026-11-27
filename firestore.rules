@@ -888,6 +888,20 @@ service cloud.firestore {
         allow read: if isAdmin();
         allow write: if isAdmin();
       }
+
+      /* The route the driver actually drove (functions/routeTrail.js), for
+         disputes. Admins, and the staff of the fleet the ride belongs to
+         (as for the ride itself), read it. Not the driver or passenger: it
+         is evidence about them, and the driver's own phone must never be
+         able to rewrite it. Only the server writes it. */
+      match /trail/{chunkId} {
+        allow read: if isAdmin() || (
+          signedIn() &&
+          get(/databases/$(database)/documents/rides/$(rideId)).data.get("fleetId", null) is string &&
+          fleetStaffOf(get(/databases/$(database)/documents/rides/$(rideId)).data.fleetId)
+        );
+        allow write: if false;
+      }
     }
 
     /* A phone job waiting for a driver, without the customer's number, for

@@ -1833,10 +1833,17 @@ exports.createWalletOnOnboardingComplete = functions.firestore
 
       // This trigger already runs on every position the driver's phone
       // saves, so it also notes when a car on a trip reaches the drop-off
-      // (extended trips, destinationChange.js) without another function.
+      // (extended trips, destinationChange.js) and keeps the route driven
+      // (routeTrail.js) without another function. The ride is read once,
+      // and only while the driver is on a job and moved.
+      const rideSnap = await routeTrail.rideFor(before, after);
       await destinationChange.notePosition(context.params.driverId, before,
-          after).catch((error) => console.error("Drop-off check failed:",
-          context.params.driverId, error.message));
+          after, rideSnap).catch((error) => console.error(
+          "Drop-off check failed:", context.params.driverId, error.message));
+      await routeTrail.recordPosition(context.params.driverId, before, after,
+          rideSnap, Date.parse(context.timestamp)).catch((error) =>
+        console.error("Route trail failed:", context.params.driverId,
+            error.message));
 
       const driverId = context.params.driverId;
 
@@ -6155,6 +6162,9 @@ const extendedTrips = require("./extendedTrips")({
   emailMoney, paymentAlerts,
 });
 Object.assign(exports, extendedTrips.functions);
+// The route the driver actually drove on each job, kept for disputes;
+// used by the driver position trigger (createWalletOnOnboardingComplete).
+const routeTrail = require("./routeTrail")({db, toMillis});
 // A cash trip paid by card instead, by the passenger in the app or through
 // a link the driver shows and texts; stripeWebhook passes its events on.
 const cardSwitch = require("./cardSwitch")({

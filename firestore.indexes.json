@@ -159,5 +159,17 @@
       ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "trail",
+      "fieldPath": "expireAt",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "trail",
+      "fieldPath": "points",
+      "indexes": []
+    }
+  ]
 }
