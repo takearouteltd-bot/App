@@ -66,7 +66,8 @@ service cloud.firestore {
     /* functions/referrals.js writes all of it; no app login writes any of
        it, so nobody can make a code, mark a referral rewarded or give
        themselves ride credit. A passenger reads only their own profile
-       (code, counts), credit and ledger, and the referrals they are in.
+       (code, counts), credit and ledger, and the referral that names them
+       as the one invited.
        Codes are not readable, so nobody can list who owns which code; the
        phone and card registries hold hashes and are closed to everyone. */
     match /referralCodes/{code} {
@@ -79,13 +80,10 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    /* The invited passenger reads their own; the inviter sees only the
+       counts on their profile, nothing about the person they invited. */
     match /referrals/{refereeId} {
-      allow read: if isAdmin() || (
-        signedIn() && (
-          request.auth.uid == refereeId ||
-          resource.data.referrerId == request.auth.uid
-        )
-      );
+      allow read: if isAdmin() || (signedIn() && request.auth.uid == refereeId);
       allow write: if false;
     }
 

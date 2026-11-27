@@ -146,6 +146,18 @@ export const DEFAULT_APP_CONFIG = {
     windowMinutes: 30,
     fleetJobs: 0,
   },
+  // Invite a friend (functions/referrals.js, utils/referrals.js). Off until
+  // the owners choose the amounts on the dashboard. Ride credit for the new
+  // passenger and their friend after the new passenger's first card trip of
+  // at least minTripFare; the server checks everything again.
+  referrals: {
+    enabled: 0,
+    newRiderReward: 0,
+    referrerReward: 0,
+    monthlyCap: 5,
+    minTripFare: 10,
+    accountAgeDays: 30,
+  },
 };
 
 function mergeSection(defaults, incoming) {
@@ -179,6 +191,7 @@ export function normaliseAppConfig(raw) {
     destinationChange: mergeSection(DEFAULT_APP_CONFIG.destinationChange, data.destinationChange),
     extendedTrips: mergeSection(DEFAULT_APP_CONFIG.extendedTrips, data.extendedTrips),
     cardSwitch: mergeSection(DEFAULT_APP_CONFIG.cardSwitch, data.cardSwitch),
+    referrals: mergeSection(DEFAULT_APP_CONFIG.referrals, data.referrals),
   };
 }
 

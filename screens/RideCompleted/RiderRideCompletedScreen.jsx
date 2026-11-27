@@ -73,7 +73,9 @@ export default function RiderRideCompletedScreen() {
   const isCash = ride.paymentMethod === 'cash';
 
   const fare = ride.fare || {};
-  const total = Number(fare.finalTotal ?? fare.total ?? ride.fareEstimate ?? 0);
+  // Ride credit (functions/referrals.js) came off the card part.
+  const rideCredit = Number(fare.creditApplied) || 0;
+  const total = Number(fare.finalTotal ?? fare.total ?? ride.fareEstimate ?? 0) - rideCredit;
   const currency = ride.currency || fare.currency;
   const distance = ride.route?.distanceKm ? distanceText(ride.route.distanceKm) : null;
   const duration = ride.route?.durationMinutes ? `${Math.ceil(ride.route.durationMinutes)} min` : null;
@@ -97,6 +99,7 @@ export default function RiderRideCompletedScreen() {
     fare.waitingCharge > 0 && !ride.extraChargeFailed ? ['Waiting time', fare.waitingCharge] : null,
     // Miles past the drop-off, once approved (functions/extendedTrips.js).
     fare.extendedExtra > 0 ? ['Extra miles past the drop-off', fare.extendedExtra] : null,
+    rideCredit > 0 ? ['Ride credit', -rideCredit] : null,
   ].filter(Boolean);
 
   const driverName = driver?.fullName || driver?.firstName || 'your driver';

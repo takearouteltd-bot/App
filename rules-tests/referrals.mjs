@@ -219,7 +219,7 @@ step('a new passenger enters the code (any case): pending, once only');
 
 /* ------------------------------ rules ------------------------------ */
 assert.equal((await getDoc(doc(B.db, 'referrals', B.uid))).data().status, 'pending');
-assert.equal((await getDoc(doc(A.db, 'referrals', B.uid))).data().referrerId, A.uid);
+await refused(getDoc(doc(A.db, 'referrals', B.uid)), null, 'permission-denied');
 await refused(getDoc(doc(X.db, 'referrals', B.uid)), null, 'permission-denied');
 await refused(getDoc(doc(B.db, 'referralProfiles', A.uid)), null, 'permission-denied');
 await refused(getDoc(doc(B.db, 'referralCodes', code)), null, 'permission-denied');
@@ -233,7 +233,7 @@ await refused(setDoc(doc(B.db, 'rides', 'credit_create'), {
   riderId: B.uid, status: 'searching', source: 'app', driverId: null, fare: { total: 10, creditApplied: 10 },
 }), null, 'permission-denied');
 await refused(getDoc(doc(X.db, 'riderCredit', B.uid)), null, 'permission-denied');
-step('rules: only the server writes codes, referrals, credit or a ride\'s credit; each passenger reads their own');
+step('rules: only the server writes codes, referrals, credit or a ride\'s credit; each passenger reads their own, the inviter not the invitee\'s record');
 
 /* ------------------------------ the reward ------------------------------ */
 await cardTrip(B, 12, 'fp_ben', { method: 'cash' });

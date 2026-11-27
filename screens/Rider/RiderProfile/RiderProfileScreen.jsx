@@ -6,7 +6,8 @@ import appJson from "../../../app.json";
 import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { db, auth } from "../../../config/firebase";
-import { money } from '../../../utils/appConfig';
+import { money, useAppConfig } from '../../../utils/appConfig';
+import { referralsEnabled } from '../../../utils/referrals';
 import {
   COLORS,
   TYPE,
@@ -28,6 +29,7 @@ import { confirmDeleteAccount } from '../../../utils/deleteAccount';
 
 export default function RiderProfileScreen() {
   const navigation = useNavigation();
+  const appConfig = useAppConfig();
   const [currentUser, setCurrentUser] = useState(null);
   const [riderData, setRiderData] = useState(null);
   const [stats, setStats] = useState({ totalRides: 0, rating: "New", totalSpent: "0.00" });
@@ -231,6 +233,10 @@ const fetchRiderData = useCallback(async () => {
         <RowGroup
           items={[
             { icon: "card-outline", title: "Payment", detail: riderData?.defaultPaymentMethodId ? "Card saved" : "Add a card to book", onPress: () => navigation.navigate("PaymentMethods") },
+            // Invite a friend (utils/referrals.js): hidden while it is off.
+            referralsEnabled(appConfig)
+              ? { icon: "gift-outline", title: "Invite friends", detail: "Share your code and get ride credit", onPress: () => navigation.navigate("InviteFriends") }
+              : null,
           ]}
         />
       </Section>

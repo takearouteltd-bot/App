@@ -30,7 +30,7 @@
      (UK time); a blocked passenger earns nothing. An admin can void any
      referral (adminVoidReferral); unspent credit from it is taken back.
    - Rules: every referral collection is written by the server only; a
-     passenger reads their own profile, credit and referrals (firestore.
+     passenger reads their own profile, credit and referral (firestore.
      rules). Phone and card registries are closed to every app login. */
 
 module.exports = (deps) => {
