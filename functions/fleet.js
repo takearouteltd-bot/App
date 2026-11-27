@@ -63,6 +63,8 @@
      fleets/{fleetId}/driverAccounts/{driverId}  commissionPercent, owedPence
      fleets/{fleetId}/driverPayments/{id}  money recorded between fleet, driver
      fleets/{fleetId}/invoices/{id}   invoices the fleet sends its clients
+     nationalBoard/{fleetId}          every online driver, for the national
+                                      booking desk (isNationalDesk)
 
    Account jobs and driver balances: a phone job can be charged to an account
    client (collectBy "account"). The fleet bills the client and pays the driver
@@ -155,6 +157,16 @@ const QUEUE_STALE_MS = 5 * 60 * 1000;
 const MAX_FLEET_CALLS_PER_DAY = 300;
 const EMAIL_SECRETS = ["RESEND_API_KEY"];
 const MAX_INVOICE_LINES = 200;
+/* The national booking desk (fleets/{id}.nationalDesk, set by a TakeARoute
+   admin only): TakeARoute's own call centre on one national number. Its jobs
+   always go out to the whole network, and every job it books carries this
+   name as its fleetName, which every driver app already shows on the offer,
+   the push and the job (so no app update is needed to see where it came
+   from), with bookedVia "national" for anything that wants to tell. */
+const NATIONAL_DESK_NAME = "National booking centre";
+/* The desk's board of online drivers (nationalBoard/{fleetId}) holds at most
+   this many, so the document stays well under Firestore's 1 MB. */
+const MAX_BOARD_DRIVERS = 2500;
 
 module.exports = (deps) => {
   const {functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
@@ -490,6 +502,24 @@ module.exports = (deps) => {
     return Boolean(ride && ride.dispatch && ride.dispatch.network === true);
   }
 
+  /* THE NATIONAL BOOKING DESK (M&S, Nov 2026): "one national Take A Route
+     phone booking line, staffed by a call centre ... a job booked there must
+     go to ANY online UK TakeARoute driver", shown as from the "National
+     booking centre". A fleet an admin flags nationalDesk: its office uses
+     the same portal, but every job it books is on the network from the
+     start (dispatchChoice), by name to any driver, and its portal sees every
+     online driver through nationalBoard/{fleetId} (refreshNationalBoards),
+     never the driver records themselves. Money is as for any network job. */
+
+  /**
+   * Whether a fleet is TakeARoute's national booking desk.
+   * @param {?Object} fleet Fleet data.
+   * @return {boolean} The national desk.
+   */
+  function isNationalDesk(fleet) {
+    return Boolean(fleet && fleet.nationalDesk === true);
+  }
+
   /**
    * Refuses a job the network may not take: the fleet is not allowed to
    * use it, or the job is not paid in the car.
@@ -497,7 +527,7 @@ module.exports = (deps) => {
    * @param {string} collectBy How the job is paid.
    */
   function assertNetworkJob(fleet, collectBy) {
-    if (fleet.networkAllowed !== true) {
+    if (fleet.networkAllowed !== true && !isNationalDesk(fleet)) {
       throw new HttpsError("failed-precondition", "Offering jobs to the " +
         "TakeARoute network is not switched on for your fleet. Ask " +
         "TakeARoute to switch it on.");
@@ -569,6 +599,16 @@ module.exports = (deps) => {
    *   driver (checked with assertNetworkJob by the caller).
    */
   function dispatchChoice(raw, driverId, fleet) {
+    // The national desk has no stage of its own drivers: by name to any
+    // driver, everyone nearby at once, or (anything else, zones included)
+    // the nearest driver on the network first.
+    if (isNationalDesk(fleet)) {
+      if (driverId) return {mode: "driver", nearest: false, network: true};
+      if (raw === undefined || raw === null || raw === "" || raw === "all") {
+        return {mode: "all", nearest: false, network: true};
+      }
+      return {mode: "queue", nearest: true, network: true};
+    }
     if (driverId) return {mode: "driver", nearest: false, network: false};
     if (raw === "network") return {mode: "queue", nearest: true, network: true};
     if (raw === "nearest") {
@@ -784,9 +824,13 @@ module.exports = (deps) => {
       if (near.length) freeKm = Math.min(...near.map((p) => p.km));
       note = `; ${deps.poolNote(pool, radiusKm)}`;
     }
-    const kind = ride.collectBy === "account" ?
+    const payKind = ride.collectBy === "account" ?
       `Account job, ${(ride.account || {}).company || "client"}` :
       ride.collectBy === "card" ? "Card job" : "Cash job";
+    // Booked by the national desk: said in the text too, as the title of a
+    // BID JOB has no room for it.
+    const kind = ride.bookedVia === "national" ?
+      `${payKind} from the ${NATIONAL_DESK_NAME}` : payKind;
     const ring = {
       channelId: "job-ring",
       sound: "job_ring.wav",
@@ -1056,15 +1100,68 @@ module.exports = (deps) => {
       `${zoneName ? zoneName + " empty" : "nobody in reach"}, sent to fleet`));
   }
 
+  /* PRICES ON A CUSTOMER'S JOURNEYS. Each journey on a phone customer's card
+     (fleets/{fleetId}/customers/{phone}.journeys[]) keeps what was charged
+     on it, by vehicle class: prices.{rideType} = {total, currency, agreed,
+     rideId, at, done, prev}. The booking form fills in the same price again
+     from it, instead of reading the customer's past jobs. It is written when
+     a job is booked (rememberCustomer) and kept right by keepJourneyPrices:
+     the full journey price once done, changed with the booking, and taken
+     back (to the one before, prev) if the job is cancelled. Plain A to B
+     jobs only, as the form only reuses a price for those. */
+
+  /**
+   * The price of the whole journey: a trip the driver ended early was
+   * charged less than the journey costs (fare.fullTotal).
+   * @param {Object} ride Ride data.
+   * @return {number} Price.
+   */
+  function journeyTotal(ride) {
+    const f = ride.fare || {};
+    return Math.max(Number(f.total) || 0, Number(f.fullTotal) || 0);
+  }
+
+  /**
+   * A prices map with one class's price set, and the price another job
+   * had there kept as prev, so a cancelled booking can give it back.
+   * @param {?Object} prices The journey's prices, as stored.
+   * @param {string} rideType Vehicle class.
+   * @param {?Object} price {total, currency, agreed, rideId, done}, or null.
+   * @return {?Object} The new prices map, or the old one (null if none).
+   */
+  function withJourneyPrice(prices, rideType, price) {
+    const all = Object.assign({}, prices || {});
+    if (!price || !rideType || !(price.total > 0)) {
+      return Object.keys(all).length ? all : null;
+    }
+    const old = all[rideType] || null;
+    // Another job's price is kept as prev; this job's own keeps its prev.
+    const keep = old && old.rideId !== price.rideId ? old :
+      old ? old.prev || null : null;
+    const entry = {total: Number(price.total.toFixed(2)),
+      currency: price.currency || "GBP", agreed: price.agreed === true,
+      rideId: price.rideId || null, done: price.done === true,
+      at: Timestamp.now()};
+    if (keep) {
+      const prev = Object.assign({}, keep);
+      delete prev.prev;
+      entry.prev = prev;
+    }
+    all[rideType] = entry;
+    return all;
+  }
+
   /**
    * Upserts a phone customer and remembers the addresses they used.
    * @param {string} fleetId Fleet.
    * @param {Object} customer {name, phone}
    * @param {Array} places Points used on this booking.
    * @param {Object} journey {from, to, rideType} of this booking.
+   * @param {?Object} price {total, currency, agreed, rideId, done} the
+   *   journey was booked at, or null (see withJourneyPrice).
    * @return {Promise<void>}
    */
-  async function rememberCustomer(fleetId, customer, places, journey) {
+  async function rememberCustomer(fleetId, customer, places, journey, price) {
     const ref = db.collection("fleets").doc(fleetId)
         .collection("customers").doc(customer.phone);
     const clean = (p) => ({latitude: p.latitude, longitude: p.longitude,
@@ -1085,8 +1182,15 @@ module.exports = (deps) => {
       // Journeys they have booked, newest first, one entry per route, so
       // the contact card can rebook (or reverse) one in a tap.
       const route = (j) => `${key(j.from)}|${key(j.to)}`;
-      const journeys = [{from: clean(journey.from), to: clean(journey.to),
-        rideType: journey.rideType, at: Timestamp.now()}]
+      // The prices paid on this route, by vehicle class, carry over to the
+      // new entry, with this booking's on top.
+      const was = (old.journeys || []).find((j) => j && j.from && j.to &&
+        route(j) === route(journey));
+      const prices = withJourneyPrice(was && was.prices, journey.rideType,
+          price);
+      const journeys = [Object.assign({from: clean(journey.from),
+        to: clean(journey.to), rideType: journey.rideType,
+        at: Timestamp.now()}, prices ? {prices} : {})]
           .concat((old.journeys || [])
               .filter((j) => route(j) !== route(journey)))
           .slice(0, 10);
@@ -2944,7 +3048,7 @@ module.exports = (deps) => {
       const snap = await db.collection("drivers").doc(driverId).get();
       const drv = snap.exists ? snap.data() : null;
       if (!drv || !canTakeFleetJob(drv,
-          {fleetId: me.fleetId, rideType})) {
+          {fleetId: me.fleetId, rideType, dispatch: {network}})) {
         throw new HttpsError("failed-precondition",
             "That driver cannot take this job (not in your fleet, not " +
             "approved, documents expired, membership unpaid, resting, or " +
@@ -2992,10 +3096,13 @@ module.exports = (deps) => {
 
     const rideRef = db.collection("rides").doc();
     const ts = FieldValue.serverTimestamp();
+    const national = isNationalDesk(me.fleet);
     await rideRef.set(Object.assign({
       source: "phone",
       fleetId: me.fleetId,
-      fleetName: me.fleet.name,
+      // The national desk's jobs say where they came from wherever a driver
+      // app shows the fleet's name (offer, push, job screen, receipts).
+      fleetName: national ? NATIONAL_DESK_NAME : me.fleet.name,
       riderId: null,
       driverId: null,
       customer: {name: name || (appRider ? appRider.name : ""), phone,
@@ -3054,16 +3161,23 @@ module.exports = (deps) => {
         completedAt: null},
       cancellation: {by: null, reason: null, at: null},
       rating: {riderToDriver: null, driverToRider: null, feedback: null},
-    }, o.extra || {}));
+    }, national ? {bookedVia: "national"} : {}, o.extra || {}));
 
     if (appRider) {
       await db.collection("fleets").doc(me.fleetId).collection("customers")
           .doc(phone).set({appUser: true, riderId: appRider.uid},
               {merge: true}).catch(() => null);
     }
+    // The price goes on the journey for next time (keepJourneyPrices keeps
+    // it right as the job is changed, done or cancelled). Only a plain A to
+    // B: a journey with stops is priced differently. A booking waiting to
+    // be paid online is priced once it is paid.
+    const price = !stops.length && !held ? {total: fare.total,
+      currency: fare.currency, agreed: agreed !== null, rideId: rideRef.id,
+      done: false} : null;
     await rememberCustomer(me.fleetId, {name, phone},
         [pickup].concat(stops, [dropoff]),
-        {from: pickup, to: dropoff, rideType}).catch((error) => {
+        {from: pickup, to: dropoff, rideType}, price).catch((error) => {
       console.error("Could not save customer:", error.message);
     });
     return {rideId: rideRef.id,
@@ -3128,7 +3242,11 @@ module.exports = (deps) => {
         db.collection("drivers").doc(driverId).get(), rideRef.get()]);
       const drv = snap.exists ? snap.data() : null;
       const ride = rideSnap.exists ? rideSnap.data() : null;
-      if (!drv || !ride || !canTakeFleetJob(drv, ride)) {
+      // The national desk sends by name to any driver (dispatchChoice).
+      const asSent = ride && isNationalDesk(me.fleet) ? Object.assign({}, ride,
+          {dispatch: Object.assign({}, ride.dispatch, {network: true})}) :
+        ride;
+      if (!drv || !ride || !canTakeFleetJob(drv, asSent)) {
         throw new HttpsError("failed-precondition",
             "That driver cannot take this job right now.");
       }
@@ -3260,6 +3378,8 @@ module.exports = (deps) => {
       accountCompany: (r.account && r.account.company) || null,
       notes: r.notes || "",
       customerName: (r.customer && r.customer.name) || "",
+      // "national": booked by the national desk (fleetName says so too).
+      bookedVia: r.bookedVia || null,
       updatedAt: FieldValue.serverTimestamp(),
     };
   }
@@ -4373,6 +4493,83 @@ module.exports = (deps) => {
         return null;
       });
 
+  /**
+   * One online driver as the national desk's board shows them: who, which
+   * car, where and whether free. Nothing private (no phone, documents,
+   * bank, membership), and no more than the map and the "Send to" list
+   * use.
+   * @param {Object} snap Driver snapshot.
+   * @return {Object} Board entry.
+   */
+  function boardEntry(snap) {
+    const d = snap.data();
+    const loc = d.location && Number.isFinite(Number(d.location.latitude)) &&
+      Number.isFinite(Number(d.location.longitude)) ?
+      {latitude: Number(d.location.latitude),
+        longitude: Number(d.location.longitude)} : null;
+    return {
+      id: snap.id,
+      name: [d.firstName, d.lastName].filter(Boolean).join(" ") ||
+        d.name || d.fullName || "Driver",
+      vehicleType: d.vehicleType || "RouteMini",
+      registrationNumber: String(d.registrationNumber ||
+        d.vehicleRegistration || "").slice(0, 16),
+      car: [d.vehicleColor, d.vehicleMake, d.vehicleModel].filter(Boolean)
+          .join(" ").slice(0, 60),
+      // Their own fleet, or null for an independent driver.
+      fleetName: d.fleetId ? d.fleetName || "A fleet" : null,
+      status: d.status === "on_ride" || d.isOnRide === true ? "on_ride" :
+        "online",
+      isOnRide: d.isOnRide === true || d.status === "on_ride",
+      location: loc,
+      heading: Number.isFinite(Number(d.heading)) ? Number(d.heading) : null,
+      lastUpdated: d.lastUpdated || null,
+      // May be given a job now (approved, documents in date, membership
+      // paid, not resting or on a penalty), and app filters dispatch keeps
+      // to, so the desk does not choose a driver the server would refuse.
+      approved: canWork(d),
+      stale: positionStale(d),
+      cashJobs: d.cashJobs === false ? false : true,
+      jobTypes: Array.isArray(d.jobTypes) ? d.jobTypes : null,
+    };
+  }
+
+  /* Every minute: the national desk's board of every online driver
+     (nationalBoard/{fleetId}), for its portal's map and driver list. One
+     document, read by the desk's staff (firestore.rules), instead of the
+     desk listening to every driver record: those change every few seconds
+     and carry more than the desk needs. Boards of a fleet that is no longer
+     the national desk are taken down. */
+  out.refreshNationalBoards = functions.pubsub
+      .schedule("every 1 minutes")
+      .onRun(async () => {
+        const [desks, boards] = await Promise.all([
+          db.collection("fleets").where("nationalDesk", "==", true).get(),
+          db.collection("nationalBoard").get()]);
+        const live = desks.docs.filter((f) => f.data().status !== "suspended");
+        await Promise.all(boards.docs
+            .filter((b) => !live.some((f) => f.id === b.id))
+            .map((b) => b.ref.delete().catch(() => null)));
+        if (!live.length) return null;
+        const online = await db.collection("drivers")
+            .where("status", "in", ["online", "on_ride"]).get();
+        const drivers = online.docs
+            // Apple's App Review driver is never shown or sent a real job.
+            .filter((snap) => snap.data().appReview !== true)
+            .map(boardEntry);
+        const board = {
+          drivers: drivers.slice(0, MAX_BOARD_DRIVERS),
+          count: drivers.length,
+          capped: drivers.length > MAX_BOARD_DRIVERS,
+          updatedAt: FieldValue.serverTimestamp(),
+        };
+        await Promise.all(live.map((f) => db.collection("nationalBoard")
+            .doc(f.id).set(board).catch((error) => {
+              console.error("National board failed:", f.id, error.message);
+            })));
+        return null;
+      });
+
   /* A fleet driver accepted an ordinary app job: tag it with the fleet, so
      the earnings go to the fleet's wallet and it shows on their
      statement. */
@@ -4427,6 +4624,117 @@ module.exports = (deps) => {
           `${after.driverId}` + (outside ? (fleetId ?
             ` (company driver of ${fleetId})` : " (their own fare)") :
             " (the fleet's own driver)"));
+        return null;
+      });
+
+  /**
+   * Whether a phone job's price belongs on its customer's journey: a plain
+   * A to B, for a known number, that went ahead or is still due to.
+   * @param {?Object} r Ride data.
+   * @return {boolean} Priced.
+   */
+  function journeyPriced(r) {
+    return Boolean(r) && r.source === "phone" &&
+      typeof r.fleetId === "string" && Boolean(r.customer) &&
+      typeof r.customer.phone === "string" && r.customer.phone !== "" &&
+      !(r.stops || []).length && Boolean(r.pickupLocation) &&
+      Boolean(r.dropoffLocation) &&
+      !["cancelled", "canceled", "payment_pending"].includes(r.status) &&
+      journeyTotal(r) > 0;
+  }
+
+  /**
+   * A journey's route, as rememberCustomer matches them.
+   * @param {Object} from Pickup point.
+   * @param {Object} to Drop-off point.
+   * @return {string} Key.
+   */
+  function routeKey(from, to) {
+    return `${String(from.address).toLowerCase()}|` +
+      String(to.address).toLowerCase();
+  }
+
+  /**
+   * Changes one journey on a customer's card in a transaction. Nothing
+   * happens if the card is gone.
+   * @param {string} fleetId Fleet.
+   * @param {string} phone Customer's number (the card's id).
+   * @param {string} route routeKey of the journey.
+   * @param {Function} edit (journey or null) => the new journey, or
+   *   undefined to leave the card as it is.
+   * @return {Promise<void>}
+   */
+  async function editJourney(fleetId, phone, route, edit) {
+    const ref = db.collection("fleets").doc(fleetId)
+        .collection("customers").doc(phone);
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists) return;
+      const journeys = (snap.data().journeys || []).slice();
+      const i = journeys.findIndex((j) => j && j.from && j.to &&
+        routeKey(j.from, j.to) === route);
+      const next = edit(i >= 0 ? journeys[i] : null);
+      if (next === undefined) return;
+      if (i >= 0) journeys[i] = next;
+      else journeys.unshift(next);
+      tx.update(ref, {journeys: journeys.slice(0, 10)});
+    });
+  }
+
+  /* Keeps the price on the customer's journey (withJourneyPrice) right as a
+     phone job goes: the full price once it is done, the new one when the
+     office changes it, the new route or class when those change, and taken
+     back when it is cancelled. Only acts when one of those changed. */
+  out.keepJourneyPrices = functions.firestore
+      .document("rides/{rideId}")
+      .onUpdate(async (change, context) => {
+        const after = change.after.data();
+        if (after.source !== "phone" || typeof after.fleetId !== "string") {
+          return null;
+        }
+        const rideId = context.params.rideId;
+        const before = change.before.data();
+        const was = journeyPriced(before) ? before : null;
+        const now = journeyPriced(after) ? after : null;
+        const sig = (r) => r ? JSON.stringify([r.customer.phone,
+          routeKey(r.pickupLocation, r.dropoffLocation), r.rideType,
+          journeyTotal(r), r.status === "completed",
+          (r.fare || {}).agreedPrice === true]) : "";
+        if (sig(was) === sig(now)) return null;
+        const same = (a, b) => a.customer.phone === b.customer.phone &&
+          routeKey(a.pickupLocation, a.dropoffLocation) ===
+            routeKey(b.pickupLocation, b.dropoffLocation) &&
+          a.rideType === b.rideType;
+        try {
+          if (was && (!now || !same(was, now))) {
+            await editJourney(was.fleetId, was.customer.phone,
+                routeKey(was.pickupLocation, was.dropoffLocation), (j) => {
+                  const mine = j && j.prices && j.prices[was.rideType];
+                  if (!mine || mine.rideId !== rideId) return undefined;
+                  const prices = Object.assign({}, j.prices);
+                  if (mine.prev) prices[was.rideType] = mine.prev;
+                  else delete prices[was.rideType];
+                  return Object.assign({}, j, {prices});
+                });
+          }
+          if (now) {
+            const clean = (p) => ({latitude: p.latitude,
+              longitude: p.longitude, address: p.address});
+            await editJourney(now.fleetId, now.customer.phone,
+                routeKey(now.pickupLocation, now.dropoffLocation), (j) => {
+                  const base = j || {from: clean(now.pickupLocation),
+                    to: clean(now.dropoffLocation), rideType: now.rideType,
+                    at: Timestamp.now()};
+                  return Object.assign({}, base, {prices: withJourneyPrice(
+                      base.prices, now.rideType, {total: journeyTotal(now),
+                        currency: now.currency || (now.fare || {}).currency,
+                        agreed: (now.fare || {}).agreedPrice === true,
+                        rideId, done: now.status === "completed"})});
+                });
+          }
+        } catch (error) {
+          console.error("Journey price not kept:", rideId, error.message);
+        }
         return null;
       });
 
