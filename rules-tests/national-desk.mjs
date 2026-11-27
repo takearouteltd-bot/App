@@ -157,7 +157,7 @@ assert.equal(r.dispatch.network, false); assert.equal(r.fleetName, 'Other Cars')
 await OB.call('cancelFleetBooking', { rideId: own.rideId });
 
 step('the price is kept on the customer\'s journey: booked, done, and taken back on a cancel');
-const card = () => adminGet(`fleets/${desk.fleetId}/customers/%2B447700900697`);
+const card = async () => (await getDoc(doc(ON.db, 'fleets', desk.fleetId, 'customers', '+447700900697'))).data() || {};
 const journey = (c) => (c.journeys || []).find((j) => j.from.address === PICK.address && j.to.address === DROP.address);
 const first = await book(ON, { customer: { phone: '07700900697', name: 'Pat' }, agreedPrice: 12 });
 let p = journey(await card()).prices.RouteMini;
