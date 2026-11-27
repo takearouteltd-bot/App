@@ -5021,7 +5021,7 @@ exports.expireSearchingRides = functions
       await extendedTrips.sweep();
       const cfg = await loadAppConfig();
       const limitMs = cfg.dispatch.searchTimeoutMinutes * 60 * 1000;
-      const cutoff = admin.firestore.Timestamp
+      const cutoff = TS
           .fromMillis(Date.now() - limitMs);
       const stale = await db.collection("rides")
           .where("status", "==", "searching")
@@ -5059,7 +5059,7 @@ exports.expireSearchingRides = functions
             status: "cancelled",
             cancelledBy: "timeout",
             cancelReason: "no_driver_found",
-            cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+            cancelledAt: FV.serverTimestamp(),
           });
           if (rider && rider.exists &&
               rider.data().currentRideId === doc.id) {
