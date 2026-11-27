@@ -45,7 +45,7 @@ const FREE_FIRST_MS = 30 * 1000;
 module.exports = (deps) => {
   const {functions, db, sendPush, loadAppConfig, distanceKm, canServe,
     wantsJobType, hasExpiredDocument, membershipSuspended, positionStale,
-    toMillis} = deps;
+    toMillis, emailMoney} = deps;
   const {HttpsError} = functions.https;
   const {FieldValue, Timestamp} = require("firebase-admin/firestore");
   const out = {};
@@ -264,16 +264,25 @@ module.exports = (deps) => {
       if (!placed) return null;
       const pickup = ((ride.pickupLocation || {}).address || "a pickup")
           .split(",")[0];
+      const fareAmount = Number((ride.fare && ride.fare.total) ||
+        ride.offeredFare || ride.fareEstimate || 0);
+      const fare = fareAmount > 0 ? ` · ${emailMoney(fareAmount,
+          String(ride.currency || "GBP").toUpperCase())}` : "";
+      // Fare, pickup and the time to answer in the alert itself: a driver
+      // navigating in Google Maps answers it there, with the Accept / No
+      // thanks buttons newer apps add (sendPush, app utils/offerAlerts.js).
       await sendPush([best.driverId], {
-        title: target ? `Your next job from ${ride.fleetName || "the office"}` :
-          "Follow-on job",
+        title: (target ?
+          `Your next job from ${ride.fleetName || "the office"}` :
+          "Follow-on job") + fare,
         body: `Pickup at ${pickup}, about ${best.minutes} min from here. ` +
-          "Tap to accept.",
+          `${OFFER_SECONDS} s to answer.`,
         // Rings and pops up like any new job, even over Google Maps.
         channelId: "job-ring",
         sound: "job_ring.wav",
         ttlSeconds: OFFER_SECONDS,
-        data: {type: "follow_on_offer", rideId},
+        data: {type: "follow_on_offer", rideId, pickup,
+          expiresAt: Date.now() + OFFER_SECONDS * 1000},
       }).catch(() => null);
       console.log(`Follow-on ${rideId} offered to ${best.driverId} ` +
         `(${best.minutes} min)`);
