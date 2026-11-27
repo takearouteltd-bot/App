@@ -4325,7 +4325,10 @@ module.exports = (deps) => {
      promised a car and the bill is between the fleet and TakeARoute. When
      an admin has paused a fleet its work stops, so the job is cancelled (a
      web customer is texted and their card released) and an admin is alerted
-     to ring anyone else. A closed fleet cannot have open jobs. */
+     to ring anyone else. A closed fleet cannot have open jobs. A ride a
+     passenger booked for later in the app is "scheduled" the same way, but
+     goes out to app drivers as "searching" (bookLater.js dispatchDue),
+     never to a fleet as "dispatching". */
   out.dispatchScheduledRides = functions.pubsub
       .schedule("every 1 minutes")
       .onRun(async () => {
@@ -4337,6 +4340,10 @@ module.exports = (deps) => {
         const fleets = {};
         for (const doc of due.docs) {
           const ride = doc.data();
+          if (ride.source !== "phone") {
+            if (deps.bookLater) await deps.bookLater.dispatchDue(doc);
+            continue;
+          }
           if (ride.fleetId && !(ride.fleetId in fleets)) {
             fleets[ride.fleetId] = (await db.collection("fleets")
                 .doc(ride.fleetId).get()).data() || null;

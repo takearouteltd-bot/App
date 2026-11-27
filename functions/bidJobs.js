@@ -363,8 +363,11 @@ module.exports = (deps) => {
               await ringIfOverdue(doc, cfg);
               continue;
             }
+            // dispatchAt: a ride booked for later starts searching then
+            // (bookLater.js), long after it was created.
             const since = Math.max(
                 toMillis(r.timestamps && r.timestamps.createdAt) || 0,
+                toMillis(r.dispatchAt) || 0,
                 toMillis(r.lastDriverCancelAt) || 0,
                 toMillis(r.paymentFailure && r.paymentFailure.at) || 0);
             if (!since || Date.now() - since < s.afterSeconds * 1000) continue;
