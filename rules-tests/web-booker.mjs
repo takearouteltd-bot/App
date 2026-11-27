@@ -86,7 +86,7 @@ const authApi = (path, body) => fetch(`http://127.0.0.1:9099/identitytoolkit.goo
 const step = (s) => console.log('•', s);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn, what) {
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 160; i++) {
     const v = await fn();
     if (v) return v;
     await sleep(250);

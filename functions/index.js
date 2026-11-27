@@ -978,7 +978,7 @@ exports.authorizePaymentOnRideAccept = functions
           if (ours) {
             await held.ref.update({
               driverId: driverId || null,
-              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: FV.serverTimestamp(),
             });
           }
         } catch (error) {
