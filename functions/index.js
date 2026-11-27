@@ -4009,6 +4009,37 @@ function wantsJobType(jobTypes, rideType) {
 }
 
 /**
+ * The price a driver's app shows on a job offer (fareEstimate, as
+ * DriverHomeScreen's fareOf): the checked price of an app job, the
+ * passenger's own offer on a bidding job, a phone job's quoted fare.
+ * @param {Object} ride Ride or offer data.
+ * @return {number} Pounds, or 0 when it has no price.
+ */
+function jobFareOf(ride) {
+  return Number(ride && ride.fareEstimate) ||
+    Number(ride && ride.offeredFare) ||
+    Number(ride && ride.fare && ride.fare.total) || 0;
+}
+
+/**
+ * Whether a job pays less than the lowest fare the driver chose in the app
+ * (drivers.minJobFare, pounds; null or 0 means any). A job with no price
+ * yet is not held back. Same rule as belowMinFare in the app's
+ * constants/vehicleClasses.js. Like cash jobs off, it only stops the job
+ * being offered: the office can still send one by name, and the driver can
+ * still take a job they see.
+ * @param {*} minJobFare Driver's minimum.
+ * @param {Object} ride Ride or offer data.
+ * @return {boolean} True when it is under their minimum.
+ */
+function belowMinFare(minJobFare, ride) {
+  const min = Number(minJobFare);
+  if (!Number.isFinite(min) || min <= 0) return false;
+  const fare = jobFareOf(ride);
+  return fare > 0 && fare < min;
+}
+
+/**
  * Whether a driver and a job are on different sides of the App Review line:
  * jobs booked by Apple's review passenger go to review drivers only, and
  * review drivers never get real jobs (drivers/{id}.appReview,
@@ -4052,12 +4083,15 @@ async function appDriverPool(ride) {
       // the app; a driver who chose a working city only gets that city's
       // jobs (same rule as servesCity() in the app's utils/cities.js); a
       // passenger who asked for a female driver gets verified female
-      // drivers only; the driver switched cash jobs off.
+      // drivers only; the driver switched cash jobs off or set a minimum
+      // fare.
       !canServe(d.vehicleType, ride.rideType) ||
       !wantsJobType(d.jobTypes, ride.rideType) ||
       (d.workingCityId && d.workingCityId !== ride.cityId) ||
       (ride.femaleDriverOnly === true && d.femaleVerified !== true) ||
       (d.cashJobs === false && ride.paymentMethod === "cash") ||
+      // ...or the job pays less than the lowest fare they chose.
+      belowMinFare(d.minJobFare, ride) ||
       // Apple's App Review accounts only ever meet each other.
       reviewMismatch(d, ride) ? "filters" :
       null;
@@ -6148,7 +6182,7 @@ Object.assign(exports, require("./tips")({
 const followOn = require("./followOn")({
   functions, db, sendPush, loadAppConfig, distanceKm, canServe, wantsJobType,
   hasExpiredDocument, membershipSuspended, positionStale, toMillis,
-  emailMoney,
+  emailMoney, belowMinFare,
 });
 Object.assign(exports, followOn.functions);
 // BID JOBs; used by offerRideToDrivers, reofferWhenPreferenceDropped, fleet.
@@ -6166,7 +6200,7 @@ const appOffers = require("./appOffers")({
 Object.assign(exports, appOffers.functions);
 Object.assign(exports, require("./fleet")({
   functions, admin, db, sendPush, loadAppConfig, distanceKm, canServe,
-  wantsJobType, followOn, bidJobs,
+  wantsJobType, belowMinFare, followOn, bidJobs,
   hasExpiredDocument, toE164, toMillis, addOneMonth,
   TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor,
   STRIPE_SECRETS, fleetBilling, shared: fleetShared, stripe, privacy,

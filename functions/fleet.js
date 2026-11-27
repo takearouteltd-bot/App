@@ -175,6 +175,8 @@ module.exports = (deps) => {
     TWILIO_SECRETS, twilioConfig, bridgeCall, phoneFor, STRIPE_SECRETS,
     fleetBilling, privacy, membershipSuspended, positionStale,
     followOn, bidJobs, phoneOwners} = deps;
+  // A driver's lowest fare (drivers.minJobFare; index.js).
+  const belowMinFare = deps.belowMinFare || (() => false);
   const paymentAlerts = require("./paymentAlerts")({functions, db});
   const {HttpsError} = functions.https;
   // From the modular entry point: the functions emulator's stand-in for
@@ -461,17 +463,20 @@ module.exports = (deps) => {
   }
 
   /**
-   * Whether automatic dispatch (nearest, all drivers, zone queue) may offer
-   * this job to the driver: a driver who switched cash jobs off, or
-   * unticked this job category, in the app isn't offered it. The office can
-   * still pick them by name.
+   * Whether automatic dispatch (nearest, all drivers, zone queue, the
+   * network and BID JOBs) may offer this job to the driver: a driver who
+   * switched cash jobs off, unticked this job category or set a lowest
+   * fare above this job's in the app isn't offered it. The office can still
+   * pick them by name: the operator chose that driver for that job, and
+   * the driver can say no.
    * @param {Object} d Driver data.
    * @param {Object} ride Ride data.
    * @return {boolean} Offer it.
    */
   function wantsJob(d, ride) {
     return !(d.cashJobs === false && cashInHand(ride)) &&
-      wantsJobType(d.jobTypes, ride.rideType);
+      wantsJobType(d.jobTypes, ride.rideType) &&
+      !belowMinFare(d.minJobFare, ride);
   }
 
   /* THE TAKEAROUTE NETWORK (M&S, 18 Nov 2026): "If no one in the fleet is
@@ -990,6 +995,7 @@ module.exports = (deps) => {
         vehicleType: d.vehicleType || "RouteMini",
         noCash: d.cashJobs === false,
         jobTypes: Array.isArray(d.jobTypes) ? d.jobTypes : null,
+        minJobFare: Number(d.minJobFare) > 0 ? Number(d.minJobFare) : null,
         since: was && was.zoneId === zone.id && was.since ? was.since : now,
       });
     });
@@ -1060,7 +1066,8 @@ module.exports = (deps) => {
         next = (queues[z.id] || []).find((e) => !skip.has(e.driverId) &&
           canServe(e.vehicleType, ride.rideType) &&
           wantsJobType(e.jobTypes || undefined, ride.rideType) &&
-          !(e.noCash === true && cashInHand(ride))) || null;
+          !(e.noCash === true && cashInHand(ride)) &&
+          !belowMinFare(e.minJobFare, ride)) || null;
         if (next) {
           zone = z;
           break;
@@ -4531,6 +4538,7 @@ module.exports = (deps) => {
       stale: positionStale(d),
       cashJobs: d.cashJobs === false ? false : true,
       jobTypes: Array.isArray(d.jobTypes) ? d.jobTypes : null,
+      minJobFare: Number(d.minJobFare) > 0 ? Number(d.minJobFare) : null,
     };
   }
 

@@ -38,7 +38,7 @@ import { httpsCallable } from 'firebase/functions';
 import { getAuth } from 'firebase/auth';
 import { useAppConfig, currencySymbol } from '../../../utils/appConfig';
 import { expiryAlertsFor, describeExpiry } from '../../../constants/driverDocuments';
-import { canServe, classLabel, vehicleLabel, wantsJobType, jobChoices } from '../../../constants/vehicleClasses';
+import { canServe, classLabel, vehicleLabel, wantsJobType, jobChoices, belowMinFare } from '../../../constants/vehicleClasses';
 import { servesCity, useCities, cityFor } from '../../../utils/cities';
 import { useBookedJobs, bookedWhen } from '../../../utils/followOn';
 import { biddingEnabled, counterSteps, offerSeconds, sendCounterOffer, withdrawCounterOffer } from '../../../utils/bidding';
@@ -199,6 +199,8 @@ export default function DriverHomeScreen() {
   const [cashJobs, setCashJobs] = useState(true);
   // Job categories the driver ticked in Account (null = all their car allows).
   const [jobTypes, setJobTypes] = useState(null);
+  // The lowest fare they want offered, in pounds (drivers.minJobFare; null = any).
+  const [minJobFare, setMinJobFare] = useState(null);
   // The taxi firm this driver works for, if any (functions/fleet.js).
   const [fleetId, setFleetId] = useState(null);
   // What a passenger sees on this driver's counter-offers.
@@ -348,6 +350,7 @@ export default function DriverHomeScreen() {
         });
       }
       setJobTypes(Array.isArray(data.jobTypes) ? data.jobTypes : null);
+      setMinJobFare(Number(data.minJobFare) > 0 ? Number(data.minJobFare) : null);
       setFleetId(data.fleetId || null);
       setPhoneConflict(data.phoneConflict?.message ? data.phoneConflict : null);
       setDriverCard({
@@ -681,6 +684,8 @@ export default function DriverHomeScreen() {
       if (!canServe(vehicleType, data.rideType)) return;
       // Unticked categories: only one the office sent to this driver by name.
       if (!target && !wantsJobType(jobTypes, data.rideType)) return;
+      // Under their lowest fare: only one the office sent to this driver by name.
+      if (!target && belowMinFare(minJobFare, data)) return;
       const distance = getDistanceFromLatLonInKm(
         location.latitude,
         location.longitude,
@@ -719,6 +724,8 @@ export default function DriverHomeScreen() {
       if (!wantsJobType(jobTypes, data.rideType)) return;
       // Cash jobs switched off.
       if (!cashJobs && data.paymentMethod === 'cash') return;
+      // Pays less than the lowest fare they chose in Account.
+      if (belowMinFare(minJobFare, data)) return;
       // Chosen a working city? Then only that city's jobs.
       if (!servesCity(workingCityId, data.cityId)) return;
       // Passenger asked for a female driver: verified female drivers only.
@@ -767,7 +774,7 @@ export default function DriverHomeScreen() {
       if (next) animateCard();
       return next;
     });
-  }, [searchingRides, fleetRides, networkRides, fleetId, isOnline, location, isApproved, searchRadiusKm, driverId, vehicleType, workingCityId, femaleVerified, cashJobs, jobTypes, animateCard, snoozesLoaded]);
+  }, [searchingRides, fleetRides, networkRides, fleetId, isOnline, location, isApproved, searchRadiusKm, driverId, vehicleType, workingCityId, femaleVerified, cashJobs, jobTypes, minJobFare, animateCard, snoozesLoaded]);
 
   // Going offline takes the offer card down with it. What was declined or
   // missed stays dealt with (snoozed): the offer may still be live on the
@@ -1480,6 +1487,19 @@ export default function DriverHomeScreen() {
               })()}
             </Text>
           </TouchableOpacity>
+          {/* Their lowest fare, when they set one in Account. */}
+          {minJobFare ? (
+            <TouchableOpacity
+              style={styles.cashToggle}
+              onPress={() => navigation.navigate('Account', { screen: 'DriverProfile' })}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Lowest fare"
+            >
+              <Ionicons name="pricetag-outline" size={16} color={COLORS.midnight} />
+              <Text style={styles.cashToggleText}>Jobs from {currencySymbol()}{minJobFare}</Text>
+            </TouchableOpacity>
+          ) : null}
           {/* Where they get jobs; chosen in Account. */}
           {cities.length ? (
             <TouchableOpacity

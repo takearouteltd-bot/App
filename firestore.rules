@@ -240,6 +240,17 @@ service cloud.firestore {
         (!changed.hasAny(["approved"]) || request.resource.data.approved == false);
     }
 
+    /* The lowest fare a driver wants to be offered (drivers.minJobFare, in
+       pounds; functions/index.js belowMinFare): none (null or 0), or a
+       number up to 200. Only checked when it changes, so an old record
+       never blocks other updates. */
+    function minJobFareOk() {
+      let next = request.resource.data.get("minJobFare", null);
+      return (resource != null && next == resource.data.get("minJobFare", null)) ||
+        next == null ||
+        ((next is int || next is float) && next >= 0 && next <= 200);
+    }
+
     match /drivers/{driverId} {
       /* Name, photo, car, plate and rating: passengers read the record of
          their driver by id. Nobody but admins and the driver's fleet can
@@ -254,7 +265,8 @@ service cloud.firestore {
           fleetStaffOf(resource.data.fleetRequest.fleetId));
       allow create: if isAdmin() || (
         signedIn() && request.auth.uid == driverId &&
-        driverGrantsNothing(request.resource.data)
+        driverGrantsNothing(request.resource.data) &&
+        minJobFareOk()
       );
       allow update: if isAdmin() || (
         signedIn() &&
@@ -262,6 +274,7 @@ service cloud.firestore {
           request.auth.uid == driverId &&
           (
             driverKeepsGuardedFields() &&
+            minJobFareOk() &&
             /* Only an approved driver can put themselves online, and not
                one an admin has blocked (except finishing a trip they were
                on when blocked, so the trip still closes; they get no jobs

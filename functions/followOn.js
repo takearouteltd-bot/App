@@ -46,6 +46,8 @@ module.exports = (deps) => {
   const {functions, db, sendPush, loadAppConfig, distanceKm, canServe,
     wantsJobType, hasExpiredDocument, membershipSuspended, positionStale,
     toMillis, emailMoney} = deps;
+  // A driver's lowest fare (drivers.minJobFare; index.js).
+  const belowMinFare = deps.belowMinFare || (() => false);
   const {HttpsError} = functions.https;
   const {FieldValue, Timestamp} = require("firebase-admin/firestore");
   const out = {};
@@ -116,10 +118,12 @@ module.exports = (deps) => {
       const cashInHand = !["account", "card", "online"].includes(
           ride.collectBy);
       return !(d.cashJobs === false && cashInHand) &&
-        wantsJobType(d.jobTypes, ride.rideType);
+        wantsJobType(d.jobTypes, ride.rideType) &&
+        !belowMinFare(d.minJobFare, ride);
     }
     if (!wantsJobType(d.jobTypes, ride.rideType)) return false;
     if (d.workingCityId && d.workingCityId !== ride.cityId) return false;
+    if (belowMinFare(d.minJobFare, ride)) return false;
     return !(d.cashJobs === false && ride.paymentMethod === "cash");
   }
 

@@ -84,6 +84,20 @@ export function wantsJobType(jobTypes, rideType) {
   return jobTypes.includes(known ? rideType : DEFAULT_RIDE_CLASS);
 }
 
+// The lowest fare a driver wants to be offered (drivers.minJobFare, pounds;
+// null means any). The choices in Account; firestore.rules allows 0 to 200.
+export const MIN_FARE_CHOICES = [null, 5, 8, 10, 15, 20, 30];
+
+// Whether a job pays less than the driver's lowest fare. A job with no price
+// yet is not held back. Same rule as belowMinFare in functions/index.js,
+// which keeps such jobs from being offered to them in the first place.
+export function belowMinFare(minJobFare, ride) {
+  const min = Number(minJobFare);
+  if (!Number.isFinite(min) || min <= 0) return false;
+  const fare = Number(ride?.fareEstimate) || Number(ride?.offeredFare) || Number(ride?.fare?.total) || 0;
+  return fare > 0 && fare < min;
+}
+
 export function classLabel(id) {
   const found = RIDE_CLASSES.find((c) => c.id === id);
   return found ? found.label : LEGACY_LABELS[id] || 'Normal';

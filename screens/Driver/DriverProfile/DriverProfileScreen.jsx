@@ -15,8 +15,8 @@ import {
   getCountFromServer,
   setDoc,
 } from "firebase/firestore";
-import { money } from '../../../utils/appConfig';
-import { jobChoices } from '../../../constants/vehicleClasses';
+import { money, currencySymbol } from '../../../utils/appConfig';
+import { jobChoices, MIN_FARE_CHOICES } from '../../../constants/vehicleClasses';
 import appJson from '../../../app.json';
 import {
   COLORS,
@@ -105,6 +105,18 @@ export default function DriverProfileScreen() {
       "Turn cash jobs off?",
       "You won't be offered jobs the passenger pays in cash, including phone bookings from your fleet. Your office can still send you one by name.",
       [{ text: "Keep them on", style: "cancel" }, { text: "Turn off", style: "destructive", onPress: save }]
+    );
+  };
+
+  // The lowest fare they want offered (drivers.minJobFare, pounds; null =
+  // any). The server stops offering cheaper jobs (functions/index.js
+  // belowMinFare); the office can still send one by name.
+  const minJobFare = Number(driver?.minJobFare) > 0 ? Number(driver.minJobFare) : null;
+  const fareLabel = (n) => (n ? `${currencySymbol()}${n} or more` : "Any fare");
+  const saveMinJobFare = (value) => {
+    if (!user?.uid) return;
+    setDoc(doc(db, "drivers", user.uid), { minJobFare: value || null }, { merge: true }).catch(() =>
+      Alert.alert("Could not change it", "Please try again.")
     );
   };
 
@@ -332,6 +344,38 @@ export default function DriverProfileScreen() {
       </Section>
 
       <Section title="Jobs I want">
+        <SelectField
+          title="Lowest fare you want offered"
+          value={minJobFare && MIN_FARE_CHOICES.includes(minJobFare) ? minJobFare : minJobFare ? "__other" : null}
+          options={[
+            ...MIN_FARE_CHOICES.map((n) => ({
+              value: n,
+              label: fareLabel(n),
+              detail: n ? `Jobs under ${currencySymbol()}${n} aren't offered to you` : "Offered jobs at any price",
+            })),
+            // Set some other way (e.g. by support): shown so it isn't lost.
+            ...(minJobFare && !MIN_FARE_CHOICES.includes(minJobFare)
+              ? [{ value: "__other", label: fareLabel(minJobFare), detail: "Your current choice" }]
+              : []),
+          ]}
+          onChange={(v) => (v === "__other" ? null : saveMinJobFare(v))}
+          renderTrigger={(open) => (
+            <RowGroup
+              style={{ marginBottom: SPACE[3] }}
+              items={[
+                {
+                  icon: "pricetag-outline",
+                  iconColor: COLORS.midnight,
+                  title: "Lowest fare",
+                  detail: minJobFare
+                    ? `${fareLabel(minJobFare)} · your office can still send you one by name`
+                    : "Any fare: you're offered jobs at any price",
+                  onPress: open,
+                },
+              ]}
+            />
+          )}
+        />
         <RowGroup
           items={choices.map((c) => {
             const on = ticked.includes(c.id);

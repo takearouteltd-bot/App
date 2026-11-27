@@ -835,3 +835,22 @@ test('share my trip: the links (tripShares) are the server\'s alone', async () =
   }
   await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(), 'tripShares/app')));
 });
+test('lowest fare: a driver sets none or a number from 0 to 200 on their own record only', async () => {
+  const mine = () => doc(as('d1'), 'drivers/d1');
+  for (const ok of [10, 12.5, 0, 200, null]) await assertSucceeds(updateDoc(mine(), { minJobFare: ok }));
+  await assertSucceeds(updateDoc(mine(), { minJobFare: deleteField() }));
+  await assertSucceeds(setDoc(mine(), { minJobFare: 15 }, { merge: true }));
+  for (const bad of [-1, 200.5, 1000, '10', true, { amount: 10 }, [10]]) {
+    await assertFails(updateDoc(mine(), { minJobFare: bad }));
+  }
+  // Not someone else's.
+  await assertFails(updateDoc(doc(as('d2'), 'drivers/d1'), { minJobFare: 5 }));
+  // A new driver record: the same limits.
+  await assertSucceeds(setDoc(doc(as('newdrv'), 'drivers/newdrv'), { approved: false, minJobFare: 8 }));
+  await assertFails(setDoc(doc(as('newdrv2'), 'drivers/newdrv2'), { approved: false, minJobFare: 500 }));
+  // An odd value already on the record (written by an admin) does not block other changes.
+  await seed((db) => updateDoc(doc(db, 'drivers/d2'), { minJobFare: 500 }));
+  await assertSucceeds(updateDoc(doc(as('d2'), 'drivers/d2'), { status: 'offline' }));
+  await assertSucceeds(updateDoc(doc(as('d2'), 'drivers/d2'), { minJobFare: 20 }));
+  await assertSucceeds(updateDoc(doc(as('adm'), 'drivers/d2'), { minJobFare: 300 }));
+});
