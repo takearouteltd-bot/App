@@ -26,6 +26,8 @@
 //   trip-updates  driver arrived, ride cancelled, and similar.
 //   messages      chat and support replies.
 //   general       announcements from TakeARoute.
+//   job-offer-buttons  silent copy of an offer alert with Accept / Decline
+//                 (made in utils/offerAlerts.js).
 import { AppState, Platform, Vibration } from 'react-native';
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 import * as Notifications from 'expo-notifications';
@@ -34,6 +36,7 @@ import { signOut } from 'firebase/auth';
 import { arrayRemove, arrayUnion, doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { getMessaging, getToken, onMessage, registerDeviceForRemoteMessages } from '@react-native-firebase/messaging';
 import { auth, db } from '../config/firebase';
+import { alertTagFor, dismissOfferAlerts, notificationData } from './offerAlerts';
 
 // Show notifications while the app is open too.
 // iOS shows a push that arrives while the app is open through this handler.
@@ -43,8 +46,7 @@ import { auth, db } from '../config/firebase';
 const RUNG_IN_APP = ['job_offer', 'follow_on_offer'];
 
 function pushType(notification) {
-  const request = notification?.request || {};
-  return request.content?.data?.type || request.trigger?.payload?.type || null;
+  return notificationData(notification).type || null;
 }
 
 Notifications.setNotificationHandler({
@@ -306,12 +308,17 @@ export async function ringForNewJob(ride) {
     // Take down the last job alert so this one rings as a new one.
     await clearJobAlerts();
     const pickup = ride?.pickupLocation?.address || 'a nearby pickup';
+    // Under the same id as the server's push for this job, so the two are
+    // one alert, with Accept / Decline (utils/offerAlerts.js).
+    const tag = alertTagFor('job_offer', ride?.id);
     await Notifications.scheduleNotificationAsync({
+      ...(tag ? { identifier: tag } : {}),
       content: {
         title: 'New job offer',
         body: `Pickup at ${pickup}.`,
         sound: 'job_ring.wav',
-        data: { type: 'job_offer', rideId: ride?.id || '' },
+        data: { type: 'job_offer', rideId: ride?.id || '', ...(tag ? { alertTag: tag } : {}) },
+        categoryIdentifier: 'job_offer',
       },
       trigger: Platform.OS === 'android' ? { channelId: 'job-ring' } : null,
     });
@@ -321,25 +328,28 @@ export async function ringForNewJob(ride) {
 }
 
 // Clears job alerts still showing, e.g. after the driver accepts a job.
+// The server's pushes too (Android names those by their tag, offer_...).
 export async function clearJobAlerts() {
   stopJobRing();
-  try {
-    const shown = await Notifications.getPresentedNotificationsAsync();
-    await Promise.all(
-      shown
-        .filter((n) => n.request?.content?.data?.type === 'job_offer')
-        .map((n) => Notifications.dismissNotificationAsync(n.request.identifier))
-    );
-  } catch (error) {
-    // Not critical.
-  }
+  await dismissOfferAlerts('job_offer', null);
+}
+
+/* What a tapped notification carries, plus tapAction: which button was
+   pressed (Notifications.DEFAULT_ACTION_IDENTIFIER for the alert itself).
+   iPhone pushes carry their data only in trigger.payload, so before this
+   every tapped iPhone push arrived with no type and opened the home tab. */
+function tapData(response) {
+  return {
+    ...notificationData(response?.notification),
+    tapAction: response?.actionIdentifier || Notifications.DEFAULT_ACTION_IDENTIFIER,
+  };
 }
 
 // Calls onOpen(data) when the person taps a notification while the app is
 // running or in the background.
 export function onNotificationOpened(onOpen) {
   const sub = Notifications.addNotificationResponseReceivedListener((response) => {
-    onOpen(response?.notification?.request?.content?.data || {});
+    onOpen(tapData(response));
   });
   return () => sub.remove();
 }
@@ -351,7 +361,7 @@ export async function takeLaunchNotification() {
     const response = await Notifications.getLastNotificationResponseAsync();
     if (!response) return null;
     await Notifications.clearLastNotificationResponseAsync().catch(() => {});
-    return response?.notification?.request?.content?.data || null;
+    return tapData(response);
   } catch (error) {
     return null;
   }

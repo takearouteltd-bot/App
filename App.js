@@ -29,6 +29,7 @@ import {
   signOutEverywhere,
 } from "./utils/notifications";
 import { COLORS, SPACE, TYPE, Button } from './components/ui/kit';
+import { ACCEPT, answeredInBackground } from "./utils/offerAlerts";
 
 const Stack = createNativeStackNavigator();
 
@@ -73,6 +74,11 @@ function routeForNotification(data, role) {
     if (type === "payout" || type === "tip") return tab("Earnings", { screen: "EarningsScreen" });
     // A booked job given to them, changed or taken off them.
     if (type === "booked_job") return tab("Home", { screen: "DriverBookedJobs" });
+    // Accept pressed on a job offer alert: the home screen takes the job as
+    // soon as it is on its list (acceptAt makes a second press a new ask).
+    if (type === "job_offer" && data.tapAction === ACCEPT && data.rideId) {
+      return tab("Home", { screen: "DriverHome", params: { acceptJobId: data.rideId, acceptAt: Date.now() } });
+    }
     // job_offer, trip, chat and anything else: the driver home resumes the
     // current job and shows new offers.
     return tab("Home", { screen: "DriverHome" });
@@ -315,6 +321,9 @@ export default function App() {
   // Acts on a tapped notification, or keeps it until the app can.
   const openFromNotification = useCallback((data) => {
     if (!data) return;
+    // Accept / No thanks pressed on an offer alert: answered where the
+    // driver is, without moving them (utils/offerAlerts.js).
+    if (answeredInBackground(data)) return;
     const role = roleRef.current;
     if (!navigationRef.isReady() || !role) {
       pendingTap.current = data;

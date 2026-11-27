@@ -7,16 +7,34 @@
    job comes but in notifications, doesn't pop up").
 
    Outside the app (Google Maps, say) the offer push rings on the job-ring
-   channel and drops down over whatever is open; tapping it brings the app
-   back with the offer popped up. */
-import React from 'react';
+   channel and drops down over whatever is open, with Accept and No thanks
+   on it (utils/offerAlerts.js); tapping the alert itself brings the app
+   back with the offer popped up. Once the offer is answered or runs out
+   the alert is taken down. */
+import React, { useEffect, useRef } from 'react';
 import { Modal, StyleSheet, Text, View } from 'react-native';
 import FollowOnCard from './FollowOnCard';
 import { COLORS, RADIUS, SPACE } from './ui/kit';
 import { useFollowOnOffer } from '../utils/followOn';
+import { dismissOfferAlerts } from '../utils/offerAlerts';
 
 export default function FollowOnPopup({ driverId }) {
   const offer = useFollowOnOffer(driverId);
+  const offerRideId = offer?.rideId || null;
+  const shownFor = useRef(null);
+  useEffect(() => {
+    if (offerRideId) {
+      if (shownFor.current && shownFor.current !== offerRideId) {
+        dismissOfferAlerts('follow_on_offer', shownFor.current);
+      }
+      shownFor.current = offerRideId;
+      return;
+    }
+    if (shownFor.current) {
+      dismissOfferAlerts('follow_on_offer', shownFor.current);
+      shownFor.current = null;
+    }
+  }, [offerRideId]);
   if (!driverId || !offer) return null;
   return (
     <Modal visible transparent animationType="fade" statusBarTranslucent onRequestClose={() => {}}>
