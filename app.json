@@ -2,7 +2,7 @@
   "expo": {
     "name": "TakeARoute",
     "slug": "takearoute",
-    "version": "1.0.42",
+    "version": "1.0.43",
     "orientation": "portrait",
     "icon": "./assets/app-icon.png",
     "scheme": "takearoute",
@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.takearoute.app",
-      "buildNumber": "39",
+      "buildNumber": "40",
       "googleServicesFile": "./GoogleService-Info.plist",
       "config": {
         "googleMapsApiKey": "AIzaSyD2FkUIMuw3hkXi827QxnI8W1w2XX_KGd8"
@@ -47,7 +47,7 @@
         "POST_NOTIFICATIONS",
         "VIBRATE"
       ],
-      "versionCode": 39,
+      "versionCode": 40,
       "blockedPermissions": [
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
       ]
